@@ -1,0 +1,118 @@
+"""Upsert LLM-extracted metadata JSONL into `path_metadata`.
+
+Input JSONL: one object per line.
+- Must include either `path_id` or `path`.
+- Any additional fields are stored verbatim in `data_json`.
+
+We also stamp:
+- source (arg --source)
+- updated_at (now)
+
+Usage:
+  cd ~/.openclaw/workspace/val/mediaops
+  . .venv/bin/activate
+  python upsert_path_metadata_jsonl.py --in extracted.jsonl --source llm
+
+Safety:
+- DB write only. No file operations.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from datetime import datetime, timezone
+
+from sqlalchemy import create_engine, select
+
+from mediaops_schema import paths, path_metadata
+
+DB_DEFAULT = "/mnt/b/_AI_WORK/db/mediaops.sqlite"
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def iter_jsonl(path: str):
+    with open(path, "r", encoding="utf-8-sig") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            yield json.loads(line)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--db", default=DB_DEFAULT)
+    ap.add_argument("--in", dest="inp", required=True)
+    ap.add_argument("--source", default="llm")
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    if not os.path.exists(args.db):
+        raise SystemExit(f"DB not found: {args.db}")
+    if not os.path.exists(args.inp):
+        raise SystemExit(f"Input JSONL not found: {args.inp}")
+
+    engine = create_engine(f"sqlite:///{args.db}")
+
+    updated_at = now_iso()
+    to_upsert = []
+    missing = 0
+
+    with engine.begin() as conn:
+        for rec in iter_jsonl(args.inp):
+            if "_meta" in rec:
+                continue
+            path_id = rec.get("path_id")
+            if not path_id:
+                p = rec.get("path")
+                if not p:
+                    missing += 1
+                    continue
+                path_id = conn.execute(select(paths.c.path_id).where(paths.c.path == p)).scalar_one_or_none()
+
+            if not path_id:
+                missing += 1
+                continue
+
+            data_json = json.dumps(rec, ensure_ascii=False)
+            to_upsert.append(
+                {
+                    "path_id": path_id,
+                    "source": args.source,
+                    "data_json": data_json,
+                    "updated_at": updated_at,
+                }
+            )
+
+        if args.dry_run:
+            print("DRY_RUN")
+            print("rows:", len(to_upsert))
+            print("missing:", missing)
+            return 0
+
+        if to_upsert:
+            conn.exec_driver_sql(
+                """
+                INSERT INTO path_metadata (path_id, source, data_json, updated_at)
+                VALUES (:path_id, :source, :data_json, :updated_at)
+                ON CONFLICT(path_id) DO UPDATE SET
+                  source=excluded.source,
+                  data_json=excluded.data_json,
+                  updated_at=excluded.updated_at
+                """,
+                to_upsert,
+            )
+
+    print("OK")
+    print("upserted:", len(to_upsert))
+    print("missing:", missing)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

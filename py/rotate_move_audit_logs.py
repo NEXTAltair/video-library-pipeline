@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+r"""Rotate /mnt/b/_AI_WORK/move audit logs to keep the workspace readable."""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import shutil
+from datetime import datetime
+from pathlib import Path
+
+
+def _gzip_file(src: Path) -> Path:
+    dst = src.with_suffix(src.suffix + ".gz")
+    if dst.exists():
+        return dst
+    with src.open("rb") as f_in, gzip.open(dst, "wb", compresslevel=9) as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    src.unlink(missing_ok=True)
+    return dst
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--move-dir", default="/mnt/b/_AI_WORK/move")
+    ap.add_argument("--keep-batches", type=int, default=5)
+    ap.add_argument("--keep-listings", type=int, default=3)
+    args = ap.parse_args()
+
+    move_dir = Path(args.move_dir)
+    arc = move_dir / "archive"
+    arc.mkdir(parents=True, exist_ok=True)
+
+    remaining = sorted(move_dir.glob("remaining_unwatched_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    latest_remaining = remaining[0].name if remaining else None
+    for p in remaining[1:]:
+        shutil.move(str(p), str(arc / p.name))
+
+    move_logs_legacy = sorted(move_dir.glob("move_to_videolibrary_by_program_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    move_apply_logs = sorted(move_dir.glob("move_apply_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    move_plan_logs = sorted(move_dir.glob("move_plan_from_queue_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    inv_logs = sorted(move_dir.glob("inventory_unwatched_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    plan_inv_logs = sorted(move_dir.glob("move_plan_from_inventory_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    keep_moves = set(p.name for p in move_logs_legacy[: max(args.keep_batches, 0)])
+    keep_moves |= set(p.name for p in move_apply_logs[: max(args.keep_batches, 0)])
+    keep_moves |= set(p.name for p in move_plan_logs[: max(args.keep_batches, 0)])
+    if inv_logs:
+        keep_moves.add(inv_logs[0].name)
+    if plan_inv_logs:
+        keep_moves.add(plan_inv_logs[0].name)
+
+    keep_listings = set()
+    for pat in ["unwatched_pwsh_errors_*.jsonl", "unwatched_ls_*.jsonl", "unwatched_gci_*.jsonl"]:
+        files = sorted(move_dir.glob(pat), key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files[: max(args.keep_listings, 0)]:
+            keep_listings.add(p.name)
+
+    always_keep = {"MANIFEST.md"}
+    for p in move_dir.glob("*.jsonl"):
+        if p.name in keep_moves or p.name in keep_listings or p.name in always_keep:
+            continue
+        dest = arc / p.name
+        if not dest.exists():
+            shutil.move(str(p), str(dest))
+        if dest.suffix == ".jsonl":
+            _gzip_file(dest)
+
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    manifest = move_dir / "MANIFEST.md"
+    lines = [
+        "# move/ audit logs manifest",
+        f"updated: {now}",
+        "",
+        "## Current (kept in root)",
+        f"- latest remaining_unwatched: {latest_remaining or 'none'}",
+        f"- last {args.keep_batches} move logs:",
+    ]
+    for p in move_logs_legacy[: max(args.keep_batches, 0)]:
+        lines.append(f"  - {p.name}")
+    for p in move_plan_logs[: max(args.keep_batches, 0)]:
+        lines.append(f"  - {p.name}")
+    for p in move_apply_logs[: max(args.keep_batches, 0)]:
+        lines.append(f"  - {p.name}")
+    if inv_logs:
+        lines.append(f"- latest inventory_unwatched: {inv_logs[0].name}")
+    if plan_inv_logs:
+        lines.append(f"- latest move_plan_from_inventory: {plan_inv_logs[0].name}")
+    if keep_listings:
+        lines.append("- listings/errors (kept):")
+        for name in sorted(keep_listings):
+            lines.append(f"  - {name}")
+    lines.extend(["", "## Archived", "- archive/*.jsonl.gz (older logs)"])
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
