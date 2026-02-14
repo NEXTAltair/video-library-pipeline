@@ -9,6 +9,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import PureWindowsPath
 
+DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -94,7 +96,13 @@ def main() -> int:
                         md = json.loads(md_row[0])
                     except Exception:
                         md = {}
-                    pick = bool(md.get("needs_review")) or (md.get("air_date") is None) or (not md.get("program_title"))
+                    missing_contract = any(k not in md for k in DB_CONTRACT_REQUIRED)
+                    pick = (
+                        missing_contract
+                        or bool(md.get("needs_review"))
+                        or (md.get("air_date") is None)
+                        or (not md.get("program_title"))
+                    )
 
                 if not pick:
                     continue

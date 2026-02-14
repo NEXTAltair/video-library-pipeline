@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 // このファイルは plugin 設定値の「型」と「正規化」を担当する。
 // - 生の設定値(raw): plugins.entries.video-library-pipeline.config
 // - 解決済み設定値(resolved): 実行時に使う安全な値
@@ -19,13 +22,9 @@ export type VideoPipelineResolvedConfig = {
 };
 
 // 入力が不正・未指定のときに使う既定値。
-const DEFAULTS: VideoPipelineResolvedConfig = {
-  db: "",
-  sourceRoot: "",
-  destRoot: "",
-  windowsOpsRoot: "",
+const DEFAULTS = {
   defaultMaxFilesPerRun: 200,
-};
+} as const;
 
 // 文字列入力を trim して返す。文字列でなければ空文字。
 function asNonEmptyString(v: unknown): string {
@@ -44,11 +43,45 @@ function asLimit(v: unknown): number {
 // 生設定(raw)を実行可能な形へ正規化する。
 export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined): VideoPipelineResolvedConfig {
   const cfg = raw ?? {};
+  const sourceRoot = asNonEmptyString(cfg.sourceRoot);
+  const destRoot = asNonEmptyString(cfg.destRoot);
+  const windowsOpsRoot = asNonEmptyString(cfg.windowsOpsRoot);
+  const errors: string[] = [];
+
+  if (!sourceRoot) errors.push("sourceRoot is required. Configure plugins.entries.video-library-pipeline.config.sourceRoot.");
+  if (!destRoot) errors.push("destRoot is required. Configure plugins.entries.video-library-pipeline.config.destRoot.");
+  if (!windowsOpsRoot) {
+    errors.push("windowsOpsRoot is required. Configure plugins.entries.video-library-pipeline.config.windowsOpsRoot.");
+  }
+
+  const resolvedOpsRoot = windowsOpsRoot ? path.resolve(windowsOpsRoot) : "";
+  const resolvedSourceRoot = sourceRoot ? path.resolve(sourceRoot) : "";
+  const resolvedDestRoot = destRoot ? path.resolve(destRoot) : "";
+
+  if (resolvedSourceRoot && !fs.existsSync(resolvedSourceRoot)) {
+    errors.push(`sourceRoot does not exist: ${resolvedSourceRoot}`);
+  }
+  if (resolvedDestRoot && !fs.existsSync(resolvedDestRoot)) {
+    errors.push(`destRoot does not exist: ${resolvedDestRoot}`);
+  }
+  if (resolvedOpsRoot && !fs.existsSync(resolvedOpsRoot)) {
+    errors.push(`windowsOpsRoot does not exist: ${resolvedOpsRoot}`);
+  }
+  const scriptsDir = resolvedOpsRoot ? path.join(resolvedOpsRoot, "scripts") : "";
+  if (scriptsDir && !fs.existsSync(scriptsDir)) {
+    errors.push(`windowsOpsRoot contract violation: missing scripts directory: ${scriptsDir}`);
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`video-library-pipeline config error:\n- ${errors.join("\n- ")}`);
+  }
+
+  const resolvedDb = asNonEmptyString(cfg.db) || path.join(resolvedOpsRoot, "db", "mediaops.sqlite");
   return {
-    db: asNonEmptyString(cfg.db),
-    sourceRoot: asNonEmptyString(cfg.sourceRoot),
-    destRoot: asNonEmptyString(cfg.destRoot),
-    windowsOpsRoot: asNonEmptyString(cfg.windowsOpsRoot),
+    db: resolvedDb,
+    sourceRoot: resolvedSourceRoot,
+    destRoot: resolvedDestRoot,
+    windowsOpsRoot: resolvedOpsRoot,
     defaultMaxFilesPerRun: asLimit(cfg.defaultMaxFilesPerRun),
   };
 }

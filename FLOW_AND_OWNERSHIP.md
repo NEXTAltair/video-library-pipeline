@@ -1,120 +1,79 @@
 # video-library-pipeline flow and ownership
 
-This document defines execution order, ownership boundaries, and data responsibilities for the OpenClaw `video-library-pipeline` plugin.
+This document describes plugin-only execution order, ownership boundaries, and AI-primary extraction policy.
 
 ## 1) layer responsibilities
 
-- OpenClaw agent/tool layer (`src/*.ts`)
-  - receives tool call: `video_pipeline_analyze_and_move_videos`
-  - resolves script path and runtime arguments
-  - starts runner with `uv run python ...`
-  - returns run result payload
-- WSL Python layer (`py/*.py`)
-  - orchestrates pipeline stages
-  - ingests and updates DB state
-  - generates plan/intermediate artifacts and summary
+- TypeScript tool layer (`src/*.ts`)
+  - validates plugin config (fail-fast)
+  - resolves one canonical runtime config
+  - launches Python runner with explicit args
+- Python orchestration layer (`py/*.py`)
+  - runs end-to-end pipeline stages
+  - owns DB upsert/reconcile and artifact generation
+  - writes run summary
 - Windows PowerShell layer (`<windowsOpsRoot>/scripts/*.ps1`)
-  - performs Windows filesystem operations under source/destination roots
-  - emits per-operation audit JSONL
+  - owns Windows filesystem mutation/enumeration
+  - emits raw move/inventory evidence
 
-## 2) key runtime parameters
+## 2) runtime contract
 
-- `sourceRoot`: source folder containing videos to analyze and move
-- `destRoot`: destination root folder where organized videos are moved
-- `windowsOpsRoot`: Windows operation/data root (scripts + outputs), for example `<windowsOpsRoot>`
-- `maxFilesPerRun`: maximum file count handled in one run (applies to queue generation and move-plan generation)
+Required plugin config:
 
-## 3) ordered processing flow
+- `windowsOpsRoot`
+- `sourceRoot`
+- `destRoot`
 
-1. Human configures plugin values (`db`, `sourceRoot`, `destRoot`, `windowsOpsRoot`, `defaultMaxFilesPerRun`).
-2. Human or agent triggers `video_pipeline_analyze_and_move_videos`.
-3. `src/tool-run.ts` executes:
-   - `uv run python <extension>/py/unwatched_pipeline_runner.py --max-files-per-run ... [--apply] [--allow-needs-review] [--db ...] [--source-root ...] [--dest-root ...] [--windows-ops-root ...]`
-4. Runner initializes `move` and `llm` roots under `windowsOpsRoot`.
-5. Runner calls `normalize_filenames.ps1` (single normalization entrypoint).
-   - internal phases:
-     - `fix_prefix_timestamp_names.ps1`
-     - `normalize_unwatched_names.ps1`
-6. Runner calls `unwatched_inventory.ps1` and captures latest `inventory_unwatched_*.jsonl`.
-7. Runner calls `ingest_inventory_jsonl.py` to upsert `paths`/`observations`.
-8. Runner calls `make_metadata_queue_from_inventory.py` to create queue.
-9. Runner calls `run_metadata_batches_promptv1.py`.
-   - writes `llm_filename_extract_input_*` and `llm_filename_extract_output_*`
-   - internally upserts `path_metadata`
-10. Runner calls `make_move_plan_from_inventory.py` to build move plan.
-11. Runner calls `apply_move_plan.ps1` (dry-run or apply).
-12. Runner calls `update_db_paths_from_move_apply.py` to reconcile DB.
-13. Runner calls `list_remaining_unwatched.ps1` and writes `remaining_unwatched_*.txt`.
-14. Runner calls `rotate_move_audit_logs.py` for move+llm retention.
-15. Runner writes `move/LATEST_SUMMARY.md`.
-16. Runner prints final JSON summary and tool returns it.
+Optional plugin config:
 
-### execution diagram
+- `db` (defaults to `<windowsOpsRoot>/db/mediaops.sqlite`)
+- `defaultMaxFilesPerRun`
 
-```mermaid
-flowchart TD
-  human[HumanOperator] --> agent[OpenClawAgent]
-  agent --> tool[video_pipeline_analyze_and_move_videos]
-  tool --> runner[unwatched_pipeline_runner.py]
-  runner --> ps1n[normalize_filenames.ps1]
-  ps1n --> ps1a[fix_prefix_timestamp_names.ps1]
-  ps1n --> ps1b[normalize_unwatched_names.ps1]
-  runner --> ps1c[unwatched_inventory.ps1]
-  runner --> py1[ingest_inventory_jsonl.py]
-  runner --> py2[make_metadata_queue_from_inventory.py]
-  runner --> py3[run_metadata_batches_promptv1.py]
-  py3 --> pyupsert[upsert_path_metadata_jsonl.py]
-  runner --> py4[make_move_plan_from_inventory.py]
-  runner --> ps1d[apply_move_plan.ps1]
-  runner --> py5[update_db_paths_from_move_apply.py]
-  runner --> ps1e[list_remaining_unwatched.ps1]
-  runner --> py6[rotate_move_audit_logs.py]
-```
+Runtime contract paths under `windowsOpsRoot`:
 
-## 4) three-layer history model
+- `db`, `move`, `llm`, `rules`, `scripts`
 
-- DB layer (normalized state and query layer)
-  - `runs`, `events`, `paths`, `observations`, `path_metadata`
-  - best for status/history queries
-- JSONL layer (raw runtime evidence)
-  - per-run/per-stage audit artifacts and input/output snapshots
-  - best for forensic debugging and replay validation
-- Summary layer (human-readable operations)
-  - `move/LATEST_SUMMARY.md`
-  - best for daily operational checks without reading raw JSONL
+## 3) extraction policy (AI primary)
 
-## 5) stage ownership map
+Active architecture: `A_AI_PRIMARY_WITH_GUARDRAILS`
 
-| stage | target | read by | written by | primary consumer |
-|---|---|---|---|---|
-| config load | plugin config | `src/tool-run.ts` | human | agent + tools |
-| rules load | `<windowsOpsRoot>/rules/program_aliases.json` | extraction script | human/agent | extraction stage |
-| inventory snapshot | `move/inventory_unwatched_*.jsonl` | ingest/plan scripts | `unwatched_inventory.ps1` | scripts |
-| db ingest/reconcile | `<windowsOpsRoot>/db/mediaops.sqlite` | core scripts | core scripts | scripts + human diagnostics |
-| llm artifacts | `llm/queue_*`, `llm_filename_extract_input_*`, `llm_filename_extract_output_*` | extraction scripts | extraction scripts | scripts + debugging |
-| move plan | `move/move_plan_from_inventory_*.jsonl` | `apply_move_plan.ps1` | planning script | scripts |
-| move apply audit | `move/move_apply_*.jsonl` | db reconcile script | `apply_move_plan.ps1` | scripts + audit |
-| remaining view | `move/remaining_unwatched_*.txt` | humans/status | runner | human + agent |
-| summary | `move/LATEST_SUMMARY.md` | humans/status | runner | humans first |
+- Primary path: AI-oriented parsing flow in `run_metadata_batches_promptv1.py`
+- Optional guardrail input: `rules/program_aliases.yaml`
+  - format: human-readable YAML hints (`canonical_title`, `aliases`)
+  - no `id`, no regex-based rule engine
+- Missing YAML hints is not fatal:
+  - extraction continues in AI-only mode
+  - unknown/ambiguous rows are surfaced with `needs_review=true`
 
-## 6) active vs maintenance Windows scripts
+User correction loop:
 
-- active in main flow:
-  - `normalize_filenames.ps1`
-  - `fix_prefix_timestamp_names.ps1` (called by normalize entrypoint)
-  - `normalize_unwatched_names.ps1` (called by normalize entrypoint)
-  - `unwatched_inventory.ps1`
-  - `apply_move_plan.ps1`
-  - `list_remaining_unwatched.ps1`
-- maintenance-only:
-  - `repair_collisions_nested_drive.ps1`
-  - `rollback_rename_jsonl.ps1`
+- human review updates hint dictionary (`hints` / `user_learned`)
+- next runs load updated hints and improve canonical title normalization
 
-## 7) boundary rules
+## 4) ordered processing flow
 
-- filesystem mutate/enumerate under Windows source/destination roots must stay in `ps1`.
-- Python owns orchestration + DB + artifact management, not direct Windows move/rename logic.
-- new outputs must stay in active roots:
-  - `.../move` for operational/audit artifacts
-  - `.../llm` for extraction intermediate artifacts
-  - `.../rules` for policy input
+1. Configure plugin values.
+2. Trigger `video_pipeline_analyze_and_move_videos`.
+3. `src/tool-run.ts` runs:
+   - `uv run python py/unwatched_pipeline_runner.py --db ... --source-root ... --dest-root ... --windows-ops-root ... --max-files-per-run ... [--apply] [--allow-needs-review]`
+4. Runner prepares `db/move/llm`.
+5. Runner normalizes filenames and snapshots inventory via PowerShell.
+6. Runner ingests inventory and builds metadata queue.
+7. Runner executes extraction with optional YAML hints.
+8. Runner builds move plan and applies (or dry-runs) move actions.
+9. Runner reconciles DB paths, writes remaining report, rotates old artifacts.
+10. Runner writes `move/LATEST_SUMMARY.md` and prints final JSON summary.
+
+## 5) ownership map
+
+- Config source of truth: plugin config (`plugins.entries.video-library-pipeline.config`)
+- Hints source of truth: `<windowsOpsRoot>/rules/program_aliases.yaml`
+- DB state: `<windowsOpsRoot>/db/mediaops.sqlite`
+- Raw evidence: `<windowsOpsRoot>/move/*.jsonl`, `<windowsOpsRoot>/llm/*.jsonl`
+- Human-readable status: `<windowsOpsRoot>/move/LATEST_SUMMARY.md`
+
+## 6) boundary rules
+
+- Do not implement Windows filesystem mutation directly in TypeScript or Python.
+- Keep TS->Python argument names aligned exactly with runner CLI args.
+- Treat hints as optional assistive input, not as the primary extraction engine.

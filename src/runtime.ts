@@ -53,19 +53,6 @@ export function latestJsonlFile(dir: string, prefix: string): string | null {
   return files[0]?.p ?? null;
 }
 
-// tool 側で共通利用する path 引数を不足時のみ注入する。
-export function injectCommonPathArgs(
-  args: string[],
-  cfg: { db?: string; sourceRoot?: string; destRoot?: string; windowsOpsRoot?: string },
-): string[] {
-  const out = [...args];
-  if (cfg.db && !out.includes("--db")) out.push("--db", cfg.db);
-  if (cfg.sourceRoot && !out.includes("--source-root")) out.push("--source-root", cfg.sourceRoot);
-  if (cfg.destRoot && !out.includes("--dest-root")) out.push("--dest-root", cfg.destRoot);
-  if (cfg.windowsOpsRoot && !out.includes("--windows-ops-root")) out.push("--windows-ops-root", cfg.windowsOpsRoot);
-  return out;
-}
-
 // OpenClaw tool の戻り値形式へ整形。
 export function toToolResult(obj: Record<string, unknown>) {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };

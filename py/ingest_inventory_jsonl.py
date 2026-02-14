@@ -81,7 +81,9 @@ def main() -> int:
     if not args.db:
         raise SystemExit("db is required: pass --db or configure plugin db")
     if not os.path.exists(args.db):
-        raise SystemExit(f"DB not found: {args.db} (did you run alembic upgrade head?)")
+        raise SystemExit(
+            f"DB not found: {args.db} (set --db/plugin db to an existing mediaops.sqlite path)"
+        )
 
     engine = create_engine(f"sqlite:///{args.db}")
 

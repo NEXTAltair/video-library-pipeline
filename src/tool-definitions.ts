@@ -20,16 +20,6 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
         },
         allowNeedsReview: { type: "boolean", default: false },
         profile: { type: "string" },
-        pathsOverride: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            db: { type: "string" },
-            sourceRoot: { type: "string" },
-            destRoot: { type: "string" },
-            windowsOpsRoot: { type: "string" },
-          },
-        },
       },
     },
   },

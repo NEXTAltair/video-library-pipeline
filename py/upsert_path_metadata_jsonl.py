@@ -27,6 +27,9 @@ from sqlalchemy import create_engine, select
 
 from mediaops_schema import paths, path_metadata
 
+DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -38,6 +41,15 @@ def iter_jsonl(path: str):
             if not line:
                 continue
             yield json.loads(line)
+
+
+def validate_db_contract(rec: dict) -> tuple[bool, str]:
+    missing = sorted([k for k in DB_CONTRACT_REQUIRED if k not in rec])
+    if missing:
+        return False, f"missing DB contract keys: {missing}"
+    if not isinstance(rec.get("needs_review"), bool):
+        return False, "needs_review must be bool"
+    return True, ""
 
 
 def main() -> int:
@@ -65,6 +77,9 @@ def main() -> int:
         for rec in iter_jsonl(args.inp):
             if "_meta" in rec:
                 continue
+            ok, reason = validate_db_contract(rec)
+            if not ok:
+                raise SystemExit(f"invalid metadata contract: {reason}")
             path_id = rec.get("path_id")
             if not path_id:
                 p = rec.get("path")

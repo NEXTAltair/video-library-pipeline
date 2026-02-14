@@ -15,6 +15,7 @@ FORB = re.compile(r'[<>:"/\\|?*]')
 CTRL = re.compile(r"[\x00-\x1f]")
 TRAIL = re.compile(r"[\. ]+$")
 WS = re.compile(r"[\s\u3000]+")
+DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 
 def safe_dir_name(name: str, maxlen: int = 60) -> str:
@@ -51,6 +52,13 @@ def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
         return None
 
 
+def has_required_db_contract(md: dict) -> bool:
+    for k in DB_CONTRACT_REQUIRED:
+        if k not in md:
+            return False
+    return isinstance(md.get("needs_review"), bool)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
@@ -82,6 +90,7 @@ def main() -> int:
     skipped_needs_review = 0
     skipped_missing_fields = 0
     skipped_outside = 0
+    skipped_invalid_contract = 0
 
     with out.open("w", encoding="utf-8") as w:
         w.write(json.dumps({"_meta": {"kind": "move_plan_from_inventory", "run_id": run_id, "inventory": args.inventory, "dest_root": args.dest_root}}, ensure_ascii=False) + "\n")
@@ -111,6 +120,9 @@ def main() -> int:
                 md = latest_llm_metadata(con, pid)
                 if not md:
                     skipped_no_md += 1
+                    continue
+                if not has_required_db_contract(md):
+                    skipped_invalid_contract += 1
                     continue
                 if md.get("needs_review") and not args.allow_needs_review:
                     skipped_needs_review += 1
@@ -146,6 +158,7 @@ def main() -> int:
                 "skipped_needs_review": skipped_needs_review,
                 "skipped_missing_fields": skipped_missing_fields,
                 "skipped_outside": skipped_outside,
+                "skipped_invalid_contract": skipped_invalid_contract,
             },
             ensure_ascii=False,
         )

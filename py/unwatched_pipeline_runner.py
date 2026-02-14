@@ -16,18 +16,27 @@ from datetime import datetime
 from pathlib import Path
 
 def run_pwsh_file(file_win: str, args: list[str]) -> str:
-    cp = subprocess.run(
+    attempts = [
         ["pwsh", "-NoProfile", "-File", file_win, *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    out = unicodedata.normalize("NFKC", cp.stdout)
-    if cp.returncode != 0:
-        raise RuntimeError(out.strip() or f"pwsh failed rc={cp.returncode}")
-    return out
+        ["pwsh.exe", "-NoProfile", "-File", file_win, *args],
+    ]
+    last_out = ""
+    last_code = 1
+    for cmd in attempts:
+        cp = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        out = unicodedata.normalize("NFKC", cp.stdout)
+        if cp.returncode == 0:
+            return out
+        last_out = out
+        last_code = cp.returncode
+    raise RuntimeError(last_out.strip() or f"pwsh failed rc={last_code}")
 
 
 def run_py(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = None) -> str:
@@ -93,29 +102,36 @@ def main() -> int:
         raise SystemExit("destRoot is required: pass --dest-root or configure plugin destRoot")
 
     ops_root = Path(args.windows_ops_root).resolve()
+    db_dir = ops_root / "db"
     move_dir = ops_root / "move"
     llm_dir = ops_root / "llm"
     if not args.db:
-        args.db = str(ops_root / "db" / "mediaops.sqlite")
+        args.db = str(db_dir / "mediaops.sqlite")
 
+    ops_root_win = wsl_to_win(ops_root)
     scripts_root_win = wsl_to_win(ops_root / "scripts")
+    db_dir.mkdir(parents=True, exist_ok=True)
     move_dir.mkdir(parents=True, exist_ok=True)
     llm_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     here = Path(__file__).resolve().parent
 
-    normalize_args = ["-Root", args.source_root]
+    normalize_args = ["-Root", args.source_root, "-OpsRoot", ops_root_win]
     if not args.apply:
         normalize_args.append("-DryRun")
     run_pwsh_file(scripts_root_win + r"\normalize_filenames.ps1", normalize_args)
 
     run_pwsh_file(
         scripts_root_win + r"\unwatched_inventory.ps1",
-        ["-Root", args.source_root, "-IncludeHash"],
+        ["-Root", args.source_root, "-OpsRoot", ops_root_win, "-IncludeHash"],
     )
     inv = latest(move_dir, "inventory_unwatched_*.jsonl")
 
-    run_py_uv(here / "ingest_inventory_jsonl.py", ["--jsonl", str(inv), "--target-root", args.source_root], cwd=str(here))
+    run_py_uv(
+        here / "ingest_inventory_jsonl.py",
+        ["--db", args.db, "--jsonl", str(inv), "--target-root", args.source_root],
+        cwd=str(here),
+    )
 
     queue = llm_dir / f"queue_unwatched_batch_{ts}.jsonl"
     run_py_uv(
@@ -144,6 +160,8 @@ def main() -> int:
             str(queue),
             "--outdir",
             str(llm_dir),
+            "--hints",
+            str(ops_root / "rules" / "program_aliases.yaml"),
             "--batch-size",
             "50",
             "--start-batch",
@@ -173,7 +191,7 @@ def main() -> int:
         plan_out = {"raw": plan_out_raw}
     plan = latest(move_dir, "move_plan_from_inventory_*.jsonl")
 
-    apply_args = ["-PlanJsonl", wsl_to_win(plan)]
+    apply_args = ["-PlanJsonl", wsl_to_win(plan), "-OpsRoot", ops_root_win]
     if not args.apply:
         apply_args.append("-DryRun")
     run_pwsh_file(scripts_root_win + r"\apply_move_plan.ps1", apply_args)

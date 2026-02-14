@@ -8,6 +8,7 @@ import os
 import re
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -35,6 +36,19 @@ REQUIRED = {
     "normalized_program_key",
     "evidence",
 }
+DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
+ACTIVE_TITLE_ARCHITECTURE = "A_AI_PRIMARY_WITH_GUARDRAILS"
+DEFERRED_TITLE_ARCHITECTURES = (
+    "B_FULL_AI_MIN_RULES",
+    "C_LEGACY_PARSER_WITH_AI_REVIEW",
+    "D_RULE_ENGINE_PRIMARY_WITH_AI_FALLBACK",
+    "E_TWO_STAGE_LIGHT_PARSE_THEN_AI",
+)
+
+try:
+    import yaml  # type: ignore
+except Exception:
+    yaml = None
 
 
 def validate_rows(rows: list[dict]) -> list[str]:
@@ -45,6 +59,9 @@ def validate_rows(rows: list[dict]) -> list[str]:
         missing = sorted([k for k in REQUIRED if k not in obj])
         if missing:
             errs.append(f"row {i}: missing keys: {missing}")
+        missing_contract = sorted([k for k in DB_CONTRACT_REQUIRED if k not in obj])
+        if missing_contract:
+            errs.append(f"row {i}: missing DB contract keys: {missing_contract}")
         c = obj.get("confidence")
         if not (isinstance(c, (int, float)) and 0 <= float(c) <= 1):
             errs.append(f"row {i}: confidence must be 0..1")
@@ -104,100 +121,89 @@ def parse_quoted_subtitle(s: str) -> str | None:
     return m.group(1) if m else None
 
 
-def parse_broadcaster(base: str) -> str | None:
-    s = norm_ws(base)
-    table = [
-        (r"\bNHK\b|ＮＨＫ", "NHK"),
-        (r"\bEテレ\b", "NHK Eテレ"),
-        (r"\bBS11\b", "BS11"),
-        (r"\bBSフジ\b", "BSフジ"),
-        (r"\bBS朝日\b", "BS朝日"),
-        (r"\bBS-TBS\b", "BS-TBS"),
-        (r"\bテレ東\b|テレビ東京", "テレビ東京"),
-        (r"\b日テレ\b|日本テレビ", "日本テレビ"),
-        (r"\bTBS\b", "TBS"),
-        (r"\bフジテレビ\b", "フジテレビ"),
-        (r"\bテレビ朝日\b", "テレビ朝日"),
-    ]
-    for pat, name in table:
-        if re.search(pat, s, flags=re.IGNORECASE):
-            return name
-    return None
+def _normalize_alias_key(s: str) -> str:
+    return norm_ws(s).lower()
 
 
-def infer_genre(program_title: str, subtitle: str | None) -> str | None:
-    s = f"{program_title} {subtitle or ''}"
-    rules = [
-        (r"ニュース|報道|NEWS", "news"),
-        (r"ドラマ|劇場|時代劇", "drama"),
-        (r"映画|シネマ|ムービー", "movie"),
-        (r"バラエティ|アンビリバボー", "variety"),
-        (r"ドキュメンタリー|documentary", "documentary"),
-        (r"スポーツ|野球|サッカー|駅伝", "sports"),
-        (r"アニメ", "anime"),
-        (r"音楽|ライブ|concert", "music"),
-    ]
-    for pat, genre in rules:
-        if re.search(pat, s, flags=re.IGNORECASE):
-            return genre
-    return None
+def _iter_hint_items(obj: Any) -> list[dict[str, Any]]:
+    if isinstance(obj, list):
+        return [x for x in obj if isinstance(x, dict)]
+    if isinstance(obj, dict):
+        out: list[dict[str, Any]] = []
+        for key in ("hints", "user_learned"):
+            seq = obj.get(key)
+            if isinstance(seq, list):
+                out.extend([x for x in seq if isinstance(x, dict)])
+        return out
+    return []
 
 
-def _load_rules(path: str | None):
-    if not path:
+def _load_hint_items_from_file(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
         return []
     try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            obj = json.load(f)
-        return obj.get("rules", []) if isinstance(obj, dict) else []
-    except FileNotFoundError:
-        return []
+        if path.suffix.lower() == ".json":
+            with path.open("r", encoding="utf-8-sig") as f:
+                obj = json.load(f)
+            return _iter_hint_items(obj)
+        if path.suffix.lower() in {".yaml", ".yml"}:
+            if yaml is None:
+                print(f"W hints yaml parser unavailable, skip={path}")
+                return []
+            with path.open("r", encoding="utf-8-sig") as f:
+                obj = yaml.safe_load(f)
+            return _iter_hint_items(obj)
+    except Exception as e:
+        print(f"W failed to load hints: path={path} error={e}")
+    return []
 
 
-def _split_segments(s: str, seps: list[str]):
-    pat = "|".join([re.escape(x) for x in seps])
-    parts = [p.strip(" _") for p in re.split(pat, s) if p.strip(" _")]
-    return parts
+def _load_hints(path: str | None) -> tuple[dict[str, str], bool]:
+    if not path:
+        return {}, False
+    p = Path(path)
+    if not p.exists():
+        print(f"W hints file missing: {p}")
+        return {}, False
+
+    files: list[Path]
+    if p.is_dir():
+        files = sorted(
+            [x for x in p.glob("*") if x.suffix.lower() in {".yaml", ".yml", ".json"}]
+        )
+    else:
+        files = [p]
+
+    alias_map: dict[str, str] = {}
+    for fp in files:
+        for item in _load_hint_items_from_file(fp):
+            canonical = item.get("canonical_title")
+            if not isinstance(canonical, str):
+                continue
+            canonical = canonical.strip()
+            if not canonical:
+                continue
+            aliases = item.get("aliases")
+            raw_aliases: list[str] = []
+            if isinstance(aliases, list):
+                raw_aliases.extend([a for a in aliases if isinstance(a, str)])
+            raw_aliases.append(canonical)
+            for alias in raw_aliases:
+                key = _normalize_alias_key(alias)
+                if key:
+                    alias_map[key] = canonical
+    return alias_map, len(alias_map) > 0
 
 
-def _apply_exception_rules(b: str, rules: list[dict]) -> tuple[str, str | None] | None:
-    for r in rules:
-        if not r or not r.get("enabled", True):
-            continue
-        m = r.get("match") or {}
-        if m.get("field") != "base":
-            continue
-        rx = m.get("regex")
-        if not rx:
-            continue
-        m2 = re.search(rx, b)
-        if not m2:
-            continue
-
-        s = r.get("set") or {}
-        prog_tmpl = s.get("program_title")
-        if not prog_tmpl:
-            continue
-
-        prog = prog_tmpl
-        for gi in range(1, 10):
-            token = f"\\{gi}"
-            if token in prog:
-                prog = prog.replace(token, m2.group(gi) or "") if gi <= (m2.lastindex or 0) else prog.replace(token, "")
-        prog = re.sub(r"\\[1-9]", "", prog).strip()
-
-        subtitle = None
-        sub_cfg = s.get("subtitle")
-        if isinstance(sub_cfg, dict) and sub_cfg.get("from") == "segments":
-            seps = sub_cfg.get("separators") or ["▽", "▼"]
-            parts = _split_segments(b, seps)
-            if parts and parts[0].startswith(prog):
-                parts = parts[1:]
-            take = int(sub_cfg.get("take", 1))
-            if parts and take >= 1:
-                subtitle = parts[0][:120]
-        return prog, subtitle
-    return None
+def _canonicalize_title_from_hints(base: str, parsed_program_title: str, alias_map: dict[str, str]) -> str:
+    key = _normalize_alias_key(parsed_program_title)
+    if key in alias_map:
+        return alias_map[key]
+    base_norm = _normalize_alias_key(base)
+    for alias_key, canonical in alias_map.items():
+        if alias_key and alias_key in base_norm:
+            return canonical
+    return parsed_program_title
 
 
 def parse_program_and_subtitle(base: str) -> tuple[str, str | None]:
@@ -250,6 +256,31 @@ def parse_program_and_subtitle(base: str) -> tuple[str, str | None]:
     return prog[:80], parse_quoted_subtitle(b)
 
 
+def extract_title_ai_primary(name: str, base: str, alias_hints: dict[str, str]) -> dict:
+    # Architecture A: AI-primary path with optional alias guardrails.
+    prog, sub = parse_program_and_subtitle(base)
+    canonical = _canonicalize_title_from_hints(base=base, parsed_program_title=prog, alias_map=alias_hints)
+    source = "ai_primary_policy"
+    if canonical != prog:
+        prog = canonical
+        source = "ai_primary_policy+hints"
+    return {
+        "program_title": prog,
+        "subtitle": sub,
+        "episode_no": parse_episode(base),
+        "air_date": extract_air_date(name),
+        "title_extraction_path": source,
+    }
+
+
+def enforce_db_contract(row: dict) -> None:
+    missing = [k for k in DB_CONTRACT_REQUIRED if k not in row]
+    if missing:
+        raise ValueError(f"missing DB contract keys: {missing}")
+    if not isinstance(row.get("needs_review"), bool):
+        raise ValueError("needs_review must be bool")
+
+
 def load_queue(path: str):
     with open(path, "r", encoding="utf-8-sig") as f:
         for i, line in enumerate(f):
@@ -277,10 +308,15 @@ def main() -> int:
     ap.add_argument("--max-batches", type=int, default=None)
     ap.add_argument("--model", default="openai-codex/gpt-5.2")
     ap.add_argument("--extraction-version", default="prompt_v1_20260208")
-    ap.add_argument("--rules", default="")
+    ap.add_argument("--hints", default="")
     args = ap.parse_args()
 
-    rules = _load_rules(args.rules)
+    alias_hints, hints_loaded = _load_hints(args.hints)
+    print(
+        f"INFO title_architecture={ACTIVE_TITLE_ARCHITECTURE} "
+        f"deferred={','.join(DEFERRED_TITLE_ARCHITECTURES)} "
+        f"hints_loaded={str(hints_loaded).lower()} hints_count={len(alias_hints)}"
+    )
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     batch: list[dict] = []
@@ -301,14 +337,11 @@ def main() -> int:
         for rec in batch:
             name = rec["name"]
             base = strip_suffix(name)
-            base = re.sub(r"^【(?:最新作|新作|話題作|メガヒット\d+)】", "", base).strip(" _")
-            air = extract_air_date(name)
-            ex = _apply_exception_rules(base, rules)
-            if ex:
-                prog, sub = ex
-            else:
-                prog, sub = parse_program_and_subtitle(base)
-            ep = parse_episode(base)
+            title_res = extract_title_ai_primary(name=name, base=base, alias_hints=alias_hints)
+            air = title_res.get("air_date")
+            prog = str(title_res.get("program_title") or "")
+            sub = title_res.get("subtitle")
+            ep = title_res.get("episode_no")
 
             needs = False
             reasons: list[str] = []
@@ -338,28 +371,28 @@ def main() -> int:
                 reasons.append("program_title_too_long")
                 conf = min(conf, 0.7)
 
-            broadcaster = parse_broadcaster(base)
-            genre = infer_genre(prog, sub)
-            rows.append(
-                {
-                    "path_id": rec["path_id"],
-                    "path": rec["path"],
-                    "program_title": prog,
-                    "episode_no": ep,
-                    "subtitle": sub,
-                    "air_date": air,
-                    "genre": genre,
-                    "broadcaster": broadcaster,
-                    "channel": broadcaster,
-                    "confidence": round(float(conf), 2),
-                    "needs_review": bool(needs),
-                    "needs_review_reason": ",".join(reasons) if reasons else None,
-                    "model": args.model,
-                    "extraction_version": args.extraction_version,
-                    "normalized_program_key": norm_key(prog),
-                    "evidence": {"source_name": "filename", "raw": name},
-                }
-            )
+            row = {
+                "path_id": rec["path_id"],
+                "path": rec["path"],
+                "program_title": prog,
+                "episode_no": ep,
+                "subtitle": sub,
+                "air_date": air,
+                "genre": None,
+                "broadcaster": None,
+                "channel": None,
+                "confidence": round(float(conf), 2),
+                "needs_review": bool(needs),
+                "needs_review_reason": ",".join(reasons) if reasons else None,
+                "model": args.model,
+                "extraction_version": args.extraction_version,
+                "normalized_program_key": norm_key(prog),
+                "title_architecture": ACTIVE_TITLE_ARCHITECTURE,
+                "title_extraction_path": title_res.get("title_extraction_path"),
+                "evidence": {"source_name": "filename", "raw": name},
+            }
+            enforce_db_contract(row)
+            rows.append(row)
 
         write_jsonl(epath, rows)
         errs = validate_rows(rows)

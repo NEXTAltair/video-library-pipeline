@@ -17,13 +17,21 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
       },
       async execute(_id: string, params: AnyObj) {
         const cfg = getCfg(api);
+        const dbDir = !!cfg.db ? path.dirname(cfg.db) : "";
         const moveDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "move") : "";
         const llmDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "llm") : "";
+        const rulesDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "rules") : "";
+        const scriptsDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "scripts") : "";
+        const hintsPath = rulesDir ? path.join(rulesDir, "program_aliases.yaml") : "";
         const checks: AnyObj = {
-          dbExists: !!cfg.db && fs.existsSync(cfg.db),
+          dbPathConfigured: !!cfg.db,
+          dbParentDirExists: !!dbDir && fs.existsSync(dbDir),
           windowsOpsRootExists: !!cfg.windowsOpsRoot && fs.existsSync(cfg.windowsOpsRoot),
           moveDirExists: !!moveDir && fs.existsSync(moveDir),
           llmDirExists: !!llmDir && fs.existsSync(llmDir),
+          rulesDirExists: !!rulesDir && fs.existsSync(rulesDir),
+          scriptsDirExists: !!scriptsDir && fs.existsSync(scriptsDir),
+          hintsYamlPresent: !!hintsPath && fs.existsSync(hintsPath),
         };
         const uv = runCmd("uv", ["--version"]);
         const py = runCmd("uv", ["run", "python", "--version"]);
@@ -31,12 +39,14 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
         checks.pythonViaUv = py.ok;
 
         if (params.checkWindowsInterop) {
-          const pw = runCmd("pwsh", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
+          let pw = runCmd("pwsh", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
+          if (!pw.ok) {
+            pw = runCmd("pwsh.exe", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
+          }
           checks.pwsh7 = pw.ok;
           checks.pwshVersion = pw.stdout.trim();
 
           // Active pipeline depends on these Windows-side scripts.
-          const scriptsDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "scripts") : "";
           const requiredScripts = [
             "normalize_filenames.ps1",
             "unwatched_inventory.ps1",
@@ -62,7 +72,15 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           ? checks.requiredWindowsScripts.every((s: AnyObj) => s.exists === true)
           : true;
         const ok = Object.entries(checks).every(([k, v]) => {
-          if (k === "requiredWindowsScripts" || k === "maintenanceWindowsScripts") return true;
+          if (
+            k === "requiredWindowsScripts" ||
+            k === "maintenanceWindowsScripts" ||
+            k === "hintsYamlPresent" ||
+            k === "moveDirExists" ||
+            k === "llmDirExists"
+          ) {
+            return true;
+          }
           return v === true || typeof v === "string";
         }) && scriptChecks;
         return toToolResult({ ok, tool: "video_pipeline_validate", checks });

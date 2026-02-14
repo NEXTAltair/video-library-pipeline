@@ -21,6 +21,7 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
         const resolved = resolvePythonScript("run_metadata_batches_promptv1.py");
         const hostRoot = String(cfg.windowsOpsRoot || "/tmp").replace(/\/+$/, "");
         const outDir = `${hostRoot}/llm`;
+        const hintsPath = `${hostRoot}/rules/program_aliases.yaml`;
         const queue = String(params.queuePath || `${outDir}/queue_manual_reextract.jsonl`);
         const args = [
           "run",
@@ -32,6 +33,8 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
           queue,
           "--outdir",
           outDir,
+          "--hints",
+          hintsPath,
           "--batch-size",
           String(params.batchSize ?? 50),
         ];
