@@ -10,15 +10,15 @@
       "db": { "type": "string", "minLength": 1 },
       "sourceRoot": { "type": "string", "minLength": 1 },
       "destRoot": { "type": "string", "minLength": 1 },
-      "hostDataRoot": { "type": "string", "minLength": 1 },
-      "defaultLimit": { "type": "integer", "minimum": 1, "maximum": 5000 }
+      "windowsOpsRoot": { "type": "string", "minLength": 1 },
+      "defaultMaxFilesPerRun": { "type": "integer", "minimum": 1, "maximum": 5000 }
     }
   },
   "uiHints": {
-    "db": { "label": "SQLite DB path", "placeholder": "<host-data-root>/db/mediaops.sqlite" },
+    "db": { "label": "SQLite DB path", "placeholder": "<windows-ops-root>/db/mediaops.sqlite" },
     "sourceRoot": { "label": "Source root", "placeholder": "<source-root>" },
     "destRoot": { "label": "Destination root", "placeholder": "<dest-root>" },
-    "hostDataRoot": { "label": "Host data root", "placeholder": "<host-data-root>" },
-    "defaultLimit": { "label": "Default batch limit" }
+    "windowsOpsRoot": { "label": "Windows ops root", "placeholder": "<windows-ops-root>" },
+    "defaultMaxFilesPerRun": { "label": "Default max files per run" }
   }
 }

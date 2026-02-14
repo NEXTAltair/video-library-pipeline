@@ -9,7 +9,7 @@ Design goals:
 - Tags are attached to paths (v1), imported from Tablacus label3.db.
 - Arbitrary metadata attaches to paths as JSON (path_metadata).
 
-DB path (approved): B:\\_AI_WORK\\db\\mediaops.sqlite
+DB path is provided by runtime config/CLI arguments.
 
 NOTE: SQLite JSON is stored as TEXT; validate at the application layer.
 """

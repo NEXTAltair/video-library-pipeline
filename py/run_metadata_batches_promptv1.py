@@ -269,6 +269,7 @@ def write_jsonl(path: Path, rows: list[dict]):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--db", required=True)
     ap.add_argument("--queue", required=True)
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--batch-size", type=int, default=200)
@@ -276,7 +277,7 @@ def main() -> int:
     ap.add_argument("--max-batches", type=int, default=None)
     ap.add_argument("--model", default="openai-codex/gpt-5.2")
     ap.add_argument("--extraction-version", default="prompt_v1_20260208")
-    ap.add_argument("--rules", default="/mnt/b/_AI_WORK/rules/program_aliases.json")
+    ap.add_argument("--rules", default="")
     args = ap.parse_args()
 
     rules = _load_rules(args.rules)
@@ -292,8 +293,8 @@ def main() -> int:
             return
         batch_idx += 1
         batch_no = args.start_batch + batch_idx - 1
-        bpath = outdir / f"batch_promptv1_{batch_no:04d}_{len(batch):04d}.jsonl"
-        epath = outdir / f"extracted_promptv1_{batch_no:04d}_{len(batch):04d}.jsonl"
+        bpath = outdir / f"llm_filename_extract_input_{batch_no:04d}_{len(batch):04d}.jsonl"
+        epath = outdir / f"llm_filename_extract_output_{batch_no:04d}_{len(batch):04d}.jsonl"
         write_jsonl(bpath, batch)
 
         rows = []
@@ -370,7 +371,7 @@ def main() -> int:
         from upsert_path_metadata_jsonl import main as _upsert_main  # type: ignore
         import sys
 
-        sys.argv = ["upsert", "--in", str(epath), "--source", "llm"]
+        sys.argv = ["upsert", "--db", args.db, "--in", str(epath), "--source", "llm"]
         if _upsert_main() != 0:
             raise SystemExit(f"upsert failed: {epath}")
 

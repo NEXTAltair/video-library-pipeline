@@ -9,8 +9,7 @@ We also stamp:
 - updated_at (now)
 
 Usage:
-  cd ~/.openclaw/workspace/val/mediaops
-  . .venv/bin/activate
+  cd <video-library-pipeline-dir>/py
   python upsert_path_metadata_jsonl.py --in extracted.jsonl --source llm
 
 Safety:
@@ -28,9 +27,6 @@ from sqlalchemy import create_engine, select
 
 from mediaops_schema import paths, path_metadata
 
-DB_DEFAULT = "/mnt/b/_AI_WORK/db/mediaops.sqlite"
-
-
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -46,12 +42,14 @@ def iter_jsonl(path: str):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=DB_DEFAULT)
+    ap.add_argument("--db", default="")
     ap.add_argument("--in", dest="inp", required=True)
     ap.add_argument("--source", default="llm")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    if not args.db:
+        raise SystemExit("db is required: pass --db or configure plugin db")
     if not os.path.exists(args.db):
         raise SystemExit(f"DB not found: {args.db}")
     if not os.path.exists(args.inp):

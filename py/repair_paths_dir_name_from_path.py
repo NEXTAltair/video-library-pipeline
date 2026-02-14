@@ -18,11 +18,13 @@ def split_win(p: str) -> tuple[str | None, str | None, str | None]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default="/mnt/b/_AI_WORK/db/mediaops.sqlite")
+    ap.add_argument("--db", default="")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
+    if not args.db:
+        raise SystemExit("db is required: pass --db")
     con = sqlite3.connect(args.db)
     cur = con.cursor()
 

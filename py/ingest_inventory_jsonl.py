@@ -1,6 +1,6 @@
 """Ingest inventory JSONL into mediaops.sqlite.
 
-Input: JSONL produced by scripts/inventory_scan.ps1
+Input: JSONL produced by scripts/unwatched_inventory.ps1
 Each line is a JSON object like:
   { path, dir, name, ext, type, size, mtimeUtc, nameFlags }
 
@@ -24,10 +24,7 @@ from typing import Iterable
 from sqlalchemy import create_engine, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from mediaops_schema import metadata, runs, paths, observations
-
-DB_DEFAULT = "/mnt/b/_AI_WORK/db/mediaops.sqlite"
-
+from mediaops_schema import metadata, observations, paths, runs
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -38,6 +35,8 @@ def normalize_win_path(p: str) -> str:
     return p.lower()
 
 
+# Stable namespace for deterministic path_id generation across runs/environments.
+# This is intentionally fixed so the same normalized path always maps to the same UUIDv5.
 PATH_NAMESPACE = uuid.UUID("f4f67a6f-90c6-4ee4-9c1a-2c0d25b3b0c4")
 
 
@@ -73,12 +72,14 @@ def iter_jsonl(path: str) -> Iterable[dict]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=DB_DEFAULT)
+    ap.add_argument("--db", default="")
     ap.add_argument("--jsonl", required=True)
     ap.add_argument("--target-root", default=None)
     ap.add_argument("--tool-version", default=None)
     args = ap.parse_args()
 
+    if not args.db:
+        raise SystemExit("db is required: pass --db or configure plugin db")
     if not os.path.exists(args.db):
         raise SystemExit(f"DB not found: {args.db} (did you run alembic upgrade head?)")
 
@@ -161,9 +162,7 @@ def main() -> int:
             c.obs_upserted += 1
 
         finished_at = now_iso()
-        conn.execute(
-            runs.update().where(runs.c.run_id == run_id).values(finished_at=finished_at)
-        )
+        conn.execute(runs.update().where(runs.c.run_id == run_id).values(finished_at=finished_at))
         n_obs = conn.execute(select(observations.c.path_id).where(observations.c.run_id == run_id)).fetchall()
 
     print("OK")

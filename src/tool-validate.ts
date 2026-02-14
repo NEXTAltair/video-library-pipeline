@@ -12,29 +12,33 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
         type: "object",
         additionalProperties: false,
         properties: {
-          strict: { type: "boolean", default: true },
           checkWindowsInterop: { type: "boolean", default: true },
         },
       },
       async execute(_id: string, params: AnyObj) {
         const cfg = getCfg(api);
+        const moveDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "move") : "";
+        const llmDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "llm") : "";
         const checks: AnyObj = {
           dbExists: !!cfg.db && fs.existsSync(cfg.db),
-          hostDataRootExists: !!cfg.hostDataRoot && fs.existsSync(cfg.hostDataRoot),
+          windowsOpsRootExists: !!cfg.windowsOpsRoot && fs.existsSync(cfg.windowsOpsRoot),
+          moveDirExists: !!moveDir && fs.existsSync(moveDir),
+          llmDirExists: !!llmDir && fs.existsSync(llmDir),
         };
         const uv = runCmd("uv", ["--version"]);
-        const py = runCmd("python3", ["--version"]);
+        const py = runCmd("uv", ["run", "python", "--version"]);
         checks.uv = uv.ok;
-        checks.python3 = py.ok;
+        checks.pythonViaUv = py.ok;
 
         if (params.checkWindowsInterop) {
-          const pw = runCmd("/mnt/c/Program Files/PowerShell/7/pwsh.exe", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
+          const pw = runCmd("pwsh", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
           checks.pwsh7 = pw.ok;
           checks.pwshVersion = pw.stdout.trim();
 
           // Active pipeline depends on these Windows-side scripts.
-          const scriptsDir = "B:\\_AI_WORK\\scripts";
+          const scriptsDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "scripts") : "";
           const requiredScripts = [
+            "normalize_filenames.ps1",
             "unwatched_inventory.ps1",
             "apply_move_plan.ps1",
             "fix_prefix_timestamp_names.ps1",
@@ -43,8 +47,14 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           ];
           checks.requiredWindowsScripts = requiredScripts.map((name) => ({
             name,
-            exists: fs.existsSync(path.join("/mnt/b/_AI_WORK/scripts", name)),
-            windowsPath: `${scriptsDir}\\${name}`,
+            exists: !!scriptsDir && fs.existsSync(path.join(scriptsDir, name)),
+            path: scriptsDir ? path.join(scriptsDir, name) : "",
+          }));
+          const maintenanceScripts = ["repair_collisions_nested_drive.ps1", "rollback_rename_jsonl.ps1"];
+          checks.maintenanceWindowsScripts = maintenanceScripts.map((name) => ({
+            name,
+            exists: !!scriptsDir && fs.existsSync(path.join(scriptsDir, name)),
+            path: scriptsDir ? path.join(scriptsDir, name) : "",
           }));
         }
 
@@ -52,7 +62,7 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           ? checks.requiredWindowsScripts.every((s: AnyObj) => s.exists === true)
           : true;
         const ok = Object.entries(checks).every(([k, v]) => {
-          if (k === "requiredWindowsScripts") return true;
+          if (k === "requiredWindowsScripts" || k === "maintenanceWindowsScripts") return true;
           return v === true || typeof v === "string";
         }) && scriptChecks;
         return toToolResult({ ok, tool: "video_pipeline_validate", checks });

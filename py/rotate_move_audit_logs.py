@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-r"""Rotate /mnt/b/_AI_WORK/move audit logs to keep the workspace readable."""
+r"""Rotate move/llm audit logs to keep the workspace readable."""
 
 from __future__ import annotations
 
 import argparse
 import gzip
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -22,14 +22,19 @@ def _gzip_file(src: Path) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--move-dir", default="/mnt/b/_AI_WORK/move")
+    ap.add_argument("--move-dir", required=True)
+    ap.add_argument("--llm-dir", required=True)
     ap.add_argument("--keep-batches", type=int, default=5)
     ap.add_argument("--keep-listings", type=int, default=3)
+    ap.add_argument("--ttl-days", type=int, default=30)
     args = ap.parse_args()
 
     move_dir = Path(args.move_dir)
     arc = move_dir / "archive"
     arc.mkdir(parents=True, exist_ok=True)
+    llm_dir = Path(args.llm_dir)
+    llm_arc = llm_dir / "archive"
+    llm_arc.mkdir(parents=True, exist_ok=True)
 
     remaining = sorted(move_dir.glob("remaining_unwatched_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
     latest_remaining = remaining[0].name if remaining else None
@@ -92,6 +97,34 @@ def main() -> int:
             lines.append(f"  - {name}")
     lines.extend(["", "## Archived", "- archive/*.jsonl.gz (older logs)"])
     manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # LLM artifact retention:
+    # keep the latest N files for each active prefix, archive+gzip older files.
+    llm_prefixes = [
+        "queue_unwatched_batch_",
+        "llm_filename_extract_input_",
+        "llm_filename_extract_output_",
+    ]
+    keep_llm = set()
+    for prefix in llm_prefixes:
+        files = sorted(llm_dir.glob(f"{prefix}*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files[: max(args.keep_batches, 0)]:
+            keep_llm.add(p.name)
+    for p in llm_dir.glob("*.jsonl"):
+        if p.name in keep_llm:
+            continue
+        dest = llm_arc / p.name
+        if not dest.exists():
+            shutil.move(str(p), str(dest))
+        if dest.suffix == ".jsonl":
+            _gzip_file(dest)
+
+    # TTL cleanup on archived artifacts.
+    ttl_cutoff = datetime.now().astimezone() - timedelta(days=max(args.ttl_days, 0))
+    for arc_dir in [arc, llm_arc]:
+        for p in arc_dir.glob("*.gz"):
+            if datetime.fromtimestamp(p.stat().st_mtime).astimezone() < ttl_cutoff:
+                p.unlink(missing_ok=True)
 
     return 0
 

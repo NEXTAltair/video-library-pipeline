@@ -4,15 +4,20 @@ import type { ToolDef } from "./types";
 // 実際の execute 実装は index.ts 側で行う。
 export const TOOL_DEFINITIONS: ToolDef[] = [
   {
-    name: "video_pipeline_run",
+    name: "video_pipeline_analyze_and_move_videos",
     description:
-      "Run end-to-end video pipeline (inventory, metadata, plan, apply, db update). Use apply=false for dry-run.",
+      "Analyze videos in source folder and move them to destination folder. Use apply=false for dry-run.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         apply: { type: "boolean", default: false },
-        limit: { type: "integer", minimum: 1, maximum: 5000 },
+        maxFilesPerRun: {
+          type: "integer",
+          minimum: 1,
+          maximum: 5000,
+          description: "Maximum files to process in one run for queue and plan stages.",
+        },
         allowNeedsReview: { type: "boolean", default: false },
         profile: { type: "string" },
         pathsOverride: {
@@ -22,7 +27,7 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
             db: { type: "string" },
             sourceRoot: { type: "string" },
             destRoot: { type: "string" },
-            hostDataRoot: { type: "string" },
+            windowsOpsRoot: { type: "string" },
           },
         },
       },
@@ -30,13 +35,12 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
   },
   {
     name: "video_pipeline_status",
-    description: "Read latest pipeline status from recent logs under hostDataRoot/move.",
+    description: "Read latest pipeline status summary from windowsOpsRoot/move.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
-        windowHours: { type: "integer", minimum: 1, maximum: 168, default: 24 },
-        includeLogs: { type: "boolean", default: true },
+        includeRawPaths: { type: "boolean", default: false },
       },
     },
   },
@@ -47,19 +51,17 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        strict: { type: "boolean", default: true },
         checkWindowsInterop: { type: "boolean", default: true },
       },
     },
   },
   {
     name: "video_pipeline_repair_db",
-    description: "Run DB repair helpers for path/link consistency (safe/full modes).",
+    description: "Repair DB path fields from canonical Windows path values.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
-        mode: { type: "string", enum: ["safe", "full"], default: "safe" },
         dryRun: { type: "boolean", default: true },
         limit: { type: "integer", minimum: 1, maximum: 5000 },
       },
@@ -67,17 +69,16 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
   },
   {
     name: "video_pipeline_reextract",
-    description: "Run metadata re-extraction batch from queue source conditions.",
+    description: "Run metadata re-extraction batch from queue JSONL.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
-        source: { type: "string", enum: ["needsReview", "version", "inventory"] },
+        queuePath: { type: "string" },
         extractionVersion: { type: "string" },
-        limit: { type: "integer", minimum: 1, maximum: 5000, default: 200 },
         batchSize: { type: "integer", minimum: 1, maximum: 1000, default: 50 },
+        maxBatches: { type: "integer", minimum: 1, maximum: 1000 },
       },
-      required: ["source"],
     },
   },
   {

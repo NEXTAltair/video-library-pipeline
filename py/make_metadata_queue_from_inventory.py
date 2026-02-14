@@ -9,8 +9,6 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import PureWindowsPath
 
-DB_DEFAULT = "/mnt/b/_AI_WORK/db/mediaops.sqlite"
-
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -31,13 +29,17 @@ def latest_llm_row(cur: sqlite3.Cursor, path_id: str):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=DB_DEFAULT)
+    ap.add_argument("--db", default="")
     ap.add_argument("--inventory", required=True)
-    ap.add_argument("--source-root", default=r"B:\\未視聴")
+    ap.add_argument("--source-root", default="")
     ap.add_argument("--limit", type=int, default=200)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
+    if not args.db:
+        raise SystemExit("db is required: pass --db or configure plugin db")
+    if not args.source_root:
+        raise SystemExit("sourceRoot is required: pass --source-root")
     con = sqlite3.connect(args.db)
     cur = con.cursor()
     root = args.source_root.rstrip("\\")

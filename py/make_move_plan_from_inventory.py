@@ -53,17 +53,24 @@ def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default="/mnt/b/_AI_WORK/db/mediaops.sqlite")
+    ap.add_argument("--db", default="")
     ap.add_argument("--inventory", required=True)
-    ap.add_argument("--source-root", default=r"B:\\未視聴")
-    ap.add_argument("--dest-root", default=r"B:\\VideoLibrary\\by_program")
+    ap.add_argument("--source-root", default="")
+    ap.add_argument("--dest-root", default="")
     ap.add_argument("--out", default="")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--allow-needs-review", action="store_true")
     args = ap.parse_args()
 
+    if not args.db:
+        raise SystemExit("db is required: pass --db or configure plugin db")
+    if not args.source_root:
+        raise SystemExit("sourceRoot is required: pass --source-root")
+    if not args.dest_root:
+        raise SystemExit("destRoot is required: pass --dest-root")
+
     run_id = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = Path(args.out) if args.out else Path("/mnt/b/_AI_WORK/move") / f"move_plan_from_inventory_{run_id}.jsonl"
+    out = Path(args.out) if args.out else Path(args.inventory).resolve().parent / f"move_plan_from_inventory_{run_id}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 
     con = sqlite3.connect(args.db)

@@ -4,15 +4,20 @@ import type { AnyObj } from "./types";
 export function registerToolRun(api: any, getCfg: (api: any) => any) {
   api.registerTool(
     {
-      name: "video_pipeline_run",
+      name: "video_pipeline_analyze_and_move_videos",
       description:
-        "Run end-to-end video pipeline (inventory, metadata, plan, apply, db update). Use apply=false for dry-run.",
+        "Analyze videos in source folder and move them to destination folder. Use apply=false for dry-run.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           apply: { type: "boolean", default: false },
-          limit: { type: "integer", minimum: 1, maximum: 5000 },
+          maxFilesPerRun: {
+            type: "integer",
+            minimum: 1,
+            maximum: 5000,
+            description: "Maximum files to process in one run for queue and plan stages.",
+          },
           allowNeedsReview: { type: "boolean", default: false },
           profile: { type: "string" },
           pathsOverride: {
@@ -22,7 +27,7 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
               db: { type: "string" },
               sourceRoot: { type: "string" },
               destRoot: { type: "string" },
-              hostDataRoot: { type: "string" },
+              windowsOpsRoot: { type: "string" },
             },
           },
         },
@@ -38,8 +43,8 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
           "run",
           "python",
           resolved.scriptPath,
-          "--limit",
-          String(params.limit ?? merged.defaultLimit ?? 200),
+          "--max-files-per-run",
+          String(params.maxFilesPerRun ?? merged.defaultMaxFilesPerRun ?? 200),
         ];
         if (params.apply) args.push("--apply");
         if (params.allowNeedsReview) args.push("--allow-needs-review");
@@ -48,7 +53,7 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
         const r = runCmd("uv", args, resolved.cwd);
         return toToolResult({
           ok: r.ok,
-          tool: "video_pipeline_run",
+          tool: "video_pipeline_analyze_and_move_videos",
           scriptSource: resolved.source,
           scriptPath: resolved.scriptPath,
           exitCode: r.code,

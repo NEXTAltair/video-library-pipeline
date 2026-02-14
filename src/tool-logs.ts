@@ -18,7 +18,7 @@ export function registerToolLogs(api: any, getCfg: (api: any) => any) {
       },
       async execute(_id: string, params: AnyObj) {
         const cfg = getCfg(api);
-        const moveDir = path.join(cfg.hostDataRoot || "", "move");
+        const moveDir = path.join(cfg.windowsOpsRoot || "", "move");
         const out: AnyObj = { ok: true, tool: "video_pipeline_logs", moveDir };
         const kind = params.kind ?? "all";
 

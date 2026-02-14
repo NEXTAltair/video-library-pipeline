@@ -6,16 +6,16 @@ export type VideoPipelinePluginConfig = {
   db?: string;
   sourceRoot?: string;
   destRoot?: string;
-  hostDataRoot?: string;
-  defaultLimit?: number;
+  windowsOpsRoot?: string;
+  defaultMaxFilesPerRun?: number;
 };
 
 export type VideoPipelineResolvedConfig = {
   db: string;
   sourceRoot: string;
   destRoot: string;
-  hostDataRoot: string;
-  defaultLimit: number;
+  windowsOpsRoot: string;
+  defaultMaxFilesPerRun: number;
 };
 
 // 入力が不正・未指定のときに使う既定値。
@@ -23,8 +23,8 @@ const DEFAULTS: VideoPipelineResolvedConfig = {
   db: "",
   sourceRoot: "",
   destRoot: "",
-  hostDataRoot: "",
-  defaultLimit: 200,
+  windowsOpsRoot: "",
+  defaultMaxFilesPerRun: 200,
 };
 
 // 文字列入力を trim して返す。文字列でなければ空文字。
@@ -34,7 +34,7 @@ function asNonEmptyString(v: unknown): string {
 
 // limit の範囲を 1..5000 に丸める。
 function asLimit(v: unknown): number {
-  if (typeof v !== "number" || !Number.isFinite(v)) return DEFAULTS.defaultLimit;
+  if (typeof v !== "number" || !Number.isFinite(v)) return DEFAULTS.defaultMaxFilesPerRun;
   const n = Math.trunc(v);
   if (n < 1) return 1;
   if (n > 5000) return 5000;
@@ -48,7 +48,7 @@ export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined)
     db: asNonEmptyString(cfg.db),
     sourceRoot: asNonEmptyString(cfg.sourceRoot),
     destRoot: asNonEmptyString(cfg.destRoot),
-    hostDataRoot: asNonEmptyString(cfg.hostDataRoot),
-    defaultLimit: asLimit(cfg.defaultLimit),
+    windowsOpsRoot: asNonEmptyString(cfg.windowsOpsRoot),
+    defaultMaxFilesPerRun: asLimit(cfg.defaultMaxFilesPerRun),
   };
 }
