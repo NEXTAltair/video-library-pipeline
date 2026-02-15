@@ -92,7 +92,8 @@ function analyzeToolEnvelope(toolEnvelope: AnyObj | null, eventError?: unknown):
   }
 
   const remaining = Number(summary.remaining_files ?? 0);
-  if (Number.isFinite(remaining) && remaining > 0) alerts.push(`remaining-files: ${remaining}`);
+  const apply = summary.apply === true;
+  if (apply && Number.isFinite(remaining) && remaining > 0) alerts.push(`remaining-files: ${remaining}`);
 
   const planStats = isObj(summary.plan_stats) ? summary.plan_stats : null;
   if (planStats) {

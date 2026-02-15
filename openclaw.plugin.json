@@ -2,7 +2,7 @@
   "id": "video-library-pipeline",
   "name": "Video Library Pipeline",
   "description": "Config-driven video library pipeline for inventory, metadata extraction, move planning, apply, and audit logging.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -20,6 +20,6 @@
     "sourceRoot": { "label": "Source root", "placeholder": "<source-root>" },
     "destRoot": { "label": "Destination root", "placeholder": "<dest-root>" },
     "windowsOpsRoot": { "label": "Windows ops root", "placeholder": "<windows-ops-root>" },
-    "defaultMaxFilesPerRun": { "label": "Default max files per run" }
+    "defaultMaxFilesPerRun": { "label": "Default batch limit" }
   }
 }

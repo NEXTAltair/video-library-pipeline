@@ -15,28 +15,64 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
+WIN_PWSH_CANDIDATES = [
+    "/mnt/c/Program Files/PowerShell/7/pwsh.exe",
+    "pwsh.exe",
+]
+
+
+def is_wsl_mnt_path(s: str) -> bool:
+    return s.startswith("/mnt/") and len(s) > 6 and s[6] == "/"
+
+
+def wsl_path_to_win_str(s: str) -> str:
+    if not is_wsl_mnt_path(s):
+        return s
+    drive = s[5].upper()
+    rest = s.split(f"/mnt/{s[5]}/", 1)[1].replace("/", "\\")
+    return f"{drive}:\\" + rest
+
+
+def canonicalize_windows_path(s: str) -> str:
+    p = wsl_path_to_win_str(s).replace("/", "\\")
+    if len(p) >= 2 and p[1] == ":":
+        return p[0].upper() + p[1:]
+    return p
+
+
+def normalize_arg_for_pwsh(arg: str) -> str:
+    return canonicalize_windows_path(arg)
+
+
 def run_pwsh_file(file_win: str, args: list[str]) -> str:
-    attempts = [
-        ["pwsh", "-NoProfile", "-File", file_win, *args],
-        ["pwsh.exe", "-NoProfile", "-File", file_win, *args],
-    ]
+    file_path = wsl_path_to_win_str(file_win)
+    norm_args = [normalize_arg_for_pwsh(a) for a in args]
     last_out = ""
     last_code = 1
-    for cmd in attempts:
-        cp = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+    tried: list[str] = []
+    for exe in WIN_PWSH_CANDIDATES:
+        cmd = [exe, "-NoProfile", "-File", file_path, *norm_args]
+        tried.append(exe)
+        try:
+            cp = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError:
+            last_out = f"{cmd[0]} not found"
+            last_code = 127
+            continue
         out = unicodedata.normalize("NFKC", cp.stdout)
         if cp.returncode == 0:
             return out
         last_out = out
         last_code = cp.returncode
-    raise RuntimeError(last_out.strip() or f"pwsh failed rc={last_code}")
+    details = last_out.strip() or f"pwsh failed rc={last_code}"
+    raise RuntimeError(f"{details} (tried: {', '.join(tried)})")
 
 
 def run_py(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = None) -> str:
@@ -108,6 +144,8 @@ def main() -> int:
     if not args.db:
         args.db = str(db_dir / "mediaops.sqlite")
 
+    source_root_win = canonicalize_windows_path(args.source_root)
+    dest_root_win = canonicalize_windows_path(args.dest_root)
     ops_root_win = wsl_to_win(ops_root)
     scripts_root_win = wsl_to_win(ops_root / "scripts")
     db_dir.mkdir(parents=True, exist_ok=True)
@@ -117,20 +155,20 @@ def main() -> int:
     here = Path(__file__).resolve().parent
     hints_yaml = here.parent / "rules" / "program_aliases.yaml"
 
-    normalize_args = ["-Root", args.source_root, "-OpsRoot", ops_root_win]
+    normalize_args = ["-Root", source_root_win, "-OpsRoot", ops_root_win]
     if not args.apply:
         normalize_args.append("-DryRun")
     run_pwsh_file(scripts_root_win + r"\normalize_filenames.ps1", normalize_args)
 
     run_pwsh_file(
         scripts_root_win + r"\unwatched_inventory.ps1",
-        ["-Root", args.source_root, "-OpsRoot", ops_root_win, "-IncludeHash"],
+        ["-Root", source_root_win, "-OpsRoot", ops_root_win, "-IncludeHash"],
     )
     inv = latest(move_dir, "inventory_unwatched_*.jsonl")
 
     run_py_uv(
         here / "ingest_inventory_jsonl.py",
-        ["--db", args.db, "--jsonl", str(inv), "--target-root", args.source_root],
+        ["--db", args.db, "--jsonl", str(inv), "--target-root", source_root_win],
         cwd=str(here),
     )
 
@@ -143,7 +181,7 @@ def main() -> int:
             "--inventory",
             str(inv),
             "--source-root",
-            args.source_root,
+            source_root_win,
             "--out",
             str(queue),
             "--limit",
@@ -177,9 +215,9 @@ def main() -> int:
         "--inventory",
         str(inv),
         "--source-root",
-        args.source_root,
+        source_root_win,
         "--dest-root",
-        args.dest_root,
+        dest_root_win,
         "--limit",
         str(args.max_files_per_run),
     ]
@@ -207,7 +245,7 @@ def main() -> int:
     remaining_txt = move_dir / f"remaining_unwatched_{ts}.txt"
     out = run_pwsh_file(
         scripts_root_win + r"\list_remaining_unwatched.ps1",
-        ["-Root", args.source_root],
+        ["-Root", source_root_win],
     )
     remaining_txt.write_text(out, encoding="utf-8")
 

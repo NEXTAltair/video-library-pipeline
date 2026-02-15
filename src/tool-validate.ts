@@ -47,12 +47,15 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
         checks.sqliteDbOpen = sqliteOpen.ok;
 
         if (params.checkWindowsInterop) {
-          let pw = runCmd("pwsh", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
-          if (!pw.ok) {
-            pw = runCmd("pwsh.exe", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
+          const pwshCandidates = ["/mnt/c/Program Files/PowerShell/7/pwsh.exe", "pwsh.exe"];
+          let pw = runCmd(pwshCandidates[0], ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
+          if (!pw.ok && pwshCandidates.length > 1) {
+            pw = runCmd(pwshCandidates[1], ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
           }
           checks.pwsh7 = pw.ok;
+          checks.pwshCommand = pw.command;
           checks.pwshVersion = pw.stdout.trim();
+          checks.pwshStderr = pw.stderr.trim();
 
           // Active pipeline depends on these Windows-side scripts.
           const requiredScripts = [
