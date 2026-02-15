@@ -5,6 +5,7 @@ import type { AnyObj } from "./types";
 
 const TARGET_TOOL = "video_pipeline_analyze_and_move_videos";
 const ALERT_MARKER = "[hook-alert]";
+const TOOL_NAME_REGEX = /^video_pipeline_[a-z0-9_]+$/;
 
 const REQUIRED_WINDOWS_SCRIPTS = [
   "normalize_filenames.ps1",
@@ -114,8 +115,28 @@ function analyzeToolEnvelope(toolEnvelope: AnyObj | null, eventError?: unknown):
   return Array.from(new Set(alerts));
 }
 
+function detectMistakenExecToolName(event: AnyObj): string | null {
+  if (event?.toolName !== "exec") return null;
+  const params = isObj(event?.params) ? event.params : {};
+  const command = typeof params.command === "string" ? params.command.trim() : "";
+  if (!command) return null;
+  const firstToken = command.split(/\s+/, 1)[0] || "";
+  if (!TOOL_NAME_REGEX.test(firstToken)) return null;
+  return firstToken;
+}
+
 export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
   api.on("before_tool_call", (event: AnyObj) => {
+    const mistakenToolName = detectMistakenExecToolName(event);
+    if (mistakenToolName) {
+      return {
+        block: true,
+        blockReason:
+          `blocked mistaken exec call: '${mistakenToolName}' is a plugin tool name, not a shell command. ` +
+          `Call the tool directly as ${mistakenToolName} with JSON params.`,
+      };
+    }
+
     if (event?.toolName !== TARGET_TOOL) return;
     const params = isObj(event?.params) ? event.params : {};
 

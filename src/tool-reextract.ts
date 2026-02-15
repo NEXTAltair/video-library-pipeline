@@ -28,6 +28,7 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
           extractionVersion: { type: "string" },
           batchSize: { type: "integer", minimum: 1, maximum: 1000, default: 50 },
           maxBatches: { type: "integer", minimum: 1, maximum: 1000 },
+          preserveHumanReviewed: { type: "boolean", default: true },
         },
       },
       async execute(_id: string, params: AnyObj) {
@@ -77,6 +78,7 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
         ];
         if (params.maxBatches) args.push("--max-batches", String(params.maxBatches));
         if (params.extractionVersion) args.push("--extraction-version", String(params.extractionVersion));
+        if (params.preserveHumanReviewed === false) args.push("--ignore-human-reviewed");
         const r = runCmd("uv", args, resolved.cwd);
         return toToolResult({
           ok: r.ok,
@@ -88,6 +90,7 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
           stderr: r.stderr,
           queue,
           queueAutoCreated,
+          preserveHumanReviewed: params.preserveHumanReviewed !== false,
         });
       },
     },

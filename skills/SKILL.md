@@ -1,22 +1,45 @@
 ---
 name: video-library-pipeline
-description: Run and inspect the video library pipeline via OpenClaw plugin tools. Prefer this over direct Python/PowerShell script execution, especially in cron/heartbeat automation.
+description: Run and inspect the video library pipeline via OpenClaw plugin tools. Interactive runs must use the 3-stage flow with human review at every gate.
 metadata: {"openclaw":{"emoji":"🎬","requires":{"plugins":["video-library-pipeline"]},"localReads":["~/.openclaw/openclaw.json"]}}
 ---
 
 # video-library-pipeline
 
-This skill defines the standard way to operate the `video-library-pipeline` plugin.
+This skill is the orchestrator for `video-library-pipeline`.
+
+Use one of the stage skills below for actual execution:
+
+- `extensions/video-library-pipeline/skills/normalize-review/SKILL.md`
+- `extensions/video-library-pipeline/skills/extract-review/SKILL.md`
+- `extensions/video-library-pipeline/skills/move-review/SKILL.md`
 
 ## Rule
 
 - Use plugin tools, not direct script calls.
-- Primary execute tool: `video_pipeline_analyze_and_move_videos`
-- Health and diagnostics tools: `video_pipeline_validate`, `video_pipeline_logs`, `video_pipeline_status`
-- Execute in the main agent turn; do not delegate `video-library-pipeline` execution to subagents.
+- Execute in the main agent turn; do not delegate pipeline execution to subagents.
+- Never substitute plugin tools with `exec` shell commands.
+  - `video_pipeline_*` names are tool names, not shell commands.
+  - If a tool call cannot be issued in the current environment, stop and report it as "tool registry / permissions issue".
+- Health and diagnostics tools:
+  - `video_pipeline_validate`
+  - `video_pipeline_logs`
+  - `video_pipeline_status`
 - Before running, always check path config mismatch risk (`sourceRoot`, `destRoot`, `windowsOpsRoot`) and ask the user to confirm if there is any possibility of wrong path settings.
 - This plugin does not use `pnpm test` / `scripts/*.sh` style E2E. E2E is performed by tool-call sequence.
-- If user asks "E2E test", do not ask for shell test command. Run the standard flow immediately.
+
+## Mandatory interactive flow (human review required)
+
+For user-driven runs, follow this order and stop at each review gate:
+
+1. Normalization + human review
+2. Extraction + human review
+3. Move/apply + human review
+
+Critical requirement:
+
+- After extraction, save program info to YAML and review it with the user before move/apply.
+- Use `video_pipeline_export_program_yaml` to generate this YAML.
 
 ## Command naming guardrail (required)
 
@@ -27,9 +50,20 @@ This skill defines the standard way to operate the `video-library-pipeline` plug
   - `video_pipeline_logs`
   - `video_pipeline_status`
   - `video_pipeline_reextract`
+  - `video_pipeline_apply_reviewed_metadata`
+  - `video_pipeline_export_program_yaml`
   - `video_pipeline_repair_db`
 - The only plugin CLI helper command is:
   - `openclaw video-pipeline-status`
+
+## Exec fallback guardrail (required)
+
+- Do not run DB checks with `python -c` via `exec` for this plugin flow.
+- Do not retry the same failing `exec` command repeatedly.
+- If command construction fails once due to quoting/syntax (`unexpected EOF`, `unrecognized token`, `SyntaxError`), stop immediately and report:
+  - failing command (brief)
+  - root cause (quote/syntax break)
+  - required fix (use plugin tool call directly)
 
 ## Path sanity prompt (required)
 
@@ -38,7 +72,7 @@ Before `video_pipeline_validate` or pipeline execution, ask a short confirmation
 - "パス設定ミスの可能性があります。`sourceRoot` / `destRoot` / `windowsOpsRoot` は実在パスですか？"
 - If an error says `... does not exist`, first treat it as config/path mismatch and ask for the intended real path.
 
-## Standard run flow
+## Non-interactive automation flow (cron)
 
 1. Validate environment:
    - Call `video_pipeline_validate` with `{"checkWindowsInterop": true}`
@@ -66,6 +100,7 @@ Before `video_pipeline_validate` or pipeline execution, ask a short confirmation
   1) `video_pipeline_validate` with `{"checkWindowsInterop": true}`
   2) `video_pipeline_analyze_and_move_videos` with `{"apply": false, "maxFilesPerRun": 1, "allowNeedsReview": false}` for first dry-run check
   3) `video_pipeline_logs` with `{"kind":"all","tail":50}`
+- If step 1 cannot be called as a tool (tool not visible/available), do not replace it with shell probing. Stop and report the environment mismatch.
 - Do not use `sessions_spawn`/subagent for this flow. Keep tool calls in the same main-agent turn.
 - Success can be declared only if all 3 tool calls above produced concrete `toolResult` outputs in the same session.
 - A completion notice with `Findings: (no output)` is not a successful E2E result.

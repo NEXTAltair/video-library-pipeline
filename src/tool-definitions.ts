@@ -58,6 +58,21 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
     },
   },
   {
+    name: "video_pipeline_apply_reviewed_metadata",
+    description: "Apply reviewed extracted metadata JSONL to DB and mark rows as human-reviewed.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sourceJsonlPath: { type: "string" },
+        outputStampedJsonlPath: { type: "string" },
+        markHumanReviewed: { type: "boolean", default: true },
+        reviewedBy: { type: "string" },
+        source: { type: "string", default: "llm" },
+      },
+    },
+  },
+  {
     name: "video_pipeline_reextract",
     description: "Run metadata re-extraction batch from queue JSONL.",
     parameters: {
@@ -68,6 +83,22 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
         extractionVersion: { type: "string" },
         batchSize: { type: "integer", minimum: 1, maximum: 1000, default: 50 },
         maxBatches: { type: "integer", minimum: 1, maximum: 1000 },
+        preserveHumanReviewed: { type: "boolean", default: true },
+      },
+    },
+  },
+  {
+    name: "video_pipeline_export_program_yaml",
+    description: "Export reviewed candidate program info YAML from extracted metadata JSONL.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sourceJsonlPath: { type: "string" },
+        outputPath: { type: "string" },
+        includeNeedsReview: { type: "boolean", default: true },
+        includeUnknown: { type: "boolean", default: false },
+        maxSamplesPerProgram: { type: "integer", minimum: 1, maximum: 20, default: 3 },
       },
     },
   },

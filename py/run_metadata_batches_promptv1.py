@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -298,6 +299,52 @@ def write_jsonl(path: Path, rows: list[dict]):
             fo.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+def _get_latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
+    cur = con.cursor()
+    try:
+        row = cur.execute(
+            """
+            SELECT data_json
+            FROM path_metadata
+            WHERE path_id=? AND source='llm'
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (path_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    try:
+        d = json.loads(row[0])
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def _build_locked_row(existing: dict, rec: dict, model: str, extraction_version: str) -> dict:
+    row = dict(existing)
+    program_title = str(row.get("program_title") or "")
+    row["path_id"] = rec.get("path_id") or row.get("path_id")
+    row["path"] = rec.get("path") or row.get("path")
+    row["program_title"] = program_title
+    row["episode_no"] = row.get("episode_no")
+    row["subtitle"] = row.get("subtitle")
+    row["air_date"] = row.get("air_date")
+    c = row.get("confidence")
+    row["confidence"] = float(c) if isinstance(c, (int, float)) else 0.9
+    row["needs_review"] = bool(row.get("needs_review"))
+    row["model"] = row.get("model") or model
+    row["extraction_version"] = row.get("extraction_version") or extraction_version
+    row["normalized_program_key"] = row.get("normalized_program_key") or norm_key(program_title)
+    row["evidence"] = row.get("evidence") or {"source_name": "manual_review_lock", "raw": rec.get("name")}
+    row["human_reviewed"] = True
+    row.setdefault("title_architecture", ACTIVE_TITLE_ARCHITECTURE)
+    row.setdefault("title_extraction_path", "human_review_lock")
+    return row
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -309,6 +356,7 @@ def main() -> int:
     ap.add_argument("--model", default="openai-codex/gpt-5.2")
     ap.add_argument("--extraction-version", default="prompt_v1_20260208")
     ap.add_argument("--hints", default="")
+    ap.add_argument("--ignore-human-reviewed", action="store_true")
     args = ap.parse_args()
 
     alias_hints, hints_loaded = _load_hints(args.hints)
@@ -322,9 +370,11 @@ def main() -> int:
     batch: list[dict] = []
     batch_idx = 0
     processed = 0
+    preserved_human_reviewed = 0
+    db_con = sqlite3.connect(args.db)
 
     def flush():
-        nonlocal batch, batch_idx, processed
+        nonlocal batch, batch_idx, processed, preserved_human_reviewed
         if not batch:
             return
         batch_idx += 1
@@ -335,6 +385,16 @@ def main() -> int:
 
         rows = []
         for rec in batch:
+            pid = rec.get("path_id")
+            if pid and not args.ignore_human_reviewed:
+                existing = _get_latest_llm_metadata(db_con, str(pid))
+                if isinstance(existing, dict) and existing.get("human_reviewed") is True:
+                    locked_row = _build_locked_row(existing, rec, args.model, args.extraction_version)
+                    enforce_db_contract(locked_row)
+                    rows.append(locked_row)
+                    preserved_human_reviewed += 1
+                    continue
+
             name = rec["name"]
             base = strip_suffix(name)
             title_res = extract_title_ai_primary(name=name, base=base, alias_hints=alias_hints)
@@ -411,13 +471,17 @@ def main() -> int:
         processed += len(batch)
         batch = []
 
-    for rec in load_queue(args.queue):
-        batch.append(rec)
-        if len(batch) >= args.batch_size:
-            flush()
-            if args.max_batches is not None and batch_idx >= args.max_batches:
-                break
-    flush()
+    try:
+        for rec in load_queue(args.queue):
+            batch.append(rec)
+            if len(batch) >= args.batch_size:
+                flush()
+                if args.max_batches is not None and batch_idx >= args.max_batches:
+                    break
+        flush()
+    finally:
+        db_con.close()
+    print(f"OK preserved_human_reviewed={preserved_human_reviewed}")
     print(f"OK processed={processed} batches={batch_idx}")
     return 0
 
