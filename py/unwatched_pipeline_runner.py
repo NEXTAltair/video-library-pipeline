@@ -115,6 +115,7 @@ def main() -> int:
     llm_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     here = Path(__file__).resolve().parent
+    hints_yaml = here.parent / "rules" / "program_aliases.yaml"
 
     normalize_args = ["-Root", args.source_root, "-OpsRoot", ops_root_win]
     if not args.apply:
@@ -161,7 +162,7 @@ def main() -> int:
             "--outdir",
             str(llm_dir),
             "--hints",
-            str(ops_root / "rules" / "program_aliases.yaml"),
+            str(hints_yaml),
             "--batch-size",
             "50",
             "--start-batch",
@@ -237,28 +238,6 @@ def main() -> int:
         "windows_ops_root": str(ops_root),
         "max_files_per_run": int(args.max_files_per_run),
     }
-
-    latest_summary = move_dir / "LATEST_SUMMARY.md"
-    latest_summary.write_text(
-        "\n".join(
-            [
-                "# latest video pipeline summary",
-                f"- run_at: {datetime.now().astimezone().isoformat(timespec='seconds')}",
-                f"- apply: {str(bool(args.apply)).lower()}",
-                f"- max_files_per_run: {int(args.max_files_per_run)}",
-                f"- remaining_files: {len(lines)}",
-                f"- inventory: {inv}",
-                f"- queue: {queue}",
-                f"- plan: {plan}",
-                f"- applied: {applied}",
-                "",
-                "## plan_stats",
-                json.dumps(plan_out, ensure_ascii=False),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
 
     print(
         json.dumps(summary, ensure_ascii=False)

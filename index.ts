@@ -1,5 +1,6 @@
 import { registerCli } from "./src/cli";
 import { pluginId, getCfg } from "./src/plugin-meta";
+import { registerPluginHooks } from "./src/plugin-hooks";
 import { registerToolLogs } from "./src/tool-logs";
 import { registerToolReextract } from "./src/tool-reextract";
 import { registerToolRepairDb } from "./src/tool-repair-db";
@@ -28,5 +29,6 @@ export default function register(api: any) {
   registerToolRepairDb(api, getCfg);
   registerToolReextract(api, getCfg);
   registerToolLogs(api, getCfg);
+  registerPluginHooks(api, getCfg);
   registerCli(api, pluginId, getCfg);
 }

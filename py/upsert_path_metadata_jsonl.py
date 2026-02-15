@@ -23,9 +23,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine, select
-
-from mediaops_schema import paths, path_metadata
+from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
@@ -67,13 +65,14 @@ def main() -> int:
     if not os.path.exists(args.inp):
         raise SystemExit(f"Input JSONL not found: {args.inp}")
 
-    engine = create_engine(f"sqlite:///{args.db}")
+    con = connect_db(args.db)
+    create_schema_if_needed(con)
 
     updated_at = now_iso()
     to_upsert = []
     missing = 0
 
-    with engine.begin() as conn:
+    try:
         for rec in iter_jsonl(args.inp):
             if "_meta" in rec:
                 continue
@@ -86,21 +85,15 @@ def main() -> int:
                 if not p:
                     missing += 1
                     continue
-                path_id = conn.execute(select(paths.c.path_id).where(paths.c.path == p)).scalar_one_or_none()
+                row = fetchone(con, "SELECT path_id FROM paths WHERE path = ?", (p,))
+                path_id = row["path_id"] if row else None
 
             if not path_id:
                 missing += 1
                 continue
 
             data_json = json.dumps(rec, ensure_ascii=False)
-            to_upsert.append(
-                {
-                    "path_id": path_id,
-                    "source": args.source,
-                    "data_json": data_json,
-                    "updated_at": updated_at,
-                }
-            )
+            to_upsert.append((path_id, args.source, data_json, updated_at))
 
         if args.dry_run:
             print("DRY_RUN")
@@ -108,11 +101,12 @@ def main() -> int:
             print("missing:", missing)
             return 0
 
+        begin_immediate(con)
         if to_upsert:
-            conn.exec_driver_sql(
+            con.executemany(
                 """
                 INSERT INTO path_metadata (path_id, source, data_json, updated_at)
-                VALUES (:path_id, :source, :data_json, :updated_at)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(path_id) DO UPDATE SET
                   source=excluded.source,
                   data_json=excluded.data_json,
@@ -120,6 +114,12 @@ def main() -> int:
                 """,
                 to_upsert,
             )
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
     print("OK")
     print("upserted:", len(to_upsert))
@@ -129,3 +129,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

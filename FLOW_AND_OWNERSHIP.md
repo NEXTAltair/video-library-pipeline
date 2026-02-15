@@ -31,14 +31,14 @@ Optional plugin config:
 
 Runtime contract paths under `windowsOpsRoot`:
 
-- `db`, `move`, `llm`, `rules`, `scripts`
+- `db`, `move`, `llm`, `scripts`
 
 ## 3) extraction policy (AI primary)
 
 Active architecture: `A_AI_PRIMARY_WITH_GUARDRAILS`
 
 - Primary path: AI-oriented parsing flow in `run_metadata_batches_promptv1.py`
-- Optional guardrail input: `rules/program_aliases.yaml`
+- Optional guardrail input: `<plugin-root>/rules/program_aliases.yaml`
   - format: human-readable YAML hints (`canonical_title`, `aliases`)
   - no `id`, no regex-based rule engine
 - Missing YAML hints is not fatal:
@@ -62,15 +62,14 @@ User correction loop:
 7. Runner executes extraction with optional YAML hints.
 8. Runner builds move plan and applies (or dry-runs) move actions.
 9. Runner reconciles DB paths, writes remaining report, rotates old artifacts.
-10. Runner writes `move/LATEST_SUMMARY.md` and prints final JSON summary.
+10. Runner prints final JSON summary.
 
 ## 5) ownership map
 
 - Config source of truth: plugin config (`plugins.entries.video-library-pipeline.config`)
-- Hints source of truth: `<windowsOpsRoot>/rules/program_aliases.yaml`
+- Hints source of truth: `<plugin-root>/rules/program_aliases.yaml`
 - DB state: `<windowsOpsRoot>/db/mediaops.sqlite`
 - Raw evidence: `<windowsOpsRoot>/move/*.jsonl`, `<windowsOpsRoot>/llm/*.jsonl`
-- Human-readable status: `<windowsOpsRoot>/move/LATEST_SUMMARY.md`
 
 ## 6) boundary rules
 

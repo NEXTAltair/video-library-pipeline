@@ -1,4 +1,6 @@
-import { latestJsonlFile, toToolResult } from "./runtime";
+import fs from "node:fs";
+import path from "node:path";
+import { getExtensionRootDir, latestJsonlFile, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 
 export function registerToolStatus(api: any, getCfg: (api: any) => any) {
@@ -33,17 +35,17 @@ export function registerToolStatus(api: any, getCfg: (api: any) => any) {
         }
         const root = String(cfg.windowsOpsRoot || "").replace(/\/+$/, "");
         const moveDir = root ? `${root}/move` : "";
-        const latestSummary = moveDir ? `${moveDir}/LATEST_SUMMARY.md` : "";
         const latestApply = latestJsonlFile(moveDir, "move_apply_");
         const latestPlan = latestJsonlFile(moveDir, "move_plan_from_inventory_");
-        const hintsYaml = root ? `${root}/rules/program_aliases.yaml` : "";
+        const hintsYaml = path.join(getExtensionRootDir(), "rules", "program_aliases.yaml");
+        const hintsPresent = fs.existsSync(hintsYaml);
         const out: AnyObj = {
           ok: true,
           tool: "video_pipeline_status",
-          latestSummary,
           missingConfigKeys,
-          rulesState: hintsYaml ? "configured_optional" : "missing_ai_only_mode",
+          rulesState: hintsPresent ? "configured_optional" : "missing_ai_only_mode",
           hintsPath: hintsYaml,
+          hintsPresent,
         };
         if (params.includeRawPaths) {
           out.moveDir = moveDir;

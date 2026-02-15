@@ -21,10 +21,8 @@ from datetime import datetime, timezone
 from pathlib import PureWindowsPath
 from typing import Iterable
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
 
-from mediaops_schema import metadata, observations, paths, runs
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -85,23 +83,21 @@ def main() -> int:
             f"DB not found: {args.db} (set --db/plugin db to an existing mediaops.sqlite path)"
         )
 
-    engine = create_engine(f"sqlite:///{args.db}")
+    con = connect_db(args.db)
+    create_schema_if_needed(con)
 
     run_id = str(uuid.uuid4())
     started_at = now_iso()
     c = Counters()
 
-    with engine.begin() as conn:
-        conn.execute(
-            runs.insert().values(
-                run_id=run_id,
-                kind="inventory",
-                target_root=args.target_root,
-                started_at=started_at,
-                finished_at=None,
-                tool_version=args.tool_version,
-                notes=None,
-            )
+    try:
+        begin_immediate(con)
+        con.execute(
+            """
+            INSERT INTO runs (run_id, kind, target_root, started_at, finished_at, tool_version, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (run_id, "inventory", args.target_root, started_at, None, args.tool_version, None),
         )
 
         for rec in iter_jsonl(args.jsonl):
@@ -113,28 +109,20 @@ def main() -> int:
             drive, parent, name, ext = split_path(p)
             ts = now_iso()
 
-            stmt_p = sqlite_insert(paths).values(
-                path_id=pid,
-                path=p,
-                drive=drive,
-                dir=parent,
-                name=name,
-                ext=ext,
-                created_at=ts,
-                updated_at=ts,
+            con.execute(
+                """
+                INSERT INTO paths (path_id, path, drive, dir, name, ext, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(path_id) DO UPDATE SET
+                  path=excluded.path,
+                  updated_at=excluded.updated_at,
+                  drive=excluded.drive,
+                  dir=excluded.dir,
+                  name=excluded.name,
+                  ext=excluded.ext
+                """,
+                (pid, p, drive, parent, name, ext, ts, ts),
             )
-            stmt_p = stmt_p.on_conflict_do_update(
-                index_elements=[paths.c.path_id],
-                set_={
-                    "path": p,
-                    "updated_at": ts,
-                    "drive": drive,
-                    "dir": parent,
-                    "name": name,
-                    "ext": ext,
-                },
-            )
-            conn.execute(stmt_p)
             c.paths_upserted += 1
 
             name_flags = rec.get("nameFlags")
@@ -143,29 +131,36 @@ def main() -> int:
             except Exception:
                 name_flags_json = None
 
-            stmt_o = sqlite_insert(observations).values(
-                run_id=run_id,
-                path_id=pid,
-                size_bytes=int(rec.get("size") or 0),
-                mtime_utc=rec.get("mtimeUtc"),
-                type=rec.get("type"),
-                name_flags=name_flags_json,
+            con.execute(
+                """
+                INSERT INTO observations (run_id, path_id, size_bytes, mtime_utc, type, name_flags)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, path_id) DO UPDATE SET
+                  size_bytes=excluded.size_bytes,
+                  mtime_utc=excluded.mtime_utc,
+                  type=excluded.type,
+                  name_flags=excluded.name_flags
+                """,
+                (
+                    run_id,
+                    pid,
+                    int(rec.get("size") or 0),
+                    rec.get("mtimeUtc"),
+                    rec.get("type"),
+                    name_flags_json,
+                ),
             )
-            stmt_o = stmt_o.on_conflict_do_update(
-                index_elements=[observations.c.run_id, observations.c.path_id],
-                set_={
-                    "size_bytes": int(rec.get("size") or 0),
-                    "mtime_utc": rec.get("mtimeUtc"),
-                    "type": rec.get("type"),
-                    "name_flags": name_flags_json,
-                },
-            )
-            conn.execute(stmt_o)
             c.obs_upserted += 1
 
         finished_at = now_iso()
-        conn.execute(runs.update().where(runs.c.run_id == run_id).values(finished_at=finished_at))
-        n_obs = conn.execute(select(observations.c.path_id).where(observations.c.run_id == run_id)).fetchall()
+        con.execute("UPDATE runs SET finished_at = ? WHERE run_id = ?", (finished_at, run_id))
+        n_obs = fetchall(con, "SELECT path_id FROM observations WHERE run_id = ?", (run_id,))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
     print("OK")
     print("run_id:", run_id)
@@ -178,3 +173,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

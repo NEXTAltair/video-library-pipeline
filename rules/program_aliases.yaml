@@ -1,0 +1,2591 @@
+version: '2026-02-08'
+description: Program title exception dictionary (data-driven rules).
+rules:
+- id: jakkar_vs_goranger_any
+  enabled: true
+  match:
+    field: base
+    regex: ジャッカー電撃隊.*ゴレンジャー
+  set:
+    program_title: ジャッカー電撃隊vsゴレンジャー
+  notes: ジャッカー電撃隊VS/vsゴレンジャー + 説明文の長文化を吸収。
+- id: garo_versus_road
+  enabled: true
+  match:
+    field: base
+    regex: ^GARO_VERSUS_ROAD
+  set:
+    program_title: GARO_VERSUS_ROAD
+  notes: GARO_VERSUS_ROAD は牙狼シリーズのサブシリーズとして独立させる（GAROへ潰さない）。
+- id: garo_hagane_wo_tsugu_mono
+  enabled: true
+  match:
+    field: base
+    regex: ^牙狼[＜<](?:GARO|Garo)[＞>][_\s]*ハガネを継ぐ者
+  set:
+    program_title: 牙狼＜GARO＞ ハガネを継ぐ者
+  notes: 牙狼＜GARO＞ ハガネを継ぐ者 は牙狼＜GARO＞本編と分けて独立させる（GARO/Garo両対応）。
+- id: garo_makairetsuden
+  enabled: true
+  match:
+    field: base
+    regex: ^牙狼[＜<](?:GARO|Garo)[＞>][_\s]*[-ー]?魔戒烈伝
+  set:
+    program_title: 牙狼＜GARO＞ -魔戒烈伝-
+  notes: 牙狼＜GARO＞ -魔戒烈伝- は牙狼＜GARO＞本編と分けて独立させる。
+- id: garo_brackets_case
+  enabled: true
+  match:
+    field: base
+    regex: 牙狼[＜<]Garo[＞>]
+  set:
+    program_title: 牙狼＜GARO＞
+  notes: 牙狼＜Garo＞/牙狼<Garo> -> 牙狼＜GARO＞ に統一。
+- id: jakkar_vs_goranger
+  enabled: true
+  match:
+    field: base
+    regex: ^ジャッカー電撃隊vsゴレンジャー
+  set:
+    program_title: ジャッカー電撃隊vsゴレンジャー
+  notes: ジャッカー電撃隊vsゴレンジャー… の長文化を吸収。
+- id: supersentai_vote_pr_prefix
+  enabled: true
+  match:
+    field: base
+    regex: ^全スーパー戦隊大投票\s*pr
+  set:
+    program_title: 全スーパー戦隊大投票
+  notes: 全スーパー戦隊大投票pr + 後続長文 を統一。
+- id: supersentai_vote_pr
+  enabled: true
+  match:
+    field: base
+    regex: ^全スーパー戦隊大投票\s*pr$
+  set:
+    program_title: 全スーパー戦隊大投票
+  notes: 全スーパー戦隊大投票pr -> 全スーパー戦隊大投票 に統一。
+- id: heartnet_tv_nijikuro
+  enabled: true
+  match:
+    field: base
+    regex: ハートネット\s*(TV|tv|ｔｖ)\s*虹クロ
+  set:
+    program_title: ハートネットTV
+  notes: ハートネットtv 虹クロ は番組名をハートネットTVに統一。
+- id: nhk_special_case
+  enabled: true
+  match:
+    field: base
+    regex: Nhkスペシャル
+  set:
+    program_title: NHKスペシャル
+  notes: Nhkスペシャル -> NHKスペシャル に統一。
+- id: etv_tokushu_case
+  enabled: true
+  match:
+    field: base
+    regex: Etv特集
+  set:
+    program_title: ETV特集
+  notes: Etv特集 -> ETV特集 に統一。
+- id: kodoku_oomisoka_special_year_anywhere
+  enabled: true
+  match:
+    field: base
+    regex: 孤独のグルメ\d{4}大晦日スペシャル
+  set:
+    program_title: 孤独のグルメ大晦日スペシャル
+  notes: prefixに局名等が付いても孤独のグルメ2025大晦日スペシャル…を固定。
+- id: gogo_live_prefix
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVE
+  set:
+    program_title: 午後LIVE_ニュースーン
+  notes: 午後LIVE… の揺れをニュースーンに寄せる（prefix広め）。
+- id: kodoku_oomisoka_special_year
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメ\d{4}大晦日スペシャル
+  set:
+    program_title: 孤独のグルメ大晦日スペシャル
+  notes: 孤独のグルメ2025大晦日スペシャル… を大晦日スペシャルに固定。
+- id: newsoon_prefix
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン
+  set:
+    program_title: 午後LIVE_ニュースーン
+  notes: 午後LIVEニュースーン… の長文化を吸収して番組名固定。
+- id: kodoku_special
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメスペシャル
+  set:
+    program_title: 孤独のグルメスペシャル
+  notes: 孤独のグルメスペシャル系は固定（後続の長文除去）。
+- id: kodoku_oomisoka_ikkimi
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメ大晦日イッキ見スペシャル
+  set:
+    program_title: 孤独のグルメ大晦日イッキ見スペシャル
+  notes: 大晦日イッキ見スペシャルを固定。
+- id: kodoku_oomisoka_special
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメ(\d{4})?大晦日スペシャル
+  set:
+    program_title: 孤独のグルメ大晦日スペシャル
+  notes: 年付き大晦日スペシャル含め固定。
+- id: kodoku_oshogatsu_special
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメお正月スペシャル
+  set:
+    program_title: 孤独のグルメお正月スペシャル
+  notes: お正月スペシャルを固定。
+- id: kodoku_oshogatsu_ikkimi
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメお正月イッキ見スペシャル
+  set:
+    program_title: 孤独のグルメお正月イッキ見スペシャル!
+  notes: お正月イッキ見スペシャルを固定。
+- id: kodoku_kessakusen
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメ傑作選
+  set:
+    program_title: 孤独のグルメ傑作選
+  notes: 孤独のグルメ傑作選 は固定（後続の長文除去）。
+- id: kodoku_tokubetsu
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメ特別編
+  set:
+    program_title: 孤独のグルメ特別編
+  notes: 孤独のグルメ特別編 は固定。
+- id: kodoku_season
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメSeason(\d+)
+  set:
+    program_title: 孤独のグルメSeason\1
+  notes: 孤独のグルメSeasonN はシーズン名固定（後続の長文除去）。
+- id: kodoku_season_special
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメSeason(\d+).*(スペシャル|特別編)
+  set:
+    program_title: 孤独のグルメSeason\1スペシャル
+  notes: SeasonN+スペシャル/特別編 は SeasonNスペシャル に固定。
+- id: gogo_live_plain
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVE$
+  set:
+    program_title: 午後LIVE_ニュースーン
+  notes: 午後LIVE 単体フォルダの揺れをニュースーンに寄せる。
+- id: newsoon_plain
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン$
+  set:
+    program_title: 午後LIVE_ニュースーン
+  notes: 午後LIVEニュースーン（時台なし）を 午後LIVE_ニュースーン に統一。
+- id: newsoon_timeslot_direct
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン([0-9０-９])時台
+  set:
+    program_title: 午後LIVE_ニュースーン_\1時台
+  notes: 午後LIVEニュースーン4時台… を _4時台 に統一（午後なし版）。
+- id: shuwa_mintele
+  enabled: true
+  match:
+    field: base
+    regex: ^手話で楽しむみんなのテレビ
+  set:
+    program_title: 手話で楽しむみんなのテレビ
+  notes: 手話で楽しむみんなのテレビは番組名固定。×以降はsubtitleへ。
+- id: tokikake_tv
+  enabled: true
+  match:
+    field: base
+    regex: ^時をかけるテレビ
+  set:
+    program_title: 時をかけるテレビ
+  notes: 時をかけるテレビは番組名固定。後続はsubtitleへ。
+- id: wide_scramble_saturday
+  enabled: true
+  match:
+    field: base
+    regex: ^ワイド!スクランブルサタデー
+  set:
+    program_title: ワイド!スクランブルサタデー
+  notes: ワイド!スクランブルサタデーは番組名固定（後続の長文を番組名にしない）。
+- id: newsoon_gogo_timeslot_nospace
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後([0-9０-９])時台
+  set:
+    program_title: 午後LIVE_ニュースーン_\1時台
+  notes: 午後LIVEニュースーン午後3時台（区切りなし）を _3時台 に統一。
+- id: newsoon_gogo_timeslot_space
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVE\s*ニュースーン\s*午後([0-9０-９])時台
+  set:
+    program_title: 午後LIVE_ニュースーン_\1時台
+  notes: 午後LIVEニュースーン午後3時台（スペース区切り）を _3時台 に統一。
+- id: weekend_nspec
+  enabled: true
+  match:
+    field: base
+    regex: ^週末のNスペは
+  set:
+    program_title: 週末のNスペは…
+  notes: 「週末のNスペは…」は枠名ではなく番組名として扱う。
+- id: buratamori
+  enabled: true
+  match:
+    field: base
+    regex: ^ブラタモリ
+  set:
+    program_title: ブラタモリ
+  notes: ブラタモリは番組名固定。地名など後続はsubtitle側。
+- id: kingohger_adventure_heaven
+  enabled: true
+  match:
+    field: base
+    regex: 王様戦隊キングオージャー_アドベンチャー・ヘブン
+  set:
+    program_title: 王様戦隊キングオージャー_アドベンチャー・ヘブン
+  notes: 説明文を番組名に含めない。
+- id: tsukahara_bokuden
+  enabled: true
+  match:
+    field: base
+    regex: 塚原卜伝
+  set:
+    program_title: 塚原卜伝
+  notes: 先頭に【特選!時代劇】等が付いても部分一致で番組名固定。
+- id: shuwawan
+  enabled: true
+  match:
+    field: base
+    regex: しゅわわん!
+  set:
+    program_title: しゅわわん!
+  notes: 引用符や前置きが付いても部分一致で番組名固定。
+- id: ibo_episode_drop_us
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダム_鉄血のオルフェンズ_第\d+話
+  set:
+    program_title: 機動戦士ガンダム_鉄血のオルフェンズ
+  notes: underscore第N話を落とす（枠名が先頭でも部分一致）。
+- id: origin_episode_drop_us
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダム_THE_ORIGIN_前夜_赤い彗星_第\d+話
+  set:
+    program_title: 機動戦士ガンダム_THE_ORIGIN_前夜_赤い彗星
+  notes: underscore第N話を落とす（部分一致）。
+- id: gundam_suisei
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダム_水星の魔女
+  set:
+    program_title: 機動戦士ガンダム_水星の魔女
+  notes: 枠名が先頭に付いても部分一致で作品名固定。
+- id: gundam_selection
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダム_セレクション
+  set:
+    program_title: 機動戦士ガンダム
+  notes: 枠名(BS11等)が先頭に付いてもマッチするよう部分一致で本体へ寄せる。
+- id: sanmagoten
+  enabled: true
+  match:
+    field: base
+    regex: ^さんま御殿
+  set:
+    program_title: 踊る!さんま御殿!!
+  notes: さんま御殿系は番組名を踊る!さんま御殿!!に統一。
+- id: taxi_umaimeshi
+  enabled: true
+  match:
+    field: base
+    regex: ^タクシー運転手さん一番うまい店に連れてって
+  set:
+    program_title: タクシー運転手さん一番うまい店に連れてって!
+  notes: タクシー運転手さん一番うまい店に連れてって! は番組名固定。
+- id: door_door_quest
+  enabled: true
+  match:
+    field: base
+    regex: ^ドア×ドアクエスト
+  set:
+    program_title: ドア×ドアクエスト
+  notes: ドア×ドアクエスト は番組名固定。
+- id: tabisalada
+  enabled: true
+  match:
+    field: base
+    regex: ^朝だ[!！]生です旅サラダ
+  set:
+    program_title: 朝だ!生です旅サラダ
+  notes: 旅サラダ は番組名固定。
+- id: eteletimemachine
+  enabled: true
+  match:
+    field: base
+    regex: ^おとなのEテレタイムマシン
+  set:
+    program_title: おとなのEテレタイムマシン
+  notes: おとなのEテレタイムマシン は番組名固定。
+- id: showa_anison_collection
+  enabled: true
+  match:
+    field: base
+    regex: ^昭和アニソンコレクション
+  set:
+    program_title: 昭和アニソンコレクション
+  notes: 昭和アニソンコレクション は番組名固定。
+- id: frontier_deaimashou
+  enabled: true
+  match:
+    field: base
+    regex: ^フロンティアで会いましょう
+  set:
+    program_title: フロンティアで会いましょう!
+  notes: フロンティアで会いましょう! は番組名固定。
+- id: hurricanger_20th
+  enabled: true
+  match:
+    field: base
+    regex: ^忍風戦隊ハリケンジャーでござる
+  set:
+    program_title: 忍風戦隊ハリケンジャーでござる!
+  notes: 忍風戦隊ハリケンジャーでござる! は番組名固定。
+- id: gundam_zz_selection_prefix
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダムZZ
+  set:
+    program_title: 機動戦士ガンダムZZ
+  notes: 枠名が先頭でも部分一致でZZを固定。
+- id: gundam_origin_episode_drop
+  enabled: true
+  match:
+    field: base
+    regex: ^機動戦士ガンダム(?:[_ ]THE[_ ]ORIGIN[_ ]前夜[_ ]赤い彗星|\s+THE\s+ORIGIN\s+前夜\s+赤い彗星)[_ ]第\d+話
+  set:
+    program_title: 機動戦士ガンダム_THE_ORIGIN_前夜_赤い彗星
+  notes: THE ORIGIN 前夜 赤い彗星 + 第N話 の長文化を落とす（優先）。
+- id: ibo_episode_drop
+  enabled: true
+  match:
+    field: base
+    regex: ^機動戦士ガンダム[ _]鉄血のオルフェンズ[ _]第\d+話
+  set:
+    program_title: 機動戦士ガンダム_鉄血のオルフェンズ
+  notes: 鉄血のオルフェンズ + 第N話 の長文化を落とす（優先）。
+- id: ibo_spaces
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダム\s+鉄血のオルフェンズ
+  set:
+    program_title: 機動戦士ガンダム_鉄血のオルフェンズ
+  notes: 枠名が先頭に付いても部分一致で作品名固定。
+- id: gundam_origin_zenya_spaces
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダム\s+THE\s+ORIGIN\s+前夜\s+赤い彗星
+  set:
+    program_title: 機動戦士ガンダム_THE_ORIGIN_前夜_赤い彗星
+  notes: 枠名が先頭でも部分一致で固定。
+- id: gundam_origin_zenya
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダム[_ ]THE[_ ]ORIGIN[_ ]前夜[_ ]赤い彗星
+  set:
+    program_title: 機動戦士ガンダム_THE_ORIGIN_前夜_赤い彗星
+  notes: 機動戦士ガンダムTHE ORIGIN前夜 赤い彗星 は作品名固定。
+- id: shuwa_mintele_doc72_prefix
+  enabled: true
+  match:
+    field: base
+    regex: ^手話で楽しむみんなのテレビ×ドキュメント72時間
+  set:
+    program_title: ドキュメント72時間
+  notes: 手話で楽しむ…×ドキュメント72時間 は本体番組へ寄せ（優先）。
+- id: movie_quoted_title
+  enabled: true
+  match:
+    field: base
+    regex: ^映画[「『](.+?)[」』]
+  set:
+    program_title: \1
+  notes: 映画「作品名」形式は作品名を program_title にする（映画はラベル）。
+- id: ikegami_news_soudattanoka
+  enabled: true
+  match:
+    field: base
+    regex: ^池上彰のニュースそうだったのか
+  set:
+    program_title: 池上彰のニュースそうだったのか!!
+  notes: 池上彰のニュースそうだったのか!! は番組名固定。
+- id: aishahenreki
+  enabled: true
+  match:
+    field: base
+    regex: ^おぎやはぎの愛車遍歴
+  set:
+    program_title: おぎやはぎの愛車遍歴
+  notes: おぎやはぎの愛車遍歴 は番組名固定。
+- id: ariyoshi_no_kabe_sp
+  enabled: true
+  match:
+    field: base
+    regex: ^有吉の壁SP
+  set:
+    program_title: 有吉の壁SP
+  notes: 有吉の壁SP を番組名固定。▼以降はサブタイトル候補。
+- id: auto_fix_010ef0d0a1
+  enabled: true
+  match:
+    field: base
+    regex: ^チョイ住みinメルボルン俳優・井上祐貴×元ボクシング世界王者・長谷川穂積
+  set:
+    program_title: チョイ住みinメルボルン俳優・井上祐貴×元ボクシング世界王者・長谷川穂積
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_0198269d49
+  enabled: true
+  match:
+    field: base
+    regex: ^秘密戦隊ゴレンジャー\(劇場版\)石ノ森章太郎原作の
+  set:
+    program_title: 秘密戦隊ゴレンジャー(劇場版)石ノ森章太郎原作の
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_02a7384ada
+  enabled: true
+  match:
+    field: base
+    regex: ^フォールガイ\(吹替版\)
+  set:
+    program_title: フォールガイ(吹替版)
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_03480fafde
+  enabled: true
+  match:
+    field: base
+    regex: ^病院ラジオ\(19\)子ども病院編\(東京・府中\)
+  set:
+    program_title: 病院ラジオ(19)子ども病院編(東京・府中)
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_0b59af0b55
+  enabled: true
+  match:
+    field: base
+    regex: ^シネマのツボ
+  set:
+    program_title: シネマのツボ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_0fd2b882f4
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後4時台えなりかずきさん
+  set:
+    program_title: 午後LIVEニュースーン午後4時台えなりかずきさん
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_10e6f367d9
+  enabled: true
+  match:
+    field: base
+    regex: ^船越英一郎の昭和再生F
+  set:
+    program_title: 船越英一郎の昭和再生F
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_1226914482
+  enabled: true
+  match:
+    field: base
+    regex: ^ダークサイドミステリー選宇宙戦争パニック事件100万人フェイクの真実
+  set:
+    program_title: ダークサイドミステリー選宇宙戦争パニック事件100万人フェイクの真実
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_12646f9a00
+  enabled: true
+  match:
+    field: base
+    regex: ^驚きのトリック映像!発掘!アナログ・エフェクト遺産CG万能の今だからこそ昔の
+  set:
+    program_title: 驚きのトリック映像!発掘!アナログ・エフェクト遺産CG万能の今だからこそ昔の
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_12a7d5ee6d
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン5時台食べて乗り切る夏スタジアムグルメ最前線!特集は
+  set:
+    program_title: 午後LIVEニュースーン5時台食べて乗り切る夏スタジアムグルメ最前線!特集は
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_16c790cace
+  enabled: true
+  match:
+    field: base
+    regex: ^イッテQ
+  set:
+    program_title: イッテQ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_1b30e7a1c8
+  enabled: true
+  match:
+    field: base
+    regex: ^ネプリーグ★日本にいながら海外旅行気分!大阪・関西万博クイズSP
+  set:
+    program_title: ネプリーグ★日本にいながら海外旅行気分!大阪・関西万博クイズSP
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_1c9b17ecee
+  enabled: true
+  match:
+    field: base
+    regex: ^AnisonDays
+  set:
+    program_title: AnisonDays
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_1d553f7ad5
+  enabled: true
+  match:
+    field: base
+    regex: ^英語で
+  set:
+    program_title: 英語で
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_1e37604256
+  enabled: true
+  match:
+    field: base
+    regex: ^ブラタモリ魅力度No\.1函館の町
+  set:
+    program_title: ブラタモリ魅力度No.1函館の町
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_202b6e9296
+  enabled: true
+  match:
+    field: base
+    regex: ^ダウントン・アビー\(2019\)
+  set:
+    program_title: ダウントン・アビー(2019)
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_21b88faa7b
+  enabled: true
+  match:
+    field: base
+    regex: ^007／ワールド・イズ・ノット・イナフ
+  set:
+    program_title: 007／ワールド・イズ・ノット・イナフ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_23a179573e
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン渡辺謙さん
+  set:
+    program_title: 午後LIVEニュースーン渡辺謙さん
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_2647f67ae8
+  enabled: true
+  match:
+    field: base
+    regex: ^あけましてねほりんぱほりん2025
+  set:
+    program_title: あけましてねほりんぱほりん2025
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_2c5d911ca7
+  enabled: true
+  match:
+    field: base
+    regex: ^ザ・グレイテスト・ヒッツ
+  set:
+    program_title: ザ・グレイテスト・ヒッツ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_2d725a2b0f
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後5時台食べて乗り切る夏驚きの梅パワー!特集は
+  set:
+    program_title: 午後LIVEニュースーン午後5時台食べて乗り切る夏驚きの梅パワー!特集は
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_30e687fc18
+  enabled: true
+  match:
+    field: base
+    regex: ^歌謡プレミアム森口博子
+  set:
+    program_title: 歌謡プレミアム森口博子
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_342a16d6d4
+  enabled: true
+  match:
+    field: base
+    regex: ^手話アニメーション
+  set:
+    program_title: 手話アニメーション
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_352e48cc5e
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン5時台食べて乗り切る夏スイカの秘めたるパワー!特集は
+  set:
+    program_title: 午後LIVEニュースーン5時台食べて乗り切る夏スイカの秘めたるパワー!特集は
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_3655746368
+  enabled: true
+  match:
+    field: base
+    regex: ^ダークサイドミステリー選サイコと呼ばれた男エド・ゲイン事件の本当の恐怖
+  set:
+    program_title: ダークサイドミステリー選サイコと呼ばれた男エド・ゲイン事件の本当の恐怖
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_36a245015f
+  enabled: true
+  match:
+    field: base
+    regex: ^怪獣ソングコレクション◆♪モスラの歌／♪ガメラマーチ／♪ゴジラ\(愛のテーマ\)ほか1954年の
+  set:
+    program_title: 怪獣ソングコレクション◆♪モスラの歌／♪ガメラマーチ／♪ゴジラ(愛のテーマ)ほか1954年の
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_3f226baee7
+  enabled: true
+  match:
+    field: base
+    regex: ^ブラタモリ函館・五稜郭
+  set:
+    program_title: ブラタモリ函館・五稜郭
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_3f8a31536e
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台ドラマ
+  set:
+    program_title: 午後LIVEニュースーン午後3時台ドラマ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_3fa570710c
+  enabled: true
+  match:
+    field: base
+    regex: ^家、ついて行ってイイですか？赤楚衛二がヒミツを明かす…涙のクリスマスSP
+  set:
+    program_title: 家、ついて行ってイイですか？赤楚衛二がヒミツを明かす…涙のクリスマスSP
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_431e0862d8
+  enabled: true
+  match:
+    field: base
+    regex: ^金曜ロードショー
+  set:
+    program_title: 金曜ロードショー
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_443acc71b3
+  enabled: true
+  match:
+    field: base
+    regex: ^ゴールデンストーンズ
+  set:
+    program_title: ゴールデンストーンズ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_457873096a
+  enabled: true
+  match:
+    field: base
+    regex: ^ダークサイドミステリーサイコと呼ばれた男エド・ゲイン事件の本当の恐怖
+  set:
+    program_title: ダークサイドミステリーサイコと呼ばれた男エド・ゲイン事件の本当の恐怖
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_462ef3a687
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメスペシャル!真夏の東北・宮城出張編
+  set:
+    program_title: 孤独のグルメスペシャル!真夏の東北・宮城出張編
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_48151ead55
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台剣の道をきわめるアーカイブス番組を紹介するコーナー
+  set:
+    program_title: 午後LIVEニュースーン午後3時台剣の道をきわめるアーカイブス番組を紹介するコーナー
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_489da403b8
+  enabled: true
+  match:
+    field: base
+    regex: ^ゆうがたサテライト
+  set:
+    program_title: ゆうがたサテライト
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_49c25848ec
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン5時台飛び出すシニア
+  set:
+    program_title: 午後LIVEニュースーン5時台飛び出すシニア
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_4b3246d4df
+  enabled: true
+  match:
+    field: base
+    regex: ^選挙サテライト2025
+  set:
+    program_title: 選挙サテライト2025
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_4c8415880e
+  enabled: true
+  match:
+    field: base
+    regex: ^集まれ!総選挙ライブ
+  set:
+    program_title: 集まれ!総選挙ライブ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_4cb800b557
+  enabled: true
+  match:
+    field: base
+    regex: ^出没!アド街ック天国
+  set:
+    program_title: 出没!アド街ック天国
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_50d998fd83
+  enabled: true
+  match:
+    field: base
+    regex: ^ゼンタイ
+  set:
+    program_title: ゼンタイ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_5242add2f3
+  enabled: true
+  match:
+    field: base
+    regex: ^機動戦士ガンダム_水星の魔女
+  set:
+    program_title: 機動戦士ガンダム_水星の魔女
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_536429a1c2
+  enabled: true
+  match:
+    field: base
+    regex: ^ファミリーヒストリー選伊達みきお\(サンドウィッチマン\)伊達の名に誓った覚悟とは伊達みきおさんは芸人になる時、
+  set:
+    program_title: ファミリーヒストリー選伊達みきお(サンドウィッチマン)伊達の名に誓った覚悟とは伊達みきおさんは芸人になる時、
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_55afcb2185
+  enabled: true
+  match:
+    field: base
+    regex: ^Nnnドキュメント'24
+  set:
+    program_title: Nnnドキュメント'24
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_56c96ff5c0
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台夜ドラ\&新日本風土記
+  set:
+    program_title: 午後LIVEニュースーン午後3時台夜ドラ&新日本風土記
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_580f258eb7
+  enabled: true
+  match:
+    field: base
+    regex: ^ダークサイドミステリー怖いウワサ“ネット怪談”誕生秘話きさらぎ駅・くねくね他惨劇で地図から消えた？
+  set:
+    program_title: ダークサイドミステリー怖いウワサ“ネット怪談”誕生秘話きさらぎ駅・くねくね他惨劇で地図から消えた？
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_5a85bba265
+  enabled: true
+  match:
+    field: base
+    regex: ^双極銀玉武闘PAIRPACHINKOBATTLE
+  set:
+    program_title: 双極銀玉武闘PAIRPACHINKOBATTLE
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_5ad1a18740
+  enabled: true
+  match:
+    field: base
+    regex: ^天才てれびくん
+  set:
+    program_title: 天才てれびくん
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_5aec270df2
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメSeason4真夏の博多出張スペシャル
+  set:
+    program_title: 孤独のグルメSeason4真夏の博多出張スペシャル
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_5d6789608b
+  enabled: true
+  match:
+    field: base
+    regex: ^まいど!ジャーニィ～
+  set:
+    program_title: まいど!ジャーニィ～
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_6061114fdc
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメお正月スペシャル～井之頭五郎の長い一日～
+  set:
+    program_title: 孤独のグルメお正月スペシャル～井之頭五郎の長い一日～
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_62ef95ff7c
+  enabled: true
+  match:
+    field: base
+    regex: ^新プロジェクトXゴジラと35人の海賊～アカデミー賞への道特別編～
+  set:
+    program_title: 新プロジェクトXゴジラと35人の海賊～アカデミー賞への道特別編～
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_64d59e2cae
+  enabled: true
+  match:
+    field: base
+    regex: ^世界の果てまでイッテQ!当番組では
+  set:
+    program_title: 世界の果てまでイッテQ!当番組では
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_69871cb778
+  enabled: true
+  match:
+    field: base
+    regex: ^\(吹\)ジュラシック・ワールド
+  set:
+    program_title: (吹)ジュラシック・ワールド
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_6c52481db1
+  enabled: true
+  match:
+    field: base
+    regex: ^今日もカレーですか？
+  set:
+    program_title: 今日もカレーですか？
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_6c79ecf7ec
+  enabled: true
+  match:
+    field: base
+    regex: ^機動戦士ガンダム_セレクション
+  set:
+    program_title: 機動戦士ガンダム_セレクション
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_6cb80b06ac
+  enabled: true
+  match:
+    field: base
+    regex: ^ニュースウオッチ9
+  set:
+    program_title: ニュースウオッチ9
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_72636c0f55
+  enabled: true
+  match:
+    field: base
+    regex: ^所さんのそこんトコロ
+  set:
+    program_title: 所さんのそこんトコロ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_758afd5587
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後4時台
+  set:
+    program_title: 午後LIVEニュースーン午後4時台
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_7664488162
+  enabled: true
+  match:
+    field: base
+    regex: ^週末のNスペは…\(17\)命を診る心を診る小児集中治療室の日々土田晃之と市川紗椰が日曜夜9時の
+  set:
+    program_title: 週末のNスペは…(17)命を診る心を診る小児集中治療室の日々土田晃之と市川紗椰が日曜夜9時の
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_77cbdbfdd9
+  enabled: true
+  match:
+    field: base
+    regex: ^シネマ☆チョップ!特集
+  set:
+    program_title: シネマ☆チョップ!特集
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_79a80a4254
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメ傑作選松重豊主演・孤独のグルメSeason10
+  set:
+    program_title: 孤独のグルメ傑作選松重豊主演・孤独のグルメSeason10
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_7be719b537
+  enabled: true
+  match:
+    field: base
+    regex: ^王様戦隊キングオージャーVSドンブラザーズ
+  set:
+    program_title: 王様戦隊キングオージャーVSドンブラザーズ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_7d0f07569c
+  enabled: true
+  match:
+    field: base
+    regex: ^時をかけるテレビ池上彰
+  set:
+    program_title: 時をかけるテレビ池上彰
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_7debc77ae1
+  enabled: true
+  match:
+    field: base
+    regex: ^キングコング髑髏島の巨神◆特集キング・コング◆
+  set:
+    program_title: キングコング髑髏島の巨神◆特集キング・コング◆
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_7df329d644
+  enabled: true
+  match:
+    field: base
+    regex: ^シネマ
+  set:
+    program_title: シネマ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_7edd643c80
+  enabled: true
+  match:
+    field: base
+    regex: ^ワイド!スクランブルサタデーさよなら白浜パンダ故郷へ帰国
+  set:
+    program_title: ワイド!スクランブルサタデーさよなら白浜パンダ故郷へ帰国
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_803341f07d
+  enabled: true
+  match:
+    field: base
+    regex: ^クラシックTV
+  set:
+    program_title: クラシックTV
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_80953da4f2
+  enabled: true
+  match:
+    field: base
+    regex: ^戦艦
+  set:
+    program_title: 戦艦
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_80deb0fc97
+  enabled: true
+  match:
+    field: base
+    regex: ^シン・ゴジラ
+  set:
+    program_title: シン・ゴジラ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_835b295da2
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン性暴力の実態描く
+  set:
+    program_title: 午後LIVEニュースーン性暴力の実態描く
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_8373786ee5
+  enabled: true
+  match:
+    field: base
+    regex: ^出川哲朗の充電させてもらえませんか？
+  set:
+    program_title: 出川哲朗の充電させてもらえませんか？
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_8715130589
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台自国
+  set:
+    program_title: 午後LIVEニュースーン午後3時台自国
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_87a63638a5
+  enabled: true
+  match:
+    field: base
+    regex: ^スーパーストリート・ガレージ日産スカイライン\(二\)
+  set:
+    program_title: スーパーストリート・ガレージ日産スカイライン(二)
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_8c75f5e194
+  enabled: true
+  match:
+    field: base
+    regex: ^アニゲー☆イレブン!
+  set:
+    program_title: アニゲー☆イレブン!
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_8f4c8bd5e6
+  enabled: true
+  match:
+    field: base
+    regex: ^ウソかホントかわからないやりすぎ都市伝説
+  set:
+    program_title: ウソかホントかわからないやりすぎ都市伝説
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_91123e6822
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン4時台朝ドラ
+  set:
+    program_title: 午後LIVEニュースーン4時台朝ドラ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_93dd08da5f
+  enabled: true
+  match:
+    field: base
+    regex: ^アナろけ
+  set:
+    program_title: アナろけ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_953392437b
+  enabled: true
+  match:
+    field: base
+    regex: ^ゴジラ\-1\.0／C
+  set:
+    program_title: ゴジラ-1.0／C
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_953d321eb3
+  enabled: true
+  match:
+    field: base
+    regex: ^劇場版
+  set:
+    program_title: 劇場版
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_9611113c5f
+  enabled: true
+  match:
+    field: base
+    regex: ^忍者戦隊カクレンジャースーパー戦隊シリーズ18作目
+  set:
+    program_title: 忍者戦隊カクレンジャースーパー戦隊シリーズ18作目
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_96f48a3f77
+  enabled: true
+  match:
+    field: base
+    regex: ^池上彰と考えるAIUの未来～豊かに生きるための学び～
+  set:
+    program_title: 池上彰と考えるAIUの未来～豊かに生きるための学び～
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_97bdae641d
+  enabled: true
+  match:
+    field: base
+    regex: ^ミュージカル
+  set:
+    program_title: ミュージカル
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_993977c993
+  enabled: true
+  match:
+    field: base
+    regex: ^上田と女DEEP
+  set:
+    program_title: 上田と女DEEP
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_9ade935a9c
+  enabled: true
+  match:
+    field: base
+    regex: ^スタンド・バイ・ミー
+  set:
+    program_title: スタンド・バイ・ミー
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_9d51c97d36
+  enabled: true
+  match:
+    field: base
+    regex: ^岸辺露伴ルーヴルへ行く荒木飛呂彦による
+  set:
+    program_title: 岸辺露伴ルーヴルへ行く荒木飛呂彦による
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_9eda6b227f
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメ特別編
+  set:
+    program_title: 孤独のグルメ特別編
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_9f2675da92
+  enabled: true
+  match:
+    field: base
+    regex: ^牙狼＜GARO＞～蒼哭ノ魔竜～
+  set:
+    program_title: 牙狼＜GARO＞～蒼哭ノ魔竜～
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_a10303f400
+  enabled: true
+  match:
+    field: base
+    regex: ^池上彰と佐々木蔵之介の
+  set:
+    program_title: 池上彰と佐々木蔵之介の
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_a61630d8bd
+  enabled: true
+  match:
+    field: base
+    regex: ^ブラタモリ大山詣り山頂へ
+  set:
+    program_title: ブラタモリ大山詣り山頂へ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_aa3c009551
+  enabled: true
+  match:
+    field: base
+    regex: ^ヴァンパイアハンターTHEANIMATEDSERIES
+  set:
+    program_title: ヴァンパイアハンターTHEANIMATEDSERIES
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_aa8e300081
+  enabled: true
+  match:
+    field: base
+    regex: ^都市伝説の女
+  set:
+    program_title: 都市伝説の女
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_ac1e01e84c
+  enabled: true
+  match:
+    field: base
+    regex: ^コンテナ全部開けちゃいました!～大阪港編～港でよく見る
+  set:
+    program_title: コンテナ全部開けちゃいました!～大阪港編～港でよく見る
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_ad4c38b054
+  enabled: true
+  match:
+    field: base
+    regex: ^新説？プロ野球名将と戦国武将!
+  set:
+    program_title: 新説？プロ野球名将と戦国武将!
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_bcc74fec5f
+  enabled: true
+  match:
+    field: base
+    regex: ^アンコールアワー・開運!なんでも鑑定団
+  set:
+    program_title: アンコールアワー・開運!なんでも鑑定団
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_bd0673ed4b
+  enabled: true
+  match:
+    field: base
+    regex: ^女王陛下のお気に入り\(吹替版\)イングランドのアン女王役でO・コールマンが
+  set:
+    program_title: 女王陛下のお気に入り(吹替版)イングランドのアン女王役でO・コールマンが
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_bfbddf3b9d
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後4時台プロジェクトXVHS開発秘話を再びビビる大木さんのリクエストは
+  set:
+    program_title: 午後LIVEニュースーン午後4時台プロジェクトXVHS開発秘話を再びビビる大木さんのリクエストは
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_c26d1841c1
+  enabled: true
+  match:
+    field: base
+    regex: ^塚原卜伝\(5\)
+  set:
+    program_title: 塚原卜伝(5)
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_c3f583df98
+  enabled: true
+  match:
+    field: base
+    regex: ^シン・ゴジラオルソ
+  set:
+    program_title: シン・ゴジラオルソ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_c62c7772e7
+  enabled: true
+  match:
+    field: base
+    regex: ^バックパッカー世界さすらいメシ
+  set:
+    program_title: バックパッカー世界さすらいメシ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_c9f4044b98
+  enabled: true
+  match:
+    field: base
+    regex: ^007／カジノ・ロワイヤル\(2006\)
+  set:
+    program_title: 007／カジノ・ロワイヤル(2006)
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_cbe7e4a211
+  enabled: true
+  match:
+    field: base
+    regex: ^ゴジラvsコング◆特集ゴジラxコング◆
+  set:
+    program_title: ゴジラvsコング◆特集ゴジラxコング◆
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_cc3e5660f6
+  enabled: true
+  match:
+    field: base
+    regex: ^ブラタモリ江戸っ子の大山詣り
+  set:
+    program_title: ブラタモリ江戸っ子の大山詣り
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_cefb3cdda9
+  enabled: true
+  match:
+    field: base
+    regex: ^池上彰のどうなる!？リニア新幹線2025
+  set:
+    program_title: 池上彰のどうなる!？リニア新幹線2025
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_d1826117c1
+  enabled: true
+  match:
+    field: base
+    regex: ^ゴジラvsコング
+  set:
+    program_title: ゴジラvsコング
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_d1d1941b5c
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン4時台粋で通な江戸を表現
+  set:
+    program_title: 午後LIVEニュースーン4時台粋で通な江戸を表現
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_d3fc0bc314
+  enabled: true
+  match:
+    field: base
+    regex: ^パチンコLAB～4thseason～
+  set:
+    program_title: パチンコLAB～4thseason～
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_d50a9dcb46
+  enabled: true
+  match:
+    field: base
+    regex: ^秘密戦隊ゴレンジャー
+  set:
+    program_title: 秘密戦隊ゴレンジャー
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_d5e988067b
+  enabled: true
+  match:
+    field: base
+    regex: ^サスペンス
+  set:
+    program_title: サスペンス
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_d7b89f6f53
+  enabled: true
+  match:
+    field: base
+    regex: ^007／ダイ・アナザー・デイ
+  set:
+    program_title: 007／ダイ・アナザー・デイ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_d8f44db45d
+  enabled: true
+  match:
+    field: base
+    regex: ^ひっかかりニーチェ世の中のありとあらゆる
+  set:
+    program_title: ひっかかりニーチェ世の中のありとあらゆる
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_db56c9843d
+  enabled: true
+  match:
+    field: base
+    regex: ^ファミリーヒストリーPRサンドウィッチマンをゲストに迎え、宮城県の
+  set:
+    program_title: ファミリーヒストリーPRサンドウィッチマンをゲストに迎え、宮城県の
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_dec5ba1d17
+  enabled: true
+  match:
+    field: base
+    regex: ^007／慰めの報酬
+  set:
+    program_title: 007／慰めの報酬
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_e1766f3aa3
+  enabled: true
+  match:
+    field: base
+    regex: ^令和サスペンス劇場
+  set:
+    program_title: 令和サスペンス劇場
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_e3b60c9fe2
+  enabled: true
+  match:
+    field: base
+    regex: ^暴太郎戦隊ドンブラザーズVS暴太郎戦隊ドンブリーズスーパー戦隊シリーズ
+  set:
+    program_title: 暴太郎戦隊ドンブラザーズVS暴太郎戦隊ドンブリーズスーパー戦隊シリーズ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_e56e9ce268
+  enabled: true
+  match:
+    field: base
+    regex: ^ラヂオの時間
+  set:
+    program_title: ラヂオの時間
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_e5c2d87c48
+  enabled: true
+  match:
+    field: base
+    regex: ^王様戦隊キングオージャーVSキョウリュウジャー
+  set:
+    program_title: 王様戦隊キングオージャーVSキョウリュウジャー
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_e64ecd999f
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメSeason5
+  set:
+    program_title: 孤独のグルメSeason5
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_eac0645f46
+  enabled: true
+  match:
+    field: base
+    regex: ^1分PR
+  set:
+    program_title: 1分PR
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_eb1fde32af
+  enabled: true
+  match:
+    field: base
+    regex: ^\(吹\)プロメテウス
+  set:
+    program_title: (吹)プロメテウス
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_ed89233073
+  enabled: true
+  match:
+    field: base
+    regex: ^ヨドンナ3
+  set:
+    program_title: ヨドンナ3
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_ee5ac5c904
+  enabled: true
+  match:
+    field: base
+    regex: ^ヨドンナ／ヨドンナ2
+  set:
+    program_title: ヨドンナ／ヨドンナ2
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_f23a584470
+  enabled: true
+  match:
+    field: base
+    regex: ^ダウントン・アビー／新たなる時代へ
+  set:
+    program_title: ダウントン・アビー／新たなる時代へ
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_f436237db1
+  enabled: true
+  match:
+    field: base
+    regex: ^シネマタイム
+  set:
+    program_title: シネマタイム
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_f7b3e77537
+  enabled: true
+  match:
+    field: base
+    regex: ^シネマタイムプラス
+  set:
+    program_title: シネマタイムプラス
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_f836acf690
+  enabled: true
+  match:
+    field: base
+    regex: ^ダークサイドミステリー
+  set:
+    program_title: ダークサイドミステリー
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: auto_fix_fa5b6b1ab2
+  enabled: true
+  match:
+    field: base
+    regex: ^沼にハマってきいてみた
+  set:
+    program_title: 沼にハマってきいてみた
+  notes: 'AUTO: folder explosion fix; keep program_title fixed to prefix head.'
+- id: blue_moment
+  enabled: true
+  match:
+    field: base
+    regex: ^ブルーモーメント
+  set:
+    program_title: ブルーモーメント
+  notes: ブルーモーメント は番組名固定。
+- id: boonboonger
+  enabled: true
+  match:
+    field: base
+    regex: ^爆上戦隊ブンブンジャー
+  set:
+    program_title: 爆上戦隊ブンブンジャー
+  notes: 爆上戦隊ブンブンジャーは番組名固定。『全』など誤抽出を防ぐ。
+- id: bs11_gundam_hour
+  enabled: true
+  match:
+    field: base
+    regex: ^BS11ガンダムアワー[_ ](.+)
+  set:
+    program_title: \1
+  notes: 枠名『BS11ガンダムアワー』を捨て、後続の作品名を番組名にする（必要なら別途正規化）。
+- id: bs_sekai_doc
+  enabled: true
+  match:
+    field: base
+    regex: ^BS世界のドキュメンタリー
+  set:
+    program_title: BS世界のドキュメンタリー
+    subtitle:
+      from: segments
+      separators:
+      - ▽
+      - ▼
+      take: 1
+  notes: BS世界のドキュメンタリーは番組名固定。▽/▼以降はsubtitle候補。
+- id: dandadan
+  enabled: true
+  match:
+    field: base
+    regex: ^ダンダダン
+  set:
+    program_title: ダンダダン
+  notes: ダンダダン は作品名固定。
+- id: darkside_mystery
+  enabled: true
+  match:
+    field: base
+    regex: ^ダークサイドミステリー
+  set:
+    program_title: ダークサイドミステリー
+  notes: ダークサイドミステリーは番組名固定（選/長文を吸収）。
+- id: document72hours
+  enabled: true
+  match:
+    field: base
+    regex: ^ドキュメント72時間
+  set:
+    program_title: ドキュメント72時間
+  notes: ドキュメント72時間は番組名固定。以降は内容説明（subtitle候補）。
+- id: document72hours_short
+  enabled: true
+  match:
+    field: base
+    regex: ^ドキュメント72時
+  set:
+    program_title: ドキュメント72時間
+  notes: ドキュメント72時(間)の省略表記をドキュメント72時間に統一。
+- id: dokyuland
+  enabled: true
+  match:
+    field: base
+    regex: ^ドキュランドへようこそ
+  set:
+    program_title: ドキュランドへようこそ
+  notes: ドキュランドへようこそ は番組名固定。
+- id: dynaman
+  enabled: true
+  match:
+    field: base
+    regex: 科学戦隊ダイナマン
+  set:
+    program_title: 科学戦隊ダイナマン
+  notes: 科学戦隊ダイナマン は作品名固定。
+- id: etv_tokushu
+  enabled: true
+  match:
+    field: base
+    regex: ^ETV特集
+  set:
+    program_title: ETV特集
+  notes: ETV特集は番組名固定。
+- id: gaia_leading_timestamp
+  enabled: true
+  match:
+    field: base
+    regex: ^\d{15}-ガイアの夜明け
+  set:
+    program_title: ガイアの夜明け
+  notes: 先頭に連番タイムスタンプが付くガイアの夜明けを番組名固定。
+- id: gaia_no_yoake
+  enabled: true
+  match:
+    field: base
+    regex: ^ガイアの夜明け
+  set:
+    program_title: ガイアの夜明け
+  notes: ガイアの夜明け は番組名固定。
+- id: garo_10th_special_ashura
+  enabled: true
+  match:
+    field: base
+    regex: ^(?:10周年記念スペシャル[_ ]*)?牙狼[＜<]GARO[＞>]-阿修羅-
+  set:
+    program_title: 牙狼＜GARO＞-阿修羅-
+  notes: 10周年記念スペシャル 牙狼＜GARO＞-阿修羅- を作品名側に寄せる。
+- id: garo_gold_storm_sho
+  enabled: true
+  match:
+    field: base
+    regex: ^牙狼[＜<]GARO[＞>]-GOLD[ _]STORM-翔
+  set:
+    program_title: 牙狼＜GARO＞-GOLD_STORM-翔
+  notes: Windows側のNFKCで＜＞→<>になるケースがあるので両対応。番組名は『牙狼<GARO>-GOLD_STORM-翔』まで固定。
+- id: garo_hagane
+  enabled: true
+  match:
+    field: base
+    regex: 牙狼[＜<]GARO[＞>]ハガネを継ぐ者
+  set:
+    program_title: 牙狼＜GARO＞ハガネを継ぐ者
+  notes: 牙狼＜GARO＞ハガネを継ぐ者 はシリーズ名固定。
+- id: garo_hd_remaster
+  enabled: true
+  match:
+    field: base
+    regex: '牙狼[＜<]GARO[＞>][^
+
+      ]*HDリマスター'
+  set:
+    program_title: 牙狼＜GARO＞_HDリマスター
+  notes: 牙狼＜GARO＞_HDリマスター 系は番組名固定。魔戒指南が付く場合は別ルールが先に当たる想定。
+- id: garo_hd_remaster_makaishinan
+  enabled: true
+  match:
+    field: base
+    regex: ^牙狼[＜<]GARO[＞>][_ ]HDリマスター[_ ]魔戒指南
+  set:
+    program_title: 牙狼＜GARO＞_HDリマスター_魔戒指南
+  notes: NFKCで＜＞→<>になるケースがあるので両対応。番組名は『牙狼＜GARO＞_HDリマスター_魔戒指南』まで固定。
+- id: garo_honookokuin
+  enabled: true
+  match:
+    field: base
+    regex: 牙狼[＜<]GARO[＞>]-炎の刻印
+  set:
+    program_title: 牙狼＜GARO＞-炎の刻印
+  notes: 牙狼＜GARO＞-炎の刻印 はシリーズ名固定。
+- id: garo_katarishimono
+  enabled: true
+  match:
+    field: base
+    regex: 牙狼[～~]語りし者[～~]
+  set:
+    program_title: 牙狼～語りし者～
+  notes: 牙狼～語りし者～ はシリーズ名固定。
+- id: garo_makainohana
+  enabled: true
+  match:
+    field: base
+    regex: 牙狼[＜<]GARO[＞>]-魔戒ノ花
+  set:
+    program_title: 牙狼＜GARO＞-魔戒ノ花
+  notes: 牙狼＜GARO＞-魔戒ノ花 はシリーズ名固定。
+- id: garo_makaizenki_bar
+  enabled: true
+  match:
+    field: base
+    regex: '牙狼[＜<]GARO[＞>][^
+
+      ]*MAKAISENKI'
+  set:
+    program_title: 牙狼＜GARO＞～MAKAISENKI～
+  notes: 牙狼＜GARO＞～MAKAISENKI～at魔戒指南bar などを本体シリーズ名に統一。
+- id: geki_rare
+  enabled: true
+  match:
+    field: base
+    regex: ^激レアさん
+  set:
+    program_title: 激レアさんを連れてきた。
+  notes: 激レアさんを連れてきた。 は番組名固定（後続の長文を番組名にしない）。
+- id: geki_rare_full
+  enabled: true
+  match:
+    field: base
+    regex: ^激レアさんを連れてきた。
+  set:
+    program_title: 激レアさんを連れてきた。
+  notes: 激レアさんを連れてきた。 は番組名固定。
+- id: getsu_yofukashi
+  enabled: true
+  match:
+    field: base
+    regex: ^月曜から夜ふかし
+  set:
+    program_title: 月曜から夜ふかし
+  notes: 月曜から夜ふかし は番組名固定。
+- id: goggle_v
+  enabled: true
+  match:
+    field: base
+    regex: 大戦隊ゴーグルファイブ
+  set:
+    program_title: 大戦隊ゴーグルファイブ
+  notes: 大戦隊ゴーグルファイブ は作品名固定。
+- id: gogo_live_newsoon_timeslot
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVE[_ ]ニュースーン[_ ]?([0-9０-９])時台
+  set:
+    program_title: 午後LIVE_ニュースーン_\1時台
+  notes: 午後LIVE ニュースーンは『3時台/4時台/5時台』で別番組扱い（program_titleに時台まで含める）。
+- id: gogo_live_newsoon_timeslot_gogo
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVE[_ ]ニュースーン[_ ]午後([0-9０-９])時台
+  set:
+    program_title: 午後LIVE_ニュースーン_\1時台
+  notes: 午後LIVE ニュースーン 午後3時台/午後4時台/午後5時台 を時台まで番組名に統一。
+- id: gogo_live_newsoon_timeslot_gogo_no_underscore
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVE\s*ニュースーン\s*午後([0-9０-９])時台
+  set:
+    program_title: 午後LIVE_ニュースーン_\1時台
+  notes: 区切りなし（スペース）表記の午後LIVE ニュースーン 午後N時台 を統一。
+- id: gogo_live_newsoon_timeslot_no_underscore
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン([0-9０-９])時台
+  set:
+    program_title: 午後LIVE_ニュースーン_\1時台
+  notes: 午後LIVEニュースーン4時台 のように区切りが無い表記を統一。
+- id: good_morning
+  enabled: true
+  match:
+    field: base
+    regex: ^グッド[!！]モーニング
+  set:
+    program_title: グッド!モーニング
+  notes: グッド!モーニング は番組名固定。
+- id: good_morning_any
+  enabled: true
+  match:
+    field: base
+    regex: ^グッド[!！]モーニング
+  set:
+    program_title: グッド!モーニング
+  notes: グッド!モーニング は番組名固定（後続の長文を番組名にしない）。
+- id: gozyuger
+  enabled: true
+  match:
+    field: base
+    regex: ナンバーワン戦隊ゴジュウジャー
+  set:
+    program_title: ナンバーワン戦隊ゴジュウジャー
+  notes: ナンバーワン戦隊ゴジュウジャー は作品名固定。
+- id: gundam_build_fighters
+  enabled: true
+  match:
+    field: base
+    regex: (?:^|_)ガンダムビルドファイターズ(?:_|$)
+  set:
+    program_title: ガンダムビルドファイターズ
+  notes: BS11ガンダムアワー等の枠名を除き、番組名はガンダムビルドファイターズに寄せる。
+- id: gundam_ibo
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダム[_ ]鉄血のオルフェンズ
+  set:
+    program_title: 機動戦士ガンダム_鉄血のオルフェンズ
+  notes: 機動戦士ガンダム 鉄血のオルフェンズ は作品名固定。
+- id: gundam_w
+  enabled: true
+  match:
+    field: base
+    regex: 新機動戦記ガンダムW
+  set:
+    program_title: 新機動戦記ガンダムW
+  notes: 新機動戦記ガンダムW(周年記念全話放送) 等の付加情報は落として番組名を新機動戦記ガンダムWに統一（枠名が前に付くケースもあるので部分一致）。
+- id: gundam_zz_selection
+  enabled: true
+  match:
+    field: base
+    regex: 機動戦士ガンダムZZ
+  set:
+    program_title: 機動戦士ガンダムZZ
+  notes: ガンダムZZ セレクション/話数付きの長文化を作品名固定。
+- id: heartnet_aug31
+  enabled: true
+  match:
+    field: base
+    regex: ^【ハートネット(?:TV|tv|ｔｖ)\+】#8月31日の夜に
+  set:
+    program_title: ハートネットTV+
+  notes: ハートネットTV+ 枠（#8月31日の夜に…）は番組名を枠名に固定。
+- id: heartnet_tv
+  enabled: true
+  match:
+    field: base
+    regex: ^ハートネットTV
+  set:
+    program_title: ハートネットTV
+  notes: ハートネットTV は番組名固定。
+- id: ice_keisatsu
+  enabled: true
+  match:
+    field: base
+    regex: ^アイシー
+  set:
+    program_title: アイシー～瞬間記憶捜査・柊班～
+  notes: アイシー～瞬間記憶捜査・柊班～ は番組名固定。
+- id: itteq
+  enabled: true
+  match:
+    field: base
+    regex: ^イッテ[Qq]!
+  set:
+    program_title: イッテQ!
+  notes: イッテQ! は番組名固定。
+- id: jinga
+  enabled: true
+  match:
+    field: base
+    regex: 神ノ牙-JINGA
+  set:
+    program_title: 神ノ牙-JINGA
+  notes: 神ノ牙-JINGA は番組名固定。
+- id: jironkouron
+  enabled: true
+  match:
+    field: base
+    regex: ^時論公論
+  set:
+    program_title: 時論公論
+  notes: 時論公論は番組名固定。
+- id: kanteidan
+  enabled: true
+  match:
+    field: base
+    regex: (?:^|【|「)開運!なんでも鑑定団
+  set:
+    program_title: 開運!なんでも鑑定団
+  notes: 開運!なんでも鑑定団は番組名固定（アンコールアワー等の前置きは捨てる）。
+- id: kyono_ryori
+  enabled: true
+  match:
+    field: base
+    regex: ^きょうの料理
+  set:
+    program_title: きょうの料理
+  notes: きょうの料理は番組名固定。『きょうの料理「…」』の引用部はサブシリーズ/企画名扱い（subtitle側で扱う）。
+- id: kyumei_byoto_24_s2
+  enabled: true
+  match:
+    field: base
+    regex: ^救命病棟24時[_ ]第(\d+)シリーズ
+  set:
+    program_title: 救命病棟24時_第\1シリーズ
+  notes: 救命病棟24時_第Nシリーズ までを番組名として扱う。
+- id: lesson16
+  enabled: true
+  match:
+    field: base
+    regex: ^16番目の授業
+  set:
+    program_title: 16番目の授業
+  notes: 16番目の授業 は番組名固定。
+- id: mashin_sentai_kirameiger
+  enabled: true
+  match:
+    field: base
+    regex: ^魔進戦隊キラメイジャー
+  set:
+    program_title: 魔進戦隊キラメイジャー
+  notes: 魔進戦隊キラメイジャー は番組名固定。
+- id: matsuko_shiranai_sekai
+  enabled: true
+  match:
+    field: base
+    regex: ^マツコの知らない世界
+  set:
+    program_title: マツコの知らない世界
+  notes: マツコの知らない世界は番組名固定。
+- id: mimiyori_kaisetsu
+  enabled: true
+  match:
+    field: base
+    regex: ^みみより!解説
+  set:
+    program_title: みみより!解説
+  notes: みみより!解説 は番組名固定。
+- id: mimiyori_kaisetsu_any
+  enabled: true
+  match:
+    field: base
+    regex: ^みみより!解説
+  set:
+    program_title: みみより!解説
+  notes: みみより!解説 は番組名固定（後続の長文を番組名にしない）。
+- id: mogitate_numbered
+  enabled: true
+  match:
+    field: base
+    regex: ^もぎたて[!！](\d{3})
+  set:
+    program_title: もぎたて!\1
+    subtitle:
+      from: segments
+      separators:
+      - ▽
+      - ▼
+      take: 1
+  notes: もぎたて!845 / もぎたて!645 などは数字込みを番組名として保持する。subtitleは最初の ▽/▼ セグメント。
+- id: mogitate_plain
+  enabled: true
+  match:
+    field: base
+    regex: ^もぎたて[!！](?:_|$)
+  set:
+    program_title: もぎたて!
+    subtitle:
+      from: segments
+      separators:
+      - ▽
+      - ▼
+      take: 1
+  notes: もぎたて!（数字なし）は番組名を固定する。
+- id: morningsatellite
+  enabled: true
+  match:
+    field: base
+    regex: ^モーサテ
+  set:
+    program_title: モーサテ
+  notes: モーサテ（WBS/テレ東系）固定。末尾の『金融ニュース』などを program_title にしない。
+- id: movie_prefix_drop
+  enabled: true
+  match:
+    field: base
+    regex: ^映画[_ ](.+)$
+  set:
+    program_title: \1
+  notes: '"映画" はラベルなので番組名にしない。映画_XXX の場合は XXX を program_title にする。'
+- id: nehori_npahori
+  enabled: true
+  match:
+    field: base
+    regex: ^ねほりんぱほりん
+  set:
+    program_title: ねほりんぱほりん
+  notes: ねほりんぱほりん は番組名固定（選/年末SP等が混じっても番組名は固定）。
+- id: nhk_special
+  enabled: true
+  match:
+    field: base
+    regex: ^NHKスペシャル
+  set:
+    program_title: NHKスペシャル
+  notes: NHKスペシャルは番組名固定。
+- id: nnn_document
+  enabled: true
+  match:
+    field: base
+    regex: ^NNNドキュメント
+  set:
+    program_title: NNNドキュメント
+  notes: NNNドキュメントは番組名固定。'25 などはサブタイトル側で扱う。
+- id: nnn_document_anycase
+  enabled: true
+  match:
+    field: base
+    regex: ^[Nn]{3}ドキュメント
+  set:
+    program_title: NNNドキュメント
+  notes: Nnn/NNN の表記揺れや "'24" などは番組名に含めず、NNNドキュメントに統一。
+- id: nonfiction
+  enabled: true
+  match:
+    field: base
+    regex: ^ザ・ノンフィクション
+  set:
+    program_title: ザ・ノンフィクション
+  notes: ザ・ノンフィクション は番組名固定。
+- id: ohasta
+  enabled: true
+  match:
+    field: base
+    regex: ^おはスタ
+  set:
+    program_title: おはスタ
+  notes: おはスタ は番組名固定。
+- id: oshita_yoko_wide_scramble
+  enabled: true
+  match:
+    field: base
+    regex: ^大下容子ワイド!スクランブル
+  set:
+    program_title: 大下容子ワイド!スクランブル
+  notes: 大下容子ワイド!スクランブルは番組名固定。
+- id: rnc_news_every_part
+  enabled: true
+  match:
+    field: base
+    regex: ^RNC_news_every\.第(\d+)部
+  set:
+    program_title: RNC_news_every.第\1部
+  notes: RNC_news_every は第N部までを番組名として扱う。
+- id: rnc_newsevery_part_variants
+  enabled: true
+  match:
+    field: base
+    regex: ^RNC(?:news[_ ]?every|newsevery)\.?第(\d+)部
+  set:
+    program_title: RNC_news_every.第\1部
+  notes: RNCnewsevery / RNC_news_every の表記揺れをまとめて、第N部までを番組名として固定。
+- id: rohan_louvre
+  enabled: true
+  match:
+    field: base
+    regex: ^岸辺露伴[_ ]ルーヴルへ行く
+  set:
+    program_title: 岸辺露伴_ルーヴルへ行く
+  notes: 岸辺露伴 ルーヴルへ行く は作品名固定。
+- id: ryusoulger
+  enabled: true
+  match:
+    field: base
+    regex: 騎士竜戦隊リュウソウジャー
+  set:
+    program_title: 騎士竜戦隊リュウソウジャー
+  notes: 騎士竜戦隊リュウソウジャー は作品名固定。
+- id: science_zero
+  enabled: true
+  match:
+    field: base
+    regex: ^サイエンスZERO
+  set:
+    program_title: サイエンスZERO
+  notes: サイエンスZERO は番組名固定。
+- id: sekai_marumie
+  enabled: true
+  match:
+    field: base
+    regex: ^世界まる見え
+  set:
+    program_title: 世界まる見え!
+  notes: 世界まる見え! の長い説明文が program_title に入りがちなので番組名固定。
+- id: sekai_no_hate_made_itteq
+  enabled: true
+  match:
+    field: base
+    regex: ^世界の果てまでイッテ[Qq]!
+  set:
+    program_title: 世界の果てまでイッテQ!
+  notes: 世界の果てまでイッテQ! は番組名固定（後続の長文を番組名にしない）。
+- id: senpai_taishikkaku
+  enabled: true
+  match:
+    field: base
+    regex: 戦隊大失格
+  set:
+    program_title: 戦隊大失格
+  notes: 戦隊大失格 は作品名固定。
+- id: sentai_red_isekai
+  enabled: true
+  match:
+    field: base
+    regex: ^戦隊レッド[_ ]異世界で冒険者になる
+  set:
+    program_title: 戦隊レッド_異世界で冒険者になる
+  notes: 戦隊レッド 異世界で冒険者になる は番組名固定。
+- id: shabekuri007
+  enabled: true
+  match:
+    field: base
+    regex: ^しゃべくり007
+  set:
+    program_title: しゃべくり007
+  notes: しゃべくり007 は番組名固定。
+- id: shiten_ronten
+  enabled: true
+  match:
+    field: base
+    regex: ^視点・論点
+  set:
+    program_title: 視点・論点
+  notes: 視点・論点 は番組名固定。
+- id: shiten_ronten_any
+  enabled: true
+  match:
+    field: base
+    regex: ^視点・論点
+  set:
+    program_title: 視点・論点
+  notes: 視点・論点 は番組名固定（後続の長文を番組名にしない）。
+- id: shuwa_mintele_doc72
+  enabled: true
+  match:
+    field: base
+    regex: ^手話で楽しむみんなのテレビ×ドキュメント72時間
+  set:
+    program_title: ドキュメント72時間
+  notes: 手話で楽しむ…×ドキュメント72時間 は本体番組に寄せる。
+- id: tetsuwan_dash
+  enabled: true
+  match:
+    field: base
+    regex: ^ザ!鉄腕!DASH!!
+  set:
+    program_title: ザ!鉄腕!DASH!!
+    subtitle:
+      from: segments
+      separators:
+      - ▽
+      - ▼
+      take: 1
+  notes: ザ!鉄腕!DASH!! は番組名固定。▼/▽以降はsubtitle候補。
+- id: tokorosan_mega_ten
+  enabled: true
+  match:
+    field: base
+    regex: ^所さんの目がテン!
+  set:
+    program_title: 所さんの目がテン!
+  notes: 所さんの目がテン! は番組名固定。
+- id: turn_a_gundam
+  enabled: true
+  match:
+    field: base
+    regex: ∀ガンダム
+  set:
+    program_title: ∀ガンダム
+  notes: ∀ガンダム(アニバーサリーセレクション) 等の付加情報は落として番組名を∀ガンダムに統一（先頭に枠名が付くケースもあるので部分一致）。
+- id: ultraman_dash_hakone
+  enabled: true
+  match:
+    field: base
+    regex: ウルトラマンDASH箱根駅伝
+  set:
+    program_title: ウルトラマンDASH箱根駅伝
+  notes: ウルトラマンDASH箱根駅伝 は企画名固定。
+- id: ultraman_omega
+  enabled: true
+  match:
+    field: base
+    regex: ^ウルトラマンオメガ
+  set:
+    program_title: ウルトラマンオメガ
+  notes: ウルトラマンオメガ は番組名固定。
+- id: waruiko_atsumare
+  enabled: true
+  match:
+    field: base
+    regex: ^ワルイコあつまれ
+  set:
+    program_title: ワルイコあつまれ
+  notes: ワルイコあつまれ は番組名固定。
+- id: wbs
+  enabled: true
+  match:
+    field: base
+    regex: ^WBS
+  set:
+    program_title: WBS
+  notes: WBS は番組名固定。
+- id: you_nihonhe
+  enabled: true
+  match:
+    field: base
+    regex: ^YOUは何しに
+  set:
+    program_title: YOUは何しに日本へ？
+  notes: YOUは何しに日本へ？ は番組名固定。
+- id: zip
+  enabled: true
+  match:
+    field: base
+    regex: ^ZIP!
+  set:
+    program_title: ZIP!
+  notes: ZIP! は番組名固定。
+- id: auto_longtitle_04f969e901
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後5時台久石譲さんたっぷりトーク音楽家久石譲さんのトークを。数々の映画音楽で知られ
+  set:
+    program_title: 午後LIVEニュースーン午後5時台久石譲さんたっぷりトーク音楽家久石譲さんのトークを。数々の映画音楽で知られ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_08e3f8a096
+  enabled: false
+  match:
+    field: base
+    regex: ^機動戦士ガンダム\ 鉄血のオルフェンズ\ 第32話「友よ」SAUからの調停要請を引き受けたギャラルホルン。長
+  set:
+    program_title: 機動戦士ガンダム 鉄血のオルフェンズ 第32話「友よ」SAUからの調停要請を引き受けたギャラルホルン。長
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_13e037ba86
+  enabled: true
+  match:
+    field: base
+    regex: ^ドア×ドアクエスト★テレビアニメ誕生から67年!人気アニメの裏側\&巨大音楽フェス\[字\]鉄腕アトムやガンダムなど昭和・平成・令和の大
+  set:
+    program_title: ドア×ドアクエスト★テレビアニメ誕生から67年!人気アニメの裏側&巨大音楽フェス[字]鉄腕アトムやガンダムなど昭和・平成・令和の大
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_14d6231398
+  enabled: true
+  match:
+    field: base
+    regex: ^おとなのEテレタイムマシンETV特集ゴジラのテーマをつくった男作曲家伊福部昭Eテレの膨大なアーカイブスから
+  set:
+    program_title: おとなのEテレタイムマシンETV特集ゴジラのテーマをつくった男作曲家伊福部昭Eテレの膨大なアーカイブスから
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_1694c2c410
+  enabled: true
+  match:
+    field: base
+    regex: ^手話で楽しむみんなのテレビ×ドキュメント72時間中国・がん病院裏の貸し台所NHKの人気番組を手話でも楽しみたい!そんな声に応
+  set:
+    program_title: 手話で楽しむみんなのテレビ×ドキュメント72時間中国・がん病院裏の貸し台所NHKの人気番組を手話でも楽しみたい!そんな声に応
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_1727d05382
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後5時台ショッピングモールでウォーキング空調のきいた涼しいショッピングモールでウォーキング
+  set:
+    program_title: 午後LIVEニュースーン午後5時台ショッピングモールでウォーキング空調のきいた涼しいショッピングモールでウォーキング
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_17504d05e4
+  enabled: true
+  match:
+    field: base
+    regex: ^浜ちゃんが!お買い物対決☆エバースVS女優・柳美稀!代役MCは蛍原徹ゲストが買い物する姿を通し、意外な素顔に迫る“買う
+  set:
+    program_title: 浜ちゃんが!お買い物対決☆エバースVS女優・柳美稀!代役MCは蛍原徹ゲストが買い物する姿を通し、意外な素顔に迫る“買う
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_1a6deb5d94
+  enabled: true
+  match:
+    field: base
+    regex: ^池上彰の激動！世界情勢ＳＰ緊急生放送！イスラエルとイランの報復合戦の行方…\[字\]核施設をめぐるイスラエルとイランの攻防を池上が生解説！“北朝鮮製”\(秘\)製品が日
+  set:
+    program_title: 池上彰の激動！世界情勢ＳＰ緊急生放送！イスラエルとイランの報復合戦の行方…[字]核施設をめぐるイスラエルとイランの攻防を池上が生解説！“北朝鮮製”(秘)製品が日
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_1d0f2e50fe
+  enabled: true
+  match:
+    field: base
+    regex: ^孤独のグルメスペシャル!松重豊主演～真夏の東北・宮城出張編～松重豊主演の人気番組が帰ってきた!雑貨輸入商の井之
+  set:
+    program_title: 孤独のグルメスペシャル!松重豊主演～真夏の東北・宮城出張編～松重豊主演の人気番組が帰ってきた!雑貨輸入商の井之
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_1d5a13e0cc
+  enabled: false
+  match:
+    field: base
+    regex: ^機動戦士ガンダム\ 鉄血のオルフェンズ\ 第3話「散華」多くの犠牲を出しながらも、三日月とガンダム・バルバ
+  set:
+    program_title: 機動戦士ガンダム 鉄血のオルフェンズ 第3話「散華」多くの犠牲を出しながらも、三日月とガンダム・バルバ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_1e1b3aa7ae
+  enabled: true
+  match:
+    field: base
+    regex: ^さんま御殿流行乗る人乗らない人バトル!ゴジラ山崎監督が\(秘\)を溺愛!？ジェシー炭治郎意地でも流行りに乗らない梅沢富
+  set:
+    program_title: さんま御殿流行乗る人乗らない人バトル!ゴジラ山崎監督が(秘)を溺愛!？ジェシー炭治郎意地でも流行りに乗らない梅沢富
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_27df031709
+  enabled: false
+  match:
+    field: base
+    regex: ^機動戦士ガンダム\ 鉄血のオルフェンズ\ 第42話「落とし前」バルバトスの改修も終わり戦力を整えた鉄華団。意を決
+  set:
+    program_title: 機動戦士ガンダム 鉄血のオルフェンズ 第42話「落とし前」バルバトスの改修も終わり戦力を整えた鉄華団。意を決
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_339be2d15a
+  enabled: false
+  match:
+    field: base
+    regex: ^映画「ゴジラ×メカゴジラ」日米のゴジラを2夜連続放送!超攻撃型メカゴジラがゴジラを迎え撃つ!ゴジラシリー
+  set:
+    program_title: 映画「ゴジラ×メカゴジラ」日米のゴジラを2夜連続放送!超攻撃型メカゴジラがゴジラを迎え撃つ!ゴジラシリー
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_40f6c5a1c3
+  enabled: true
+  match:
+    field: base
+    regex: ^池上彰のニュースそうだったのか!!ニューストリビアSP関東で一番涼しいのは千葉!？関東で一番涼しい地域は千葉の○○!？エアコン室外機
+  set:
+    program_title: 池上彰のニュースそうだったのか!!ニューストリビアSP関東で一番涼しいのは千葉!？関東で一番涼しい地域は千葉の○○!？エアコン室外機
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_45ab6b8593
+  enabled: true
+  match:
+    field: base
+    regex: ^フロンティアで会いましょう!\(15\)40兆の細胞に潜む驚異のキャラクターたちあらゆる生き物の体を構成する細胞。まさに命の最小単
+  set:
+    program_title: フロンティアで会いましょう!(15)40兆の細胞に潜む驚異のキャラクターたちあらゆる生き物の体を構成する細胞。まさに命の最小単
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_47fa242dd7
+  enabled: false
+  match:
+    field: base
+    regex: ^202504252211010202\-ガイアの夜明け【看護師が足りない！～医療崩壊は防げるか～】\[字\]
+  set:
+    program_title: 202504252211010202-ガイアの夜明け【看護師が足りない！～医療崩壊は防げるか～】[字]
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_536429a1c2
+  enabled: true
+  match:
+    field: base
+    regex: ^ファミリーヒストリー選伊達みきお\(サンドウィッチマン\)伊達の名に誓った覚悟とは伊達みきおさんは芸人になる時、
+  set:
+    program_title: ファミリーヒストリー選伊達みきお(サンドウィッチマン)伊達の名に誓った覚悟とは伊達みきおさんは芸人になる時、
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_59d2a789f2
+  enabled: true
+  match:
+    field: base
+    regex: ^忍風戦隊ハリケンジャーでござる!シュシュッと20thAnniversaryTVシリーズ放送から20周年を記念して、メインキャ
+  set:
+    program_title: 忍風戦隊ハリケンジャーでござる!シュシュッと20thAnniversaryTVシリーズ放送から20周年を記念して、メインキャ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_5bd4104acf
+  enabled: true
+  match:
+    field: base
+    regex: ^さんま御殿流行乗る人乗らない人バトル!ゴジラ山崎監督が\(秘\)を溺愛!？ジェシー炭治郎意地でも流行りに乗らない梅沢富美男と千秋が大バトル
+  set:
+    program_title: さんま御殿流行乗る人乗らない人バトル!ゴジラ山崎監督が(秘)を溺愛!？ジェシー炭治郎意地でも流行りに乗らない梅沢富美男と千秋が大バトル
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_5cb60b8e00
+  enabled: false
+  match:
+    field: base
+    regex: ^機動戦士ガンダム\ 鉄血のオルフェンズ\ 第39話「助言」タービンズから出向していたラフタらが、鉄華団を離れ
+  set:
+    program_title: 機動戦士ガンダム 鉄血のオルフェンズ 第39話「助言」タービンズから出向していたラフタらが、鉄華団を離れ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_5f6e3d5206
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン生出演!伊原剛志さんの肩書きをどうするか問題伊原剛志さんとスタジオで生トーク!伊原さん、もちろ
+  set:
+    program_title: 午後LIVEニュースーン生出演!伊原剛志さんの肩書きをどうするか問題伊原剛志さんとスタジオで生トーク!伊原さん、もちろ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_6ef6c7d01f
+  enabled: false
+  match:
+    field: base
+    regex: ^機動戦士ガンダム_鉄血のオルフェンズ_第42話「落とし前」バルバトスの改修も終わり戦力を整えた鉄華団。意を決
+  set:
+    program_title: 機動戦士ガンダム_鉄血のオルフェンズ_第42話「落とし前」バルバトスの改修も終わり戦力を整えた鉄華団。意を決
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_7ee9017ae9
+  enabled: true
+  match:
+    field: base
+    regex: ^NHK映像ファイルあの人に会いたい枝元なほみ\(料理研究家\)今年2月に亡くなった料理研究家の枝元なほみさん。ジ
+  set:
+    program_title: NHK映像ファイルあの人に会いたい枝元なほみ(料理研究家)今年2月に亡くなった料理研究家の枝元なほみさん。ジ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_83ded43013
+  enabled: true
+  match:
+    field: base
+    regex: ^手話で楽しむみんなのテレビ×眠れぬ夜はAIさんと～ゲスト・JUJU落ち込む人の気分を上げるために歌詞を書いてきたアー
+  set:
+    program_title: 手話で楽しむみんなのテレビ×眠れぬ夜はAIさんと～ゲスト・JUJU落ち込む人の気分を上げるために歌詞を書いてきたアー
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_87d7364f1b
+  enabled: true
+  match:
+    field: base
+    regex: ^手話で楽しむみんなのテレビ×ドキュメント72時間国道4号線のドライブインNHKの人気番組を手話でも楽しみたい!そんな声に応
+  set:
+    program_title: 手話で楽しむみんなのテレビ×ドキュメント72時間国道4号線のドライブインNHKの人気番組を手話でも楽しみたい!そんな声に応
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_8ad5d30a38
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台美しい江戸切子の老舗ほか100年以上前に創業した江戸切子の老舗。その歴史と
+  set:
+    program_title: 午後LIVEニュースーン午後3時台美しい江戸切子の老舗ほか100年以上前に創業した江戸切子の老舗。その歴史と
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_8b82907087
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台中国“潮流玩具”人気の秘密ニュースの深掘りは、中国で人気のゆるキャラおもちゃ
+  set:
+    program_title: 午後LIVEニュースーン午後3時台中国“潮流玩具”人気の秘密ニュースの深掘りは、中国で人気のゆるキャラおもちゃ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_8dc4f0f2ba
+  enabled: true
+  match:
+    field: base
+    regex: ^おとなのEテレタイムマシンETV特集命熱し老いおもしろし俳人・永田耕衣の世界Eテレの膨大なアーカイブスから選りすぐりの番組をリ
+  set:
+    program_title: おとなのEテレタイムマシンETV特集命熱し老いおもしろし俳人・永田耕衣の世界Eテレの膨大なアーカイブスから選りすぐりの番組をリ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_8e7a01f61d
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後5時台トークシュン大原櫻子さんトークシュンは俳優でアーティストの大原櫻子さん。み
+  set:
+    program_title: 午後LIVEニュースーン午後5時台トークシュン大原櫻子さんトークシュンは俳優でアーティストの大原櫻子さん。み
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_91172d11aa
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台民間を活用して避難所の運用改善!ニュースの深掘りは、民間の力で避難所の設置や運営を
+  set:
+    program_title: 午後LIVEニュースーン午後3時台民間を活用して避難所の運用改善!ニュースの深掘りは、民間の力で避難所の設置や運営を
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_9131b95693
+  enabled: false
+  match:
+    field: base
+    regex: ^機動戦士ガンダム_鉄血のオルフェンズ_第39話「助言」タービンズから出向していたラフタらが、鉄華団を離れ
+  set:
+    program_title: 機動戦士ガンダム_鉄血のオルフェンズ_第39話「助言」タービンズから出向していたラフタらが、鉄華団を離れ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_918f7c5e7a
+  enabled: true
+  match:
+    field: base
+    regex: ^おとなのEテレタイムマシンETV特集ゴジラのテーマをつくった男作曲家・伊福部昭Eテレの膨大なアーカイブスから
+  set:
+    program_title: おとなのEテレタイムマシンETV特集ゴジラのテーマをつくった男作曲家・伊福部昭Eテレの膨大なアーカイブスから
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_9732a71d6e
+  enabled: false
+  match:
+    field: base
+    regex: ^池上彰が追跡取材！どうなる!？リニア新幹線\[字\]リニア新幹線の開業時期が「２０２７年以降」に変更！最大の壁は…▼ジャーナリスト・池上彰が日本の今を表す「３つのキ
+  set:
+    program_title: 池上彰が追跡取材！どうなる!？リニア新幹線[字]リニア新幹線の開業時期が「２０２７年以降」に変更！最大の壁は…▼ジャーナリスト・池上彰が日本の今を表す「３つのキ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_9d56c8f2ee
+  enabled: true
+  match:
+    field: base
+    regex: ^バース・デイ\[字\]落合博満＆松井秀喜が語る大谷翔平・前半戦日本人選手初となるメジャー通算２００本塁打を達成したドジャース大谷翔平・絶好調の理由をオレ流・落合＆ゴ
+  set:
+    program_title: バース・デイ[字]落合博満＆松井秀喜が語る大谷翔平・前半戦日本人選手初となるメジャー通算２００本塁打を達成したドジャース大谷翔平・絶好調の理由をオレ流・落合＆ゴ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_a708ef5c35
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台高橋久美子さんと愛媛の山を酒場詩人吉田類さんが元チャットモンチー、作家の高橋
+  set:
+    program_title: 午後LIVEニュースーン午後3時台高橋久美子さんと愛媛の山を酒場詩人吉田類さんが元チャットモンチー、作家の高橋
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_a7cfafa1aa
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台創設80周年岐路に立つ国連なんでもありの3時間!あの手この手でニュース解説、
+  set:
+    program_title: 午後LIVEニュースーン午後3時台創設80周年岐路に立つ国連なんでもありの3時間!あの手この手でニュース解説、
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_a7dddd43af
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台香港の夜景を彩るネオンを守る取り組み香港の夜景を彩る街のネオンが、いま、次々に撤去され
+  set:
+    program_title: 午後LIVEニュースーン午後3時台香港の夜景を彩るネオンを守る取り組み香港の夜景を彩る街のネオンが、いま、次々に撤去され
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_aee2ec4652
+  enabled: false
+  match:
+    field: base
+    regex: ^機動戦士ガンダム_鉄血のオルフェンズ_第32話「友よ」SAUからの調停要請を引き受けたギャラルホルン。長
+  set:
+    program_title: 機動戦士ガンダム_鉄血のオルフェンズ_第32話「友よ」SAUからの調停要請を引き受けたギャラルホルン。長
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_b2d19c92ce
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後5時台高齢者とペット共に暮らし続けるために高齢になると難しくなるペットの飼育。最後まで面倒を
+  set:
+    program_title: 午後LIVEニュースーン午後5時台高齢者とペット共に暮らし続けるために高齢になると難しくなるペットの飼育。最後まで面倒を
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_b520ea3b73
+  enabled: false
+  match:
+    field: base
+    regex: ^世界の果てまでイッテＱ！ＧＷ特別編！世界一周夢の旅アワード\[再\]Qtubeゾウのシャワーで記念撮影inタイ▼出川＆夫人サムイ島の絶景インスタ映えスポットへ▼みや
+  set:
+    program_title: 世界の果てまでイッテＱ！ＧＷ特別編！世界一周夢の旅アワード[再]Qtubeゾウのシャワーで記念撮影inタイ▼出川＆夫人サムイ島の絶景インスタ映えスポットへ▼みや
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_bbbfa14e2f
+  enabled: false
+  match:
+    field: base
+    regex: ^池上彰の関西人が知らないＫＡＮＳＡＩ\[字\]【好評第８弾！大阪の“アレ”に世界が興奮】好評第８弾！池上彰×ブラマヨ知られざる関西の魅力を徹底調査▽店内は外国人客だ
+  set:
+    program_title: 池上彰の関西人が知らないＫＡＮＳＡＩ[字]【好評第８弾！大阪の“アレ”に世界が興奮】好評第８弾！池上彰×ブラマヨ知られざる関西の魅力を徹底調査▽店内は外国人客だ
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_bef01b1b02
+  enabled: true
+  match:
+    field: base
+    regex: ^王様戦隊キングオージャーファイナルライブツアー2024全国8都市で開催されたライブツアーの千秋楽となる大
+  set:
+    program_title: 王様戦隊キングオージャーファイナルライブツアー2024全国8都市で開催されたライブツアーの千秋楽となる大
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_c075c14bc2
+  enabled: false
+  match:
+    field: base
+    regex: ^機動戦士ガンダム_水星の魔女_第3話「グエルのプライド」決闘の再試合を強いられるスレッタ。エアリアルの廃棄
+  set:
+    program_title: 機動戦士ガンダム_水星の魔女_第3話「グエルのプライド」決闘の再試合を強いられるスレッタ。エアリアルの廃棄
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_c589de7f00
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台選挙とSNSニセ情報にだまされない!選挙での活用が進むSNSですが、誤った情報が拡散す
+  set:
+    program_title: 午後LIVEニュースーン午後3時台選挙とSNSニセ情報にだまされない!選挙での活用が進むSNSですが、誤った情報が拡散す
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_c91812ece5
+  enabled: true
+  match:
+    field: base
+    regex: ^昭和アニソンコレクション3◆機動戦士ガンダム／ルパン三世／ドラゴンボールほか昭和の時代、子供だった僕たちが夢中になって見ていた
+  set:
+    program_title: 昭和アニソンコレクション3◆機動戦士ガンダム／ルパン三世／ドラゴンボールほか昭和の時代、子供だった僕たちが夢中になって見ていた
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_cc90a84b02
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後5時台SOON相撲部注目力士・阿武剋SOON相撲部・名古屋場所の注目力士は阿武剋!能町
+  set:
+    program_title: 午後LIVEニュースーン午後5時台SOON相撲部注目力士・阿武剋SOON相撲部・名古屋場所の注目力士は阿武剋!能町
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_ce2c655562
+  enabled: true
+  match:
+    field: base
+    regex: ^タクシー運転手さん一番うまい店に連れてって!目指せ富士山!乗り継ぎグルメ旅グルメを探しながら成田⇒富士山を目指す無謀な新企画
+  set:
+    program_title: タクシー運転手さん一番うまい店に連れてって!目指せ富士山!乗り継ぎグルメ旅グルメを探しながら成田⇒富士山を目指す無謀な新企画
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_e17bcb5a3d
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後5時台涼しい!手軽!冷凍うどん冷凍うどんについて、特集で深掘りします。何しろ手軽
+  set:
+    program_title: 午後LIVEニュースーン午後5時台涼しい!手軽!冷凍うどん冷凍うどんについて、特集で深掘りします。何しろ手軽
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_e4bb0aa1fa
+  enabled: true
+  match:
+    field: base
+    regex: ^おしゃれクリップ…世界が絶賛!ゴジラー10!山崎貴監督の素顔と驚き発想法世界が絶賛!ゴジラ山崎貴監督の
+  set:
+    program_title: おしゃれクリップ…世界が絶賛!ゴジラー10!山崎貴監督の素顔と驚き発想法世界が絶賛!ゴジラ山崎貴監督の
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'
+- id: auto_longtitle_e9d3532530
+  enabled: true
+  match:
+    field: base
+    regex: ^午後LIVEニュースーン午後3時台ウクライナ避難者深まる苦悩なんでもありの3時間!あの手この手でニュース解説、
+  set:
+    program_title: 午後LIVEニュースーン午後3時台ウクライナ避難者深まる苦悩なんでもありの3時間!あの手この手でニュース解説、
+  notes: 'AUTO: long program_title detected; fix program_title to this prefix.'

@@ -6,10 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine
-from mediaops_schema import paths, events, runs
+from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 
 
 def now_iso() -> str:
@@ -47,8 +47,9 @@ def main() -> int:
     if not os.path.exists(args.applied):
         raise SystemExit(f"Applied JSONL not found: {args.applied}")
 
-    engine = create_engine(f"sqlite:///{args.db}")
-    moved = 0
+    con = connect_db(args.db)
+    create_schema_if_needed(con)
+
     rows_events = []
     updates = []
 
@@ -63,47 +64,65 @@ def main() -> int:
         if not pid or not dst:
             continue
         full, dir_, name = split_win(dst)
-        updates.append((pid, full, dir_, name))
-        moved += 1
+        updates.append((full, dir_, name, now_iso(), pid))
         rows_events.append(
-            {
-                "run_id": "TBD",
-                "ts": rec.get("ts") or now_iso(),
-                "kind": "move",
-                "src_path_id": pid,
-                "dst_path_id": None,
-                "detail_json": json.dumps({"src": src, "dst": dst, "source": "apply_move_plan.ps1"}, ensure_ascii=False),
-                "ok": 1,
-                "error": None,
-            }
+            (
+                "TBD",
+                rec.get("ts") or now_iso(),
+                "move",
+                pid,
+                None,
+                json.dumps({"src": src, "dst": dst, "source": "apply_move_plan.ps1"}, ensure_ascii=False),
+                1,
+                None,
+            )
         )
 
     if args.dry_run:
         print(json.dumps({"applied": args.applied, "would_update": len(updates), "would_events": len(rows_events)}, ensure_ascii=False))
         return 0
 
-    run_id = __import__("uuid").uuid4().hex
+    run_id = uuid.uuid4().hex
     started = now_iso()
 
-    with engine.begin() as conn:
-        conn.execute(
-            runs.insert().values(
-                run_id=run_id,
-                kind="apply",
-                target_root=None,
-                started_at=started,
-                finished_at=None,
-                tool_version=None,
-                notes=args.notes or f"update_db_paths_from_move_apply {os.path.basename(args.applied)}",
-            )
+    try:
+        begin_immediate(con)
+        con.execute(
+            """
+            INSERT INTO runs (run_id, kind, target_root, started_at, finished_at, tool_version, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                "apply",
+                None,
+                started,
+                None,
+                None,
+                args.notes or f"update_db_paths_from_move_apply {os.path.basename(args.applied)}",
+            ),
         )
-        for pid, full, dir_, name in updates:
-            conn.execute(paths.update().where(paths.c.path_id == pid).values(path=full, dir=dir_, name=name, updated_at=now_iso()))
-        for r in rows_events:
-            r["run_id"] = run_id
+        if updates:
+            con.executemany(
+                "UPDATE paths SET path=?, dir=?, name=?, updated_at=? WHERE path_id=?",
+                updates,
+            )
         if rows_events:
-            conn.execute(events.insert(), rows_events)
-        conn.execute(runs.update().where(runs.c.run_id == run_id).values(finished_at=now_iso()))
+            rows_events = [(run_id, *row[1:]) for row in rows_events]
+            con.executemany(
+                """
+                INSERT INTO events (run_id, ts, kind, src_path_id, dst_path_id, detail_json, ok, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows_events,
+            )
+        con.execute("UPDATE runs SET finished_at=? WHERE run_id=?", (now_iso(), run_id))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
     print(json.dumps({"applied": args.applied, "updated": len(updates), "events": len(rows_events), "run_id": run_id}, ensure_ascii=False))
     return 0
@@ -111,3 +130,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

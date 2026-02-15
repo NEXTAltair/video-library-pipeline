@@ -1,141 +1,151 @@
-"""mediaops_schema.py
+"""SQLite schema helpers for mediaops.sqlite (v1).
 
-SQLAlchemy Core schema for mediaops.sqlite (v1).
-
-Design goals:
-- Separate *path* (location; aligns with Tablacus labels) from *file* (future stable identity).
-- Keep run-scoped snapshots (observations) for reproducible reports.
-- Keep an append-only audit trail (events).
-- Tags are attached to paths (v1), imported from Tablacus label3.db.
-- Arbitrary metadata attaches to paths as JSON (path_metadata).
-
-DB path is provided by runtime config/CLI arguments.
-
-NOTE: SQLite JSON is stored as TEXT; validate at the application layer.
+This module intentionally uses only the Python standard library.
+It preserves the existing table/index/constraint shapes used by the pipeline.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import (
-    Table,
-    Column,
-    MetaData,
-    ForeignKey,
-    Integer,
-    Text,
-    String,
-    UniqueConstraint,
-    Index,
-)
+import sqlite3
 
-metadata = MetaData()
 
-runs = Table(
-    "runs",
-    metadata,
-    Column("run_id", String, primary_key=True),  # uuid
-    Column("kind", String, nullable=False),
-    Column("target_root", Text, nullable=True),
-    Column("started_at", String, nullable=False),  # ISO8601
-    Column("finished_at", String, nullable=True),
-    Column("tool_version", String, nullable=True),
-    Column("notes", Text, nullable=True),
-    Index("idx_runs_kind_started", "kind", "started_at"),
-)
+DDL_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS runs (
+      run_id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      target_root TEXT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT NULL,
+      tool_version TEXT NULL,
+      notes TEXT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_runs_kind_started ON runs(kind, started_at)",
+    """
+    CREATE TABLE IF NOT EXISTS files (
+      file_id TEXT PRIMARY KEY,
+      size_bytes INTEGER NOT NULL,
+      content_hash TEXT NULL,
+      hash_algo TEXT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash)",
+    """
+    CREATE TABLE IF NOT EXISTS paths (
+      path_id TEXT PRIMARY KEY,
+      path TEXT NOT NULL UNIQUE,
+      drive TEXT NULL,
+      dir TEXT NULL,
+      name TEXT NULL,
+      ext TEXT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_paths_dir ON paths(dir)",
+    "CREATE INDEX IF NOT EXISTS idx_paths_ext ON paths(ext)",
+    """
+    CREATE TABLE IF NOT EXISTS file_paths (
+      file_id TEXT NOT NULL,
+      path_id TEXT NOT NULL,
+      is_current INTEGER NOT NULL DEFAULT 1,
+      first_seen_run_id TEXT NULL,
+      last_seen_run_id TEXT NULL,
+      CONSTRAINT uq_file_paths_file_path UNIQUE (file_id, path_id),
+      FOREIGN KEY (file_id) REFERENCES files(file_id),
+      FOREIGN KEY (path_id) REFERENCES paths(path_id),
+      FOREIGN KEY (first_seen_run_id) REFERENCES runs(run_id),
+      FOREIGN KEY (last_seen_run_id) REFERENCES runs(run_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_file_paths_current ON file_paths(is_current)",
+    """
+    CREATE TABLE IF NOT EXISTS observations (
+      run_id TEXT NOT NULL,
+      path_id TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      mtime_utc TEXT NULL,
+      type TEXT NULL,
+      name_flags TEXT NULL,
+      CONSTRAINT uq_observations_run_path UNIQUE (run_id, path_id),
+      FOREIGN KEY (run_id) REFERENCES runs(run_id),
+      FOREIGN KEY (path_id) REFERENCES paths(path_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_obs_run ON observations(run_id)",
+    """
+    CREATE TABLE IF NOT EXISTS events (
+      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      ts TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      src_path_id TEXT NULL,
+      dst_path_id TEXT NULL,
+      detail_json TEXT NULL,
+      ok INTEGER NOT NULL DEFAULT 1,
+      error TEXT NULL,
+      FOREIGN KEY (run_id) REFERENCES runs(run_id),
+      FOREIGN KEY (src_path_id) REFERENCES paths(path_id),
+      FOREIGN KEY (dst_path_id) REFERENCES paths(path_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events(kind, ts)",
+    """
+    CREATE TABLE IF NOT EXISTS tags (
+      tag_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      namespace TEXT NOT NULL DEFAULT 'tablacus',
+      CONSTRAINT uq_tags_namespace_name UNIQUE (namespace, name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS path_tags (
+      path_id TEXT NOT NULL,
+      tag_id INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'tablacus',
+      updated_at TEXT NOT NULL,
+      CONSTRAINT uq_path_tags_triplet UNIQUE (path_id, tag_id, source),
+      FOREIGN KEY (path_id) REFERENCES paths(path_id),
+      FOREIGN KEY (tag_id) REFERENCES tags(tag_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_path_tags_tag ON path_tags(tag_id)",
+    """
+    CREATE TABLE IF NOT EXISTS path_metadata (
+      path_id TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      data_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (path_id) REFERENCES paths(path_id)
+    )
+    """,
+]
 
-files = Table(
-    "files",
-    metadata,
-    Column("file_id", String, primary_key=True),  # uuid
-    Column("size_bytes", Integer, nullable=False),
-    Column("content_hash", String, nullable=True),
-    Column("hash_algo", String, nullable=True),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
-    Index("idx_files_hash", "content_hash"),
-)
 
-paths = Table(
-    "paths",
-    metadata,
-    Column("path_id", String, primary_key=True),  # uuid
-    Column("path", Text, nullable=False, unique=True),
-    Column("drive", String(8), nullable=True),
-    Column("dir", Text, nullable=True),
-    Column("name", Text, nullable=True),
-    Column("ext", String(32), nullable=True),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
-    Index("idx_paths_dir", "dir"),
-    Index("idx_paths_ext", "ext"),
-)
+def connect_db(db_path: str) -> sqlite3.Connection:
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
 
-file_paths = Table(
-    "file_paths",
-    metadata,
-    Column("file_id", String, ForeignKey("files.file_id"), nullable=False),
-    Column("path_id", String, ForeignKey("paths.path_id"), nullable=False),
-    Column("is_current", Integer, nullable=False, server_default="1"),
-    Column("first_seen_run_id", String, ForeignKey("runs.run_id"), nullable=True),
-    Column("last_seen_run_id", String, ForeignKey("runs.run_id"), nullable=True),
-    UniqueConstraint("file_id", "path_id", name="uq_file_paths_file_path"),
-    Index("idx_file_paths_current", "is_current"),
-)
 
-observations = Table(
-    "observations",
-    metadata,
-    Column("run_id", String, ForeignKey("runs.run_id"), nullable=False),
-    Column("path_id", String, ForeignKey("paths.path_id"), nullable=False),
-    Column("size_bytes", Integer, nullable=False),
-    Column("mtime_utc", String, nullable=True),
-    Column("type", String(32), nullable=True),
-    Column("name_flags", Text, nullable=True),  # JSON text
-    UniqueConstraint("run_id", "path_id", name="uq_observations_run_path"),
-    Index("idx_obs_run", "run_id"),
-)
+def create_schema_if_needed(con: sqlite3.Connection) -> None:
+    for stmt in DDL_STATEMENTS:
+        con.execute(stmt)
 
-events = Table(
-    "events",
-    metadata,
-    Column("event_id", Integer, primary_key=True, autoincrement=True),
-    Column("run_id", String, ForeignKey("runs.run_id"), nullable=False),
-    Column("ts", String, nullable=False),
-    Column("kind", String, nullable=False),
-    Column("src_path_id", String, ForeignKey("paths.path_id"), nullable=True),
-    Column("dst_path_id", String, ForeignKey("paths.path_id"), nullable=True),
-    Column("detail_json", Text, nullable=True),
-    Column("ok", Integer, nullable=False, server_default="1"),
-    Column("error", Text, nullable=True),
-    Index("idx_events_run", "run_id"),
-    Index("idx_events_kind_ts", "kind", "ts"),
-)
 
-tags = Table(
-    "tags",
-    metadata,
-    Column("tag_id", Integer, primary_key=True, autoincrement=True),
-    Column("name", Text, nullable=False),
-    Column("namespace", Text, nullable=False, server_default="'tablacus'"),
-    UniqueConstraint("namespace", "name", name="uq_tags_namespace_name"),
-)
+def begin_immediate(con: sqlite3.Connection) -> None:
+    con.execute("BEGIN IMMEDIATE")
 
-path_tags = Table(
-    "path_tags",
-    metadata,
-    Column("path_id", String, ForeignKey("paths.path_id"), nullable=False),
-    Column("tag_id", Integer, ForeignKey("tags.tag_id"), nullable=False),
-    Column("source", Text, nullable=False, server_default="'tablacus'"),
-    Column("updated_at", String, nullable=False),
-    UniqueConstraint("path_id", "tag_id", "source", name="uq_path_tags_triplet"),
-    Index("idx_path_tags_tag", "tag_id"),
-)
 
-path_metadata = Table(
-    "path_metadata",
-    metadata,
-    Column("path_id", String, ForeignKey("paths.path_id"), primary_key=True),
-    Column("source", Text, nullable=False),
-    Column("data_json", Text, nullable=False),
-    Column("updated_at", String, nullable=False),
-)
+def fetchone(con: sqlite3.Connection, sql: str, params: tuple = ()) -> sqlite3.Row | None:
+    return con.execute(sql, params).fetchone()
+
+
+def fetchall(con: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+    return con.execute(sql, params).fetchall()
+

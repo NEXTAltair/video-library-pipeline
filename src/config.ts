@@ -31,6 +31,21 @@ function asNonEmptyString(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+// Windows drive path (e.g. B:\foo or B:/foo) を WSL path (/mnt/b/foo) に変換する。
+function normalizeWindowsDrivePathToWsl(input: string): string {
+  const m = input.match(/^([A-Za-z]):(?:[\\/](.*))?$/);
+  if (!m) return input;
+  const drive = m[1].toLowerCase();
+  const rest = (m[2] ?? "").replace(/\\/g, "/");
+  return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
+}
+
+function normalizePathInput(v: unknown): string {
+  const s = asNonEmptyString(v);
+  if (!s) return "";
+  return normalizeWindowsDrivePathToWsl(s);
+}
+
 // limit の範囲を 1..5000 に丸める。
 function asLimit(v: unknown): number {
   if (typeof v !== "number" || !Number.isFinite(v)) return DEFAULTS.defaultMaxFilesPerRun;
@@ -43,9 +58,10 @@ function asLimit(v: unknown): number {
 // 生設定(raw)を実行可能な形へ正規化する。
 export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined): VideoPipelineResolvedConfig {
   const cfg = raw ?? {};
-  const sourceRoot = asNonEmptyString(cfg.sourceRoot);
-  const destRoot = asNonEmptyString(cfg.destRoot);
-  const windowsOpsRoot = asNonEmptyString(cfg.windowsOpsRoot);
+  const sourceRoot = normalizePathInput(cfg.sourceRoot);
+  const destRoot = normalizePathInput(cfg.destRoot);
+  const windowsOpsRoot = normalizePathInput(cfg.windowsOpsRoot);
+  const dbPath = normalizePathInput(cfg.db);
   const errors: string[] = [];
 
   if (!sourceRoot) errors.push("sourceRoot is required. Configure plugins.entries.video-library-pipeline.config.sourceRoot.");
@@ -76,7 +92,7 @@ export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined)
     throw new Error(`video-library-pipeline config error:\n- ${errors.join("\n- ")}`);
   }
 
-  const resolvedDb = asNonEmptyString(cfg.db) || path.join(resolvedOpsRoot, "db", "mediaops.sqlite");
+  const resolvedDb = dbPath ? path.resolve(dbPath) : path.join(resolvedOpsRoot, "db", "mediaops.sqlite");
   return {
     db: resolvedDb,
     sourceRoot: resolvedSourceRoot,

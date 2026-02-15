@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { runCmd, toToolResult } from "./runtime";
+import { getExtensionRootDir, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 
 export function registerToolValidate(api: any, getCfg: (api: any) => any) {
@@ -20,7 +20,7 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
         const dbDir = !!cfg.db ? path.dirname(cfg.db) : "";
         const moveDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "move") : "";
         const llmDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "llm") : "";
-        const rulesDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "rules") : "";
+        const rulesDir = path.join(getExtensionRootDir(), "rules");
         const scriptsDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "scripts") : "";
         const hintsPath = rulesDir ? path.join(rulesDir, "program_aliases.yaml") : "";
         const checks: AnyObj = {
@@ -35,8 +35,16 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
         };
         const uv = runCmd("uv", ["--version"]);
         const py = runCmd("uv", ["run", "python", "--version"]);
+        const sqliteOpen = runCmd("uv", [
+          "run",
+          "python",
+          "-c",
+          "import sqlite3,sys; sqlite3.connect('file:' + sys.argv[1] + '?mode=ro', uri=True).close()",
+          cfg.db,
+        ]);
         checks.uv = uv.ok;
         checks.pythonViaUv = py.ok;
+        checks.sqliteDbOpen = sqliteOpen.ok;
 
         if (params.checkWindowsInterop) {
           let pw = runCmd("pwsh", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
@@ -51,17 +59,9 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
             "normalize_filenames.ps1",
             "unwatched_inventory.ps1",
             "apply_move_plan.ps1",
-            "fix_prefix_timestamp_names.ps1",
-            "normalize_unwatched_names.ps1",
             "list_remaining_unwatched.ps1",
           ];
           checks.requiredWindowsScripts = requiredScripts.map((name) => ({
-            name,
-            exists: !!scriptsDir && fs.existsSync(path.join(scriptsDir, name)),
-            path: scriptsDir ? path.join(scriptsDir, name) : "",
-          }));
-          const maintenanceScripts = ["repair_collisions_nested_drive.ps1", "rollback_rename_jsonl.ps1"];
-          checks.maintenanceWindowsScripts = maintenanceScripts.map((name) => ({
             name,
             exists: !!scriptsDir && fs.existsSync(path.join(scriptsDir, name)),
             path: scriptsDir ? path.join(scriptsDir, name) : "",
@@ -74,7 +74,6 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
         const ok = Object.entries(checks).every(([k, v]) => {
           if (
             k === "requiredWindowsScripts" ||
-            k === "maintenanceWindowsScripts" ||
             k === "hintsYamlPresent" ||
             k === "moveDirExists" ||
             k === "llmDirExists"

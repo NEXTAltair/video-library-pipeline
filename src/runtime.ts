@@ -27,6 +27,10 @@ const EXT_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const EXT_ROOT_DIR = path.resolve(EXT_SRC_DIR, "..");
 const EXT_PY_DIR = path.join(EXT_ROOT_DIR, "py");
 
+export function getExtensionRootDir(): string {
+  return EXT_ROOT_DIR;
+}
+
 export function getExtensionPyDir(): string {
   return EXT_PY_DIR;
 }

@@ -28,12 +28,11 @@ Expected directories under `windowsOpsRoot`:
 - `db`
 - `move`
 - `llm`
-- `rules`
 - `scripts`
 
 Notes:
 
-- `rules/program_aliases.yaml` is optional. If missing, extraction continues in AI-only mode.
+- Plugin hints file `rules/program_aliases.yaml` is optional. If missing, extraction continues in AI-only mode.
 - `db/move/llm` are created by the runner when missing.
 - `scripts` must exist because filesystem mutations are delegated to PowerShell.
 
@@ -45,25 +44,18 @@ Notes:
 
 ## Python runtime dependencies
 
-- `sqlalchemy` for DB ingest/upsert scripts
 - `pyyaml` is optional and only needed when loading YAML hints
 - Python standard library modules (`sqlite3`, `argparse`, `json`, etc.)
+- DB access is implemented with standard `sqlite3` only (no external ORM dependency)
 
 ## Required Windows-side scripts
 
 Under `<windowsOpsRoot>/scripts`:
 
 - `normalize_filenames.ps1`
-- `fix_prefix_timestamp_names.ps1`
-- `normalize_unwatched_names.ps1`
 - `unwatched_inventory.ps1`
 - `apply_move_plan.ps1`
 - `list_remaining_unwatched.ps1`
-
-Maintenance-only scripts:
-
-- `repair_collisions_nested_drive.ps1`
-- `rollback_rename_jsonl.ps1`
 
 ## Minimum preflight
 
@@ -90,4 +82,4 @@ Maintenance-only scripts:
 - DB state: `<windowsOpsRoot>/db/mediaops.sqlite`
 - Move/audit artifacts: `<windowsOpsRoot>/move`
 - Extraction artifacts: `<windowsOpsRoot>/llm`
-- Human summary: `<windowsOpsRoot>/move/LATEST_SUMMARY.md`
+- Hints dictionary: `<plugin-root>/rules/program_aliases.yaml`

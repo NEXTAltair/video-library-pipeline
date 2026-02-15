@@ -37,7 +37,6 @@ def main() -> int:
     llm_arc.mkdir(parents=True, exist_ok=True)
 
     remaining = sorted(move_dir.glob("remaining_unwatched_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
-    latest_remaining = remaining[0].name if remaining else None
     for p in remaining[1:]:
         shutil.move(str(p), str(arc / p.name))
 
@@ -61,42 +60,14 @@ def main() -> int:
         for p in files[: max(args.keep_listings, 0)]:
             keep_listings.add(p.name)
 
-    always_keep = {"MANIFEST.md"}
     for p in move_dir.glob("*.jsonl"):
-        if p.name in keep_moves or p.name in keep_listings or p.name in always_keep:
+        if p.name in keep_moves or p.name in keep_listings:
             continue
         dest = arc / p.name
         if not dest.exists():
             shutil.move(str(p), str(dest))
         if dest.suffix == ".jsonl":
             _gzip_file(dest)
-
-    now = datetime.now().astimezone().isoformat(timespec="seconds")
-    manifest = move_dir / "MANIFEST.md"
-    lines = [
-        "# move/ audit logs manifest",
-        f"updated: {now}",
-        "",
-        "## Current (kept in root)",
-        f"- latest remaining_unwatched: {latest_remaining or 'none'}",
-        f"- last {args.keep_batches} move logs:",
-    ]
-    for p in move_logs_legacy[: max(args.keep_batches, 0)]:
-        lines.append(f"  - {p.name}")
-    for p in move_plan_logs[: max(args.keep_batches, 0)]:
-        lines.append(f"  - {p.name}")
-    for p in move_apply_logs[: max(args.keep_batches, 0)]:
-        lines.append(f"  - {p.name}")
-    if inv_logs:
-        lines.append(f"- latest inventory_unwatched: {inv_logs[0].name}")
-    if plan_inv_logs:
-        lines.append(f"- latest move_plan_from_inventory: {plan_inv_logs[0].name}")
-    if keep_listings:
-        lines.append("- listings/errors (kept):")
-        for name in sorted(keep_listings):
-            lines.append(f"  - {name}")
-    lines.extend(["", "## Archived", "- archive/*.jsonl.gz (older logs)"])
-    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     # LLM artifact retention:
     # keep the latest N files for each active prefix, archive+gzip older files.
