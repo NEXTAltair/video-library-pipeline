@@ -83,10 +83,6 @@ export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined)
   if (resolvedOpsRoot && !fs.existsSync(resolvedOpsRoot)) {
     errors.push(`windowsOpsRoot does not exist: ${resolvedOpsRoot}`);
   }
-  const scriptsDir = resolvedOpsRoot ? path.join(resolvedOpsRoot, "scripts") : "";
-  if (scriptsDir && !fs.existsSync(scriptsDir)) {
-    errors.push(`windowsOpsRoot contract violation: missing scripts directory: ${scriptsDir}`);
-  }
 
   if (errors.length > 0) {
     throw new Error(`video-library-pipeline config error:\n- ${errors.join("\n- ")}`);

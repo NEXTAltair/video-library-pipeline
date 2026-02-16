@@ -32,6 +32,8 @@ Optional plugin config:
 Runtime contract paths under `windowsOpsRoot`:
 
 - `db`, `move`, `llm`, `scripts`
+- `scripts` is auto-provisioned on validate/run if required PS1 files are missing.
+- Existing scripts are preserved (missing files only are created).
 
 ## 3) extraction policy (AI primary)
 
@@ -68,6 +70,9 @@ User correction loop:
 
 - Config source of truth: plugin config (`plugins.entries.video-library-pipeline.config`)
 - Hints source of truth: `<plugin-root>/rules/program_aliases.yaml`
+- Script template source of truth:
+  - Preferred: `<windowsOpsRoot>/templates/windows-scripts/*.ps1`
+  - Fallback: `<plugin-root>/assets/windows-scripts/*.ps1`
 - DB state: `<windowsOpsRoot>/db/mediaops.sqlite`
 - Raw evidence: `<windowsOpsRoot>/move/*.jsonl`, `<windowsOpsRoot>/llm/*.jsonl`
 

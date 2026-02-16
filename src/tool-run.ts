@@ -1,5 +1,6 @@
 import { resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
+import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 export function registerToolRun(api: any, getCfg: (api: any) => any) {
   api.registerTool(
@@ -25,6 +26,21 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
       async execute(_id: string, params: AnyObj) {
         const cfg = getCfg(api);
         const resolved = resolvePythonScript("unwatched_pipeline_runner.py");
+        const scriptsProvision = ensureWindowsScripts(cfg);
+
+        if (!scriptsProvision.ok) {
+          return toToolResult({
+            ok: false,
+            tool: "video_pipeline_analyze_and_move_videos",
+            error: "failed to provision required windows scripts",
+            scriptsProvision: {
+              created: scriptsProvision.created,
+              existing: scriptsProvision.existing,
+              failed: scriptsProvision.failed,
+              missingTemplates: scriptsProvision.missingTemplates,
+            },
+          });
+        }
 
         // uv run python で runner を起動。
         const args = [
@@ -54,6 +70,12 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
           exitCode: r.code,
           stdout: r.stdout,
           stderr: r.stderr,
+          scriptsProvision: {
+            created: scriptsProvision.created,
+            existing: scriptsProvision.existing,
+            failed: scriptsProvision.failed,
+            missingTemplates: scriptsProvision.missingTemplates,
+          },
         });
       },
     },

@@ -2,17 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, runCmd } from "./runtime";
 import type { AnyObj } from "./types";
+import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 const TARGET_TOOL = "video_pipeline_analyze_and_move_videos";
 const ALERT_MARKER = "[hook-alert]";
 const TOOL_NAME_REGEX = /^video_pipeline_[a-z0-9_]+$/;
-
-const REQUIRED_WINDOWS_SCRIPTS = [
-  "normalize_filenames.ps1",
-  "unwatched_inventory.ps1",
-  "apply_move_plan.ps1",
-  "list_remaining_unwatched.ps1",
-];
 
 function isObj(v: unknown): v is AnyObj {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -157,6 +151,21 @@ export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
       return {
         block: true,
         blockReason: `${TARGET_TOOL} preflight failed: ${String(e?.message || e)}`,
+      };
+    }
+
+    const scriptsProvision = ensureWindowsScripts(cfg);
+    if (!scriptsProvision.ok) {
+      const issues: string[] = [];
+      if (scriptsProvision.missingTemplates.length > 0) {
+        issues.push(`missing script templates: ${scriptsProvision.missingTemplates.join(", ")}`);
+      }
+      for (const f of scriptsProvision.failed) {
+        issues.push(`script provision failed (${f.name}): ${f.path} :: ${f.error}`);
+      }
+      return {
+        block: true,
+        blockReason: `${TARGET_TOOL} preflight failed:\n- ${issues.join("\n- ")}`,
       };
     }
 

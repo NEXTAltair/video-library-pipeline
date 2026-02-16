@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
+import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 export function registerToolValidate(api: any, getCfg: (api: any) => any) {
   api.registerTool(
@@ -17,6 +18,7 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
       },
       async execute(_id: string, params: AnyObj) {
         const cfg = getCfg(api);
+        const scriptsProvision = ensureWindowsScripts(cfg);
         const dbDir = !!cfg.db ? path.dirname(cfg.db) : "";
         const moveDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "move") : "";
         const llmDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "llm") : "";
@@ -32,6 +34,17 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           rulesDirExists: !!rulesDir && fs.existsSync(rulesDir),
           scriptsDirExists: !!scriptsDir && fs.existsSync(scriptsDir),
           hintsYamlPresent: !!hintsPath && fs.existsSync(hintsPath),
+          scriptsProvision: {
+            created: scriptsProvision.created,
+            existing: scriptsProvision.existing,
+            failed: scriptsProvision.failed,
+            missingTemplates: scriptsProvision.missingTemplates,
+          },
+          requiredWindowsScripts: REQUIRED_WINDOWS_SCRIPTS.map((name) => ({
+            name,
+            exists: !!scriptsDir && fs.existsSync(path.join(scriptsDir, name)),
+            path: scriptsDir ? path.join(scriptsDir, name) : "",
+          })),
         };
         const uv = runCmd("uv", ["--version"]);
         const py = runCmd("uv", ["run", "python", "--version"]);
@@ -56,27 +69,20 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           checks.pwshCommand = pw.command;
           checks.pwshVersion = pw.stdout.trim();
           checks.pwshStderr = pw.stderr.trim();
-
-          // Active pipeline depends on these Windows-side scripts.
-          const requiredScripts = [
-            "normalize_filenames.ps1",
-            "unwatched_inventory.ps1",
-            "apply_move_plan.ps1",
-            "list_remaining_unwatched.ps1",
-          ];
-          checks.requiredWindowsScripts = requiredScripts.map((name) => ({
-            name,
-            exists: !!scriptsDir && fs.existsSync(path.join(scriptsDir, name)),
-            path: scriptsDir ? path.join(scriptsDir, name) : "",
-          }));
         }
 
         const scriptChecks = Array.isArray(checks.requiredWindowsScripts)
           ? checks.requiredWindowsScripts.every((s: AnyObj) => s.exists === true)
           : true;
+        const scriptsProvisionOk =
+          Array.isArray(checks.scriptsProvision?.failed) &&
+          checks.scriptsProvision.failed.length === 0 &&
+          Array.isArray(checks.scriptsProvision?.missingTemplates) &&
+          checks.scriptsProvision.missingTemplates.length === 0;
         const ok = Object.entries(checks).every(([k, v]) => {
           if (
             k === "requiredWindowsScripts" ||
+            k === "scriptsProvision" ||
             k === "hintsYamlPresent" ||
             k === "moveDirExists" ||
             k === "llmDirExists"
@@ -84,7 +90,7 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
             return true;
           }
           return v === true || typeof v === "string";
-        }) && scriptChecks;
+        }) && scriptChecks && scriptsProvisionOk;
         return toToolResult({ ok, tool: "video_pipeline_validate", checks });
       },
     },

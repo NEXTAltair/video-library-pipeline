@@ -34,7 +34,8 @@ Notes:
 
 - Plugin hints file `rules/program_aliases.yaml` is optional. If missing, extraction continues in AI-only mode.
 - `db/move/llm` are created by the runner when missing.
-- `scripts` must exist because filesystem mutations are delegated to PowerShell.
+- `scripts` is required for runtime, but missing directory/files are auto-provisioned from plugin templates on `video_pipeline_validate` and `video_pipeline_analyze_and_move_videos`.
+- Existing scripts under `<windowsOpsRoot>/scripts` are never overwritten by auto-provision.
 
 ## Required binaries
 
@@ -56,6 +57,11 @@ Under `<windowsOpsRoot>/scripts`:
 - `unwatched_inventory.ps1`
 - `apply_move_plan.ps1`
 - `list_remaining_unwatched.ps1`
+
+Template source of truth:
+
+- Preferred (user override): `<windowsOpsRoot>/templates/windows-scripts/*.ps1`
+- Fallback (plugin bundled): `<plugin-root>/assets/windows-scripts/*.ps1`
 
 ## Minimum preflight
 
