@@ -35,8 +35,14 @@ export function registerToolStatus(api: any, getCfg: (api: any) => any) {
         }
         const root = String(cfg.windowsOpsRoot || "").replace(/\/+$/, "");
         const moveDir = root ? `${root}/move` : "";
+        const llmDir = root ? `${root}/llm` : "";
         const latestApply = latestJsonlFile(moveDir, "move_apply_");
         const latestPlan = latestJsonlFile(moveDir, "move_plan_from_inventory_");
+        const latestBackfillPlan = latestJsonlFile(moveDir, "backfill_plan_");
+        const latestBackfillApply = latestJsonlFile(moveDir, "backfill_apply_");
+        const latestBackfillQueue = latestJsonlFile(llmDir, "backfill_metadata_queue_");
+        const latestDedupPlan = latestJsonlFile(moveDir, "dedup_plan_");
+        const latestDedupApply = latestJsonlFile(moveDir, "dedup_apply_");
         const hintsYaml = path.join(getExtensionRootDir(), "rules", "program_aliases.yaml");
         const hintsPresent = fs.existsSync(hintsYaml);
         const out: AnyObj = {
@@ -51,6 +57,11 @@ export function registerToolStatus(api: any, getCfg: (api: any) => any) {
           out.moveDir = moveDir;
           out.latestApply = latestApply;
           out.latestPlan = latestPlan;
+          out.latestBackfillPlan = latestBackfillPlan;
+          out.latestBackfillApply = latestBackfillApply;
+          out.latestBackfillQueue = latestBackfillQueue;
+          out.latestDedupPlan = latestDedupPlan;
+          out.latestDedupApply = latestDedupApply;
         }
         return toToolResult(out);
       },

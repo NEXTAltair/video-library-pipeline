@@ -25,6 +25,8 @@ Use one of the stage skills below for actual execution:
   - `video_pipeline_validate`
   - `video_pipeline_logs`
   - `video_pipeline_status`
+  - `video_pipeline_backfill_moved_files`
+  - `video_pipeline_dedup_recordings`
 - Before running, always check path config mismatch risk (`sourceRoot`, `destRoot`, `windowsOpsRoot`) and ask the user to confirm if there is any possibility of wrong path settings.
 - This plugin does not use `pnpm test` / `scripts/*.sh` style E2E. E2E is performed by tool-call sequence.
 
@@ -46,6 +48,8 @@ Critical requirement:
 - Do not invent CLI commands such as `openclaw video_pipeline_run` or `openclaw tool ...`.
 - In this plugin, execution is done by **tool calls**:
   - `video_pipeline_validate`
+  - `video_pipeline_backfill_moved_files`
+  - `video_pipeline_dedup_recordings`
   - `video_pipeline_analyze_and_move_videos`
   - `video_pipeline_logs`
   - `video_pipeline_status`
@@ -77,12 +81,18 @@ Before `video_pipeline_validate` or pipeline execution, ask a short confirmation
 1. Validate environment:
    - Call `video_pipeline_validate` with `{"checkWindowsInterop": true}`
    - Stop if `ok` is false.
-2. Run pipeline:
+2. Optional pre-run backfill:
+   - Call `video_pipeline_backfill_moved_files` with `{"apply": false}`
+   - Use apply only after reviewing dry-run result.
+3. Optional pre-run dedup:
+   - Call `video_pipeline_dedup_recordings` with `{"apply": false}`
+   - Use apply only after reviewing dry-run result.
+4. Run pipeline:
    - Call `video_pipeline_analyze_and_move_videos` with:
      - `apply`: `true` for real move, `false` for dry-run
      - `maxFilesPerRun`: e.g. `500` in cron
      - `allowNeedsReview`: default `false`
-3. Parse run summary:
+5. Parse run summary:
    - Parse JSON from tool result `stdout`.
    - Expected keys:
      - `inventory`
@@ -91,7 +101,7 @@ Before `video_pipeline_validate` or pipeline execution, ask a short confirmation
      - `applied`
      - `remaining_files`
      - `plan_stats`
-4. Collect latest pointers:
+6. Collect latest pointers:
    - Call `video_pipeline_logs` with `{"kind":"all","tail":50}`.
 
 ## E2E execution contract (required)

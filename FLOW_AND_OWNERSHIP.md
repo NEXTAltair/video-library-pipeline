@@ -35,6 +35,18 @@ Runtime contract paths under `windowsOpsRoot`:
 - `scripts` is auto-provisioned on validate/run if required PS1 files are missing.
 - Existing scripts are preserved (missing files only are created).
 
+Plugin-local backfill config:
+
+- `<plugin-root>/rules/backfill_roots.yaml`
+  - optional roots/extensions source for `video_pipeline_backfill_moved_files`
+  - overridden by tool params when provided
+
+Plugin-local dedup config:
+
+- `<plugin-root>/rules/broadcast_buckets.yaml`
+  - keyword rules for broadcast bucket classification (`terrestrial` / `bs_cs` / `unknown`)
+  - used by `video_pipeline_dedup_recordings`
+
 ## 3) extraction policy (AI primary)
 
 Active architecture: `A_AI_PRIMARY_WITH_GUARDRAILS`
@@ -55,21 +67,30 @@ User correction loop:
 ## 4) ordered processing flow
 
 1. Configure plugin values.
-2. Trigger `video_pipeline_analyze_and_move_videos`.
-3. `src/tool-run.ts` runs:
+2. Optional backfill stage:
+   - Trigger `video_pipeline_backfill_moved_files` (dry-run/apply)
+   - scan roots and reconcile `paths/observations/events`
+   - optional metadata queue generation for reextract flow
+3. Optional dedup stage:
+   - Trigger `video_pipeline_dedup_recordings` (dry-run/apply)
+   - classify duplicates by metadata keys and optional broadcast bucket split
+4. Trigger `video_pipeline_analyze_and_move_videos`.
+5. `src/tool-run.ts` runs:
    - `uv run python py/unwatched_pipeline_runner.py --db ... --source-root ... --dest-root ... --windows-ops-root ... --max-files-per-run ... [--apply] [--allow-needs-review]`
-4. Runner prepares `db/move/llm`.
-5. Runner normalizes filenames and snapshots inventory via PowerShell.
-6. Runner ingests inventory and builds metadata queue.
-7. Runner executes extraction with optional YAML hints.
-8. Runner builds move plan and applies (or dry-runs) move actions.
-9. Runner reconciles DB paths, writes remaining report, rotates old artifacts.
-10. Runner prints final JSON summary.
+6. Runner prepares `db/move/llm`.
+7. Runner normalizes filenames and snapshots inventory via PowerShell.
+8. Runner ingests inventory and builds metadata queue.
+9. Runner executes extraction with optional YAML hints.
+10. Runner builds move plan and applies (or dry-runs) move actions.
+11. Runner reconciles DB paths, writes remaining report, rotates old artifacts.
+12. Runner prints final JSON summary.
 
 ## 5) ownership map
 
 - Config source of truth: plugin config (`plugins.entries.video-library-pipeline.config`)
 - Hints source of truth: `<plugin-root>/rules/program_aliases.yaml`
+- Backfill roots source of truth: `<plugin-root>/rules/backfill_roots.yaml`
+- Dedup broadcast rules source of truth: `<plugin-root>/rules/broadcast_buckets.yaml`
 - Script template source of truth:
   - Preferred: `<windowsOpsRoot>/templates/windows-scripts/*.ps1`
   - Fallback: `<plugin-root>/assets/windows-scripts/*.ps1`

@@ -2,6 +2,8 @@ import { registerCli } from "./src/cli";
 import { pluginId, getCfg } from "./src/plugin-meta";
 import { registerPluginHooks } from "./src/plugin-hooks";
 import { registerToolApplyReviewedMetadata } from "./src/tool-apply-reviewed-metadata";
+import { registerToolBackfill } from "./src/tool-backfill";
+import { registerToolDedup } from "./src/tool-dedup";
 import { registerToolLogs } from "./src/tool-logs";
 import { registerToolExportProgramYaml } from "./src/tool-export-program-yaml";
 import { registerToolReextract } from "./src/tool-reextract";
@@ -26,6 +28,8 @@ export default function register(api: any) {
   });
 
   registerToolRun(api, getCfg);
+  registerToolBackfill(api, getCfg);
+  registerToolDedup(api, getCfg);
   registerToolStatus(api, getCfg);
   registerToolValidate(api, getCfg);
   registerToolApplyReviewedMetadata(api, getCfg);

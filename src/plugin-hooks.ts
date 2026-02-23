@@ -7,6 +7,29 @@ import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-script
 const TARGET_TOOL = "video_pipeline_analyze_and_move_videos";
 const ALERT_MARKER = "[hook-alert]";
 const TOOL_NAME_REGEX = /^video_pipeline_[a-z0-9_]+$/;
+const CALIBRE_SERVER_TOKENS = new Set(["calibre-server", "calibre-server.exe"]);
+const CALIBRE_DB_TOKENS = new Set(["calibredb", "calibredb.exe"]);
+const CALIBRE_AUTH_MODE_ARG_RE = /(^|\s)--(?:auth-mode|auth_mode|auth-scheme|auth_scheme)(?:\s|=|$)/i;
+const CALIBRE_TOOL_CMD_RE =
+  /\b(?:calibredb(?:\.exe)?|calibredb_read\.mjs|calibredb_apply\.mjs|run_analysis_pipeline\.py)\b/i;
+const BAD_LOCAL_CALIBRE_LIBRARY_PATTERNS = [
+  /(^|\s)(["']?)~\/calibre library\2(\s|$)/i,
+  /(^|\s)(["']?)\/home\/altair\/calibre library\2(\s|$)/i,
+];
+const CALIBRE_READ_ALLOWED_SUBCOMMANDS = new Set(["list", "search", "id"]);
+const CALIBRE_GATE_TTL_MS = 10 * 60 * 1000;
+const CALIBRE_METADATA_SKILL_PATH_RE = /(^|\/)skills\/calibre-metadata-apply\/SKILL\.md$/i;
+const CALIBRE_HINT_INTENT_RE = /(calibre|カリバー|calibredb|content server|--with-library)/i;
+const CALIBRE_EDIT_INTENT_RE =
+  /(メタデータ|metadata|タイトル|title|authors?|author|series(?:_index)?|tags?|publisher|pubdate|languages?|修正|編集|更新|fix|update|edit)/i;
+const CALIBRE_BOOK_ID_RE = /\b(?:id[:#\s-]*\d{2,7}|ID\d{2,7})\b/i;
+
+type CalibreSkillGateState = {
+  activatedAt: number;
+  skillDocRead: boolean;
+};
+
+const calibreSkillGateBySession = new Map<string, CalibreSkillGateState>();
 
 function isObj(v: unknown): v is AnyObj {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -111,16 +134,259 @@ function analyzeToolEnvelope(toolEnvelope: AnyObj | null, eventError?: unknown):
 
 function detectMistakenExecToolName(event: AnyObj): string | null {
   if (event?.toolName !== "exec") return null;
-  const params = isObj(event?.params) ? event.params : {};
-  const command = typeof params.command === "string" ? params.command.trim() : "";
+  const command = getExecCommand(event);
   if (!command) return null;
   const firstToken = command.split(/\s+/, 1)[0] || "";
   if (!TOOL_NAME_REGEX.test(firstToken)) return null;
   return firstToken;
 }
 
+function getExecCommand(event: AnyObj): string {
+  if (event?.toolName !== "exec") return "";
+  const params = isObj(event?.params) ? event.params : {};
+  const byCommand = typeof params.command === "string" ? params.command : "";
+  const byCmd = typeof params.cmd === "string" ? params.cmd : "";
+  return String(byCommand || byCmd || "").trim();
+}
+
+function detectBlockedCalibreServerExec(event: AnyObj): string | null {
+  const command = getExecCommand(event);
+  if (!command) return null;
+  const firstToken = command.split(/\s+/, 1)[0]?.toLowerCase() || "";
+  if (!CALIBRE_SERVER_TOKENS.has(firstToken)) return null;
+  return command;
+}
+
+function detectBadLocalCalibreLibraryPath(event: AnyObj): string | null {
+  const command = getExecCommand(event);
+  if (!command) return null;
+  const firstToken = command.split(/\s+/, 1)[0]?.toLowerCase() || "";
+  if (firstToken !== "calibredb" && firstToken !== "calibredb.exe") return null;
+  for (const re of BAD_LOCAL_CALIBRE_LIBRARY_PATTERNS) {
+    if (re.test(command)) return command;
+  }
+  return null;
+}
+
+function detectMisusedCalibreReadForEdit(event: AnyObj): { subcommand: string; command: string } | null {
+  const command = getExecCommand(event);
+  if (!command) return null;
+  const m = command.match(/\bcalibredb_read\.mjs\b(?:\s+([A-Za-z0-9_-]+))?/i);
+  if (!m) return null;
+  const sub = String(m[1] || "").trim().toLowerCase();
+  if (!sub) return null;
+  if (CALIBRE_READ_ALLOWED_SUBCOMMANDS.has(sub)) return null;
+  return { subcommand: sub, command };
+}
+
+function detectDirectCalibreDbWithoutSkill(event: AnyObj): string | null {
+  const command = getExecCommand(event);
+  if (!command) return null;
+  const firstToken = command.split(/\s+/, 1)[0]?.toLowerCase() || "";
+  if (!CALIBRE_DB_TOKENS.has(firstToken)) return null;
+  return command;
+}
+
+function detectCalibreAuthModeArg(event: AnyObj): string | null {
+  const command = getExecCommand(event);
+  if (!command) return null;
+  if (!CALIBRE_TOOL_CMD_RE.test(command)) return null;
+  if (!CALIBRE_AUTH_MODE_ARG_RE.test(command)) return null;
+  return command;
+}
+
+function extractTextFromContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const item of content) {
+    if (typeof item === "string") {
+      parts.push(item);
+      continue;
+    }
+    if (!isObj(item)) continue;
+    if (typeof item.text === "string") parts.push(item.text);
+  }
+  return parts.join("\n").trim();
+}
+
+function getLatestUserTextFromMessages(messages: unknown[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (!isObj(msg) || String(msg.role || "") !== "user") continue;
+    return extractTextFromContent((msg as AnyObj).content);
+  }
+  return "";
+}
+
+function isCalibreMetadataEditIntent(input: string): boolean {
+  const text = String(input || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  const hasCalibreHint = CALIBRE_HINT_INTENT_RE.test(text);
+  const hasEditIntent = CALIBRE_EDIT_INTENT_RE.test(text);
+  const hasBookId = CALIBRE_BOOK_ID_RE.test(text);
+  return (hasCalibreHint && hasEditIntent) || (hasBookId && hasEditIntent);
+}
+
+function cleanupCalibreGates() {
+  const now = Date.now();
+  for (const [sessionKey, state] of calibreSkillGateBySession.entries()) {
+    if (now - state.activatedAt > CALIBRE_GATE_TTL_MS) {
+      calibreSkillGateBySession.delete(sessionKey);
+    }
+  }
+}
+
+function rememberCalibreGate(sessionKey: string) {
+  if (!sessionKey) return;
+  cleanupCalibreGates();
+  calibreSkillGateBySession.set(sessionKey, {
+    activatedAt: Date.now(),
+    skillDocRead: false,
+  });
+}
+
+function getCalibreGate(sessionKey: string): CalibreSkillGateState | null {
+  if (!sessionKey) return null;
+  cleanupCalibreGates();
+  return calibreSkillGateBySession.get(sessionKey) || null;
+}
+
+function markCalibreSkillRead(sessionKey: string) {
+  const state = getCalibreGate(sessionKey);
+  if (!state) return;
+  calibreSkillGateBySession.set(sessionKey, {
+    activatedAt: Date.now(),
+    skillDocRead: true,
+  });
+}
+
+function clearCalibreGate(sessionKey: string) {
+  if (!sessionKey) return;
+  calibreSkillGateBySession.delete(sessionKey);
+}
+
+function isReadOfCalibreMetadataSkill(event: AnyObj): boolean {
+  if (event?.toolName !== "read") return false;
+  const params = isObj(event?.params) ? event.params : {};
+  const p =
+    (typeof params.path === "string" && params.path) ||
+    (typeof params.file_path === "string" && params.file_path) ||
+    (typeof params.filePath === "string" && params.filePath) ||
+    "";
+  if (!p) return false;
+  const normalized = p.replace(/\\/g, "/");
+  return CALIBRE_METADATA_SKILL_PATH_RE.test(normalized);
+}
+
+function buildCalibrePromptNudge(): string {
+  return [
+    "Calibre metadata edit routing for this run:",
+    "- This request is a metadata edit/fix intent. Use calibre-metadata-apply now.",
+    "- First call `read` on `skills/calibre-metadata-apply/SKILL.md`.",
+    "- Do not use memory_search/memory_get before reading that SKILL for this task.",
+    "- Never start `calibre-server` from chat; connect to the running Content server.",
+    "- Try saved defaults first (env/config) before asking for `--with-library` URL.",
+    "- For ID-based title fix, fetch current metadata first and produce dry-run proposal before apply.",
+  ].join("\n");
+}
+
 export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
-  api.on("before_tool_call", (event: AnyObj) => {
+  api.on("before_prompt_build", (event: AnyObj, ctx: AnyObj) => {
+    const prompt = typeof event?.prompt === "string" ? event.prompt : "";
+    const messages = Array.isArray(event?.messages) ? event.messages : [];
+    const latestUserText = getLatestUserTextFromMessages(messages);
+    const combined = `${prompt}\n${latestUserText}`.trim();
+    const sessionKey = typeof ctx?.sessionKey === "string" ? ctx.sessionKey : "";
+
+    if (!isCalibreMetadataEditIntent(combined)) {
+      clearCalibreGate(sessionKey);
+      return;
+    }
+
+    rememberCalibreGate(sessionKey);
+    return { prependContext: buildCalibrePromptNudge() };
+  });
+
+  api.on("before_tool_call", (event: AnyObj, ctx: AnyObj) => {
+    const sessionKey = typeof ctx?.sessionKey === "string" ? ctx.sessionKey : "";
+    const calibreGate = getCalibreGate(sessionKey);
+    if (calibreGate && isReadOfCalibreMetadataSkill(event)) {
+      markCalibreSkillRead(sessionKey);
+    } else if (
+      calibreGate &&
+      !calibreGate.skillDocRead &&
+      (event?.toolName === "memory_search" || event?.toolName === "memory_get")
+    ) {
+      return {
+        block: true,
+        blockReason:
+          "blocked tool flow: Calibre metadata edit intent detected. " +
+          "Read skills/calibre-metadata-apply/SKILL.md first, then continue with metadata-apply steps.",
+      };
+    }
+
+    if (calibreGate && event?.toolName === "exec") {
+      const command = getExecCommand(event);
+      if (/\bcalibredb_apply\.mjs\b/i.test(command)) {
+        clearCalibreGate(sessionKey);
+      }
+    }
+
+    const blockedCalibreServer = detectBlockedCalibreServerExec(event);
+    if (blockedCalibreServer) {
+      return {
+        block: true,
+        blockReason:
+          "blocked exec call: do not start calibre-server from agent. " +
+          "Use the running Content server via --with-library http://HOST:PORT/#LIBRARY_ID " +
+          "(or CALIBRE_WITH_LIBRARY/CALIBRE_CONTENT_SERVER_URL).",
+      };
+    }
+
+    const authModeInCalibreCommand = detectCalibreAuthModeArg(event);
+    if (authModeInCalibreCommand) {
+      return {
+        block: true,
+        blockReason:
+          "blocked exec call: auth mode arguments are not supported in this Calibre workflow. " +
+          "Use non-SSL Digest auth policy with username/password only (no --auth-mode/--auth-scheme).",
+      };
+    }
+
+    const directCalibreDb = detectDirectCalibreDbWithoutSkill(event);
+    if (directCalibreDb) {
+      return {
+        block: true,
+        blockReason:
+          "blocked exec call: direct calibredb invocation is not allowed in chat flow. " +
+          "Use skill scripts only: " +
+          "node skills/calibre-catalog-read/scripts/calibredb_read.mjs (read) or " +
+          "node skills/calibre-metadata-apply/scripts/calibredb_apply.mjs (edit).",
+      };
+    }
+
+    const badLocalLibraryPath = detectBadLocalCalibreLibraryPath(event);
+    if (badLocalLibraryPath) {
+      return {
+        block: true,
+        blockReason:
+          "blocked exec call: '~/Calibre Library' local-path guess is invalid for this environment. " +
+          "Use remote Content server URL with --with-library http://HOST:PORT/#LIBRARY_ID.",
+      };
+    }
+
+    const misusedCalibreRead = detectMisusedCalibreReadForEdit(event);
+    if (misusedCalibreRead) {
+      return {
+        block: true,
+        blockReason:
+          `blocked exec call: calibredb_read.mjs does not support '${misusedCalibreRead.subcommand}'. ` +
+          "Use list/search/id for reads, and use " +
+          "node skills/calibre-metadata-apply/scripts/calibredb_apply.mjs for metadata edits.",
+      };
+    }
+
     const mistakenToolName = detectMistakenExecToolName(event);
     if (mistakenToolName) {
       return {

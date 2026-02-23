@@ -12,7 +12,22 @@ export function registerToolLogs(api: any, getCfg: (api: any) => any) {
         type: "object",
         additionalProperties: false,
         properties: {
-          kind: { type: "string", enum: ["apply", "plan", "inventory", "remaining", "all"], default: "all" },
+          kind: {
+            type: "string",
+            enum: [
+              "apply",
+              "plan",
+              "inventory",
+              "remaining",
+              "backfill-plan",
+              "backfill-apply",
+              "backfill-queue",
+              "dedup-plan",
+              "dedup-apply",
+              "all",
+            ],
+            default: "all",
+          },
           tail: { type: "integer", minimum: 1, maximum: 500, default: 50 },
         },
       },
@@ -25,6 +40,13 @@ export function registerToolLogs(api: any, getCfg: (api: any) => any) {
         if (kind === "all" || kind === "apply") out.apply = latestJsonlFile(moveDir, "move_apply_");
         if (kind === "all" || kind === "plan") out.plan = latestJsonlFile(moveDir, "move_plan_from_inventory_");
         if (kind === "all" || kind === "inventory") out.inventory = latestJsonlFile(moveDir, "inventory_unwatched_");
+        if (kind === "all" || kind === "backfill-plan") out.backfillPlan = latestJsonlFile(moveDir, "backfill_plan_");
+        if (kind === "all" || kind === "backfill-apply") out.backfillApply = latestJsonlFile(moveDir, "backfill_apply_");
+        if (kind === "all" || kind === "backfill-queue") {
+          out.backfillQueue = latestJsonlFile(path.join(cfg.windowsOpsRoot || "", "llm"), "backfill_metadata_queue_");
+        }
+        if (kind === "all" || kind === "dedup-plan") out.dedupPlan = latestJsonlFile(moveDir, "dedup_plan_");
+        if (kind === "all" || kind === "dedup-apply") out.dedupApply = latestJsonlFile(moveDir, "dedup_apply_");
 
         if (kind === "all" || kind === "remaining") {
           const rem = fs.existsSync(moveDir)

@@ -6,8 +6,8 @@ For stage order and ownership boundaries, see `FLOW_AND_OWNERSHIP.md`.
 ## Scope
 
 - Plugin package: `extensions/video-library-pipeline`
-- Tool entrypoints: `src/tool-run.ts`, `src/tool-status.ts`, `src/tool-validate.ts`, `src/tool-reextract.ts`
-- Python orchestration: `py/unwatched_pipeline_runner.py`, `py/run_metadata_batches_promptv1.py`
+- Tool entrypoints: `src/tool-run.ts`, `src/tool-backfill.ts`, `src/tool-dedup.ts`, `src/tool-status.ts`, `src/tool-validate.ts`, `src/tool-reextract.ts`
+- Python orchestration: `py/unwatched_pipeline_runner.py`, `py/backfill_moved_files.py`, `py/dedup_recordings.py`, `py/run_metadata_batches_promptv1.py`
 - Windows operations: scripts under `<windowsOpsRoot>/scripts`
 
 ## Plugin config contract
@@ -33,6 +33,8 @@ Expected directories under `windowsOpsRoot`:
 Notes:
 
 - Plugin hints file `rules/program_aliases.yaml` is optional. If missing, extraction continues in AI-only mode.
+- Backfill roots file `rules/backfill_roots.yaml` is optional input for backfill tool; if unresolved, `destRoot` is used.
+- Broadcast bucket rules `rules/broadcast_buckets.yaml` are used by dedup tool (terrestrial / bs_cs / unknown).
 - `db/move/llm` are created by the runner when missing.
 - `scripts` is required for runtime, but missing directory/files are auto-provisioned from plugin templates on `video_pipeline_validate` and `video_pipeline_analyze_and_move_videos`.
 - Existing scripts under `<windowsOpsRoot>/scripts` are never overwritten by auto-provision.
@@ -89,3 +91,13 @@ Template source of truth:
 - Move/audit artifacts: `<windowsOpsRoot>/move`
 - Extraction artifacts: `<windowsOpsRoot>/llm`
 - Hints dictionary: `<plugin-root>/rules/program_aliases.yaml`
+- Backfill roots config: `<plugin-root>/rules/backfill_roots.yaml`
+- Broadcast bucket rules: `<plugin-root>/rules/broadcast_buckets.yaml`
+- Backfill artifacts:
+  - `<windowsOpsRoot>/move/backfill_plan_*.jsonl`
+  - `<windowsOpsRoot>/move/backfill_apply_*.jsonl`
+  - `<windowsOpsRoot>/llm/backfill_metadata_queue_*.jsonl`
+- Dedup artifacts:
+  - `<windowsOpsRoot>/move/dedup_plan_*.jsonl`
+  - `<windowsOpsRoot>/move/dedup_apply_*.jsonl`
+  - `<windowsOpsRoot>/duplicates/quarantine`
