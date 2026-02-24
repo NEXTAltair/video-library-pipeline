@@ -37,13 +37,15 @@ Notes:
 - Broadcast bucket rules `rules/broadcast_buckets.yaml` are used by dedup tool (terrestrial / bs_cs / unknown).
 - `db/move/llm` are created by the runner when missing.
 - `scripts` is required for runtime, but missing directory/files are auto-provisioned from plugin templates on `video_pipeline_validate` and `video_pipeline_analyze_and_move_videos`.
-- Existing scripts under `<windowsOpsRoot>/scripts` are never overwritten by auto-provision.
+- Plugin-managed scripts under `<windowsOpsRoot>/scripts` are auto-synced from templates on validate/run/backfill/dedup (missing or outdated files are updated).
+- User custom scripts (for example `fix_prefix_timestamp_names.ps1`, `normalize_unwatched_names.ps1`) are not plugin-managed and are not overwritten.
 
 ## Required binaries
 
 - `uv`
 - `python` (invoked as `uv run python ...`)
 - `pwsh` or `pwsh.exe` (PowerShell 7)
+- Windows long path support enabled (`LongPathsEnabled=1`)
 
 ## Python runtime dependencies
 
@@ -59,6 +61,11 @@ Under `<windowsOpsRoot>/scripts`:
 - `unwatched_inventory.ps1`
 - `apply_move_plan.ps1`
 - `list_remaining_unwatched.ps1`
+
+Plugin-internal helper scripts (auto-managed):
+
+- `_long_path_utils.ps1`
+- `enumerate_files_jsonl.ps1`
 
 Template source of truth:
 
@@ -76,6 +83,13 @@ Template source of truth:
 
 - `uv --version`
 - `pwsh -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"`
+- `reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem" /v LongPathsEnabled` (expect `0x1`)
+
+Long path notes:
+
+- This plugin preserves original filenames and does not shorten paths.
+- Long path handling is implemented in plugin-managed PowerShell scripts and Windows-side fallback enumeration.
+- DB/JSONL/logs keep normal Windows paths (`C:\\...`), not `\\?\\` paths.
 
 3) dry-run (1 file)
 

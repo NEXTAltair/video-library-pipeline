@@ -18,6 +18,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall, fetchone
+from windows_pwsh_bridge import run_pwsh_jsonl
 
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 PATH_NAMESPACE = uuid.UUID("f4f67a6f-90c6-4ee4-9c1a-2c0d25b3b0c4")
@@ -186,6 +187,86 @@ def read_head_ok(path: Path, read_bytes: int) -> tuple[bool, str | None]:
         return False, str(e)
 
 
+def scan_files_with_windows_fallback(
+    unresolved_dirs_wsl: list[str],
+    exts: set[str],
+    detect_corruption: bool,
+    read_bytes: int,
+    windows_ops_root: str,
+) -> tuple[list[ScannedFile], list[str], int]:
+    warnings: list[str] = []
+    if not unresolved_dirs_wsl:
+        return [], warnings, 0
+
+    scripts_root = Path(windows_ops_root) / "scripts"
+    enum_script = scripts_root / "enumerate_files_jsonl.ps1"
+    if not enum_script.exists():
+        warnings.append(f"windows fallback unavailable: script missing: {enum_script}")
+        return [], warnings, 1
+
+    roots_win = [canonicalize_windows_path(wsl_to_windows_path(p)) for p in unresolved_dirs_wsl]
+    exts_json = json.dumps(sorted(exts), ensure_ascii=False)
+    roots_json = json.dumps(roots_win, ensure_ascii=False)
+    try:
+        rows = run_pwsh_jsonl(
+            str(enum_script),
+            [
+                "-RootsJson",
+                roots_json,
+                "-ExtensionsJson",
+                exts_json,
+                f"-DetectCorruption:{'$true' if detect_corruption else '$false'}",
+                "-CorruptionReadBytes",
+                str(max(1, int(read_bytes))),
+            ],
+            normalize_args=False,
+        )
+    except Exception as e:
+        warnings.append(f"windows fallback invocation failed: {e}")
+        return [], warnings, 1
+
+    files: list[ScannedFile] = []
+    fallback_error_count = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if "_meta" in row or "_meta_end" in row:
+            continue
+        kind = str(row.get("kind") or "file")
+        if kind == "warning":
+            fallback_error_count += 1
+            warnings.append(
+                "windows enumerate warning: "
+                + f"root={row.get('root')} code={row.get('code')} path={row.get('path')} :: {row.get('message')}"
+            )
+            continue
+        if kind != "file":
+            continue
+        try:
+            win_path = canonicalize_windows_path(str(row.get("path") or ""))
+            if not win_path:
+                raise ValueError("missing path")
+            drive, dir_, name, ext2 = split_win(win_path)
+            files.append(
+                ScannedFile(
+                    wsl_path=windows_to_wsl_path(win_path),
+                    win_path=win_path,
+                    drive=drive,
+                    dir=dir_,
+                    name=name,
+                    ext=ext2,
+                    size=int(row.get("size") or 0),
+                    mtime_utc=str(row.get("mtimeUtc") or "") or None,
+                    corrupt_candidate=bool(row.get("corruptCandidate")),
+                    corrupt_reason=(str(row.get("corruptReason")) if row.get("corruptReason") is not None else None),
+                )
+            )
+        except Exception as e:
+            fallback_error_count += 1
+            warnings.append(f"windows enumerate parse failed: row={safe_json(row)} :: {e}")
+    return files, warnings, fallback_error_count
+
+
 def collect_scanned_file(path: Path, exts: set[str], detect_corruption: bool, read_bytes: int, warnings: list[str]) -> ScannedFile | None:
     ext = path.suffix.lower()
     if ext not in exts:
@@ -230,10 +311,17 @@ def scan_files(
     detect_corruption: bool,
     read_bytes: int,
     scan_retry_count: int,
-) -> tuple[list[ScannedFile], list[str], list[str]]:
+    windows_ops_root: str | None = None,
+) -> tuple[list[ScannedFile], list[str], list[str], dict[str, Any]]:
     files: list[ScannedFile] = []
     warnings: list[str] = []
     errors: list[str] = []
+    fallback_stats: dict[str, Any] = {
+        "windowsFallbackUsed": False,
+        "windowsFallbackDirs": 0,
+        "windowsFallbackFiles": 0,
+        "windowsFallbackErrorCount": 0,
+    }
     seen: set[str] = set()
     for root_raw in roots:
         root = Path(root_raw)
@@ -247,13 +335,13 @@ def scan_files(
         failed_dirs: set[str] = set()
 
         def _collect_file(path: Path) -> None:
-            sp = str(path)
-            if sp in seen:
-                return
             row = collect_scanned_file(path, exts, detect_corruption, read_bytes, warnings)
             if row is None:
                 return
-            seen.add(sp)
+            key = normalize_win_for_id(row.win_path)
+            if key in seen:
+                return
+            seen.add(key)
             files.append(row)
 
         def _on_walk_error(e: OSError) -> None:
@@ -294,8 +382,29 @@ def scan_files(
 
         if unresolved:
             warnings.append(f"walk unresolved: root={root_raw} dirs={len(unresolved)}")
+            if windows_ops_root:
+                fallback_stats["windowsFallbackUsed"] = True
+                fallback_stats["windowsFallbackDirs"] = int(fallback_stats["windowsFallbackDirs"]) + len(unresolved)
+                fallback_files, fallback_warnings, fallback_error_count = scan_files_with_windows_fallback(
+                    unresolved_dirs_wsl=sorted(unresolved),
+                    exts=exts,
+                    detect_corruption=detect_corruption,
+                    read_bytes=read_bytes,
+                    windows_ops_root=windows_ops_root,
+                )
+                warnings.extend(fallback_warnings)
+                fallback_stats["windowsFallbackErrorCount"] = (
+                    int(fallback_stats["windowsFallbackErrorCount"]) + int(fallback_error_count)
+                )
+                for row in fallback_files:
+                    key = normalize_win_for_id(row.win_path)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    files.append(row)
+                    fallback_stats["windowsFallbackFiles"] = int(fallback_stats["windowsFallbackFiles"]) + 1
 
-    return files, warnings, errors
+    return files, warnings, errors, fallback_stats
 
 
 def normalize_drive_key(d: str) -> str:
@@ -416,12 +525,13 @@ def main() -> int:
         raise SystemExit("driveMap must be JSON object")
     drive_map = build_drive_map({str(k): str(v) for k, v in (drive_map_obj or {}).items()})
 
-    scanned, scan_warnings, scan_errors = scan_files(
+    scanned, scan_warnings, scan_errors, fallback_stats = scan_files(
         roots=roots,
         exts=set(extensions),
         detect_corruption=detect_corruption,
         read_bytes=read_bytes,
         scan_retry_count=scan_retry_count,
+        windows_ops_root=str(ops_root),
     )
     if limit > 0:
         scanned = scanned[:limit]
@@ -849,6 +959,10 @@ def main() -> int:
             "warningCount": warning_count,
             "warningsTruncated": warnings_truncated,
             "warnings": warnings_out,
+            "windowsFallbackUsed": bool(fallback_stats.get("windowsFallbackUsed")),
+            "windowsFallbackDirs": int(fallback_stats.get("windowsFallbackDirs") or 0),
+            "windowsFallbackFiles": int(fallback_stats.get("windowsFallbackFiles") or 0),
+            "windowsFallbackErrorCount": int(fallback_stats.get("windowsFallbackErrorCount") or 0),
             "errors": errors,
         }
         print(safe_json(summary))

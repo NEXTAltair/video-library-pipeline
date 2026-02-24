@@ -1,6 +1,7 @@
 import path from "node:path";
 import { getExtensionRootDir, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
+import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 function parseJsonObject(input: unknown): AnyObj | null {
   if (typeof input !== "string") return null;
@@ -43,6 +44,21 @@ export function registerToolBackfill(api: any, getCfg: (api: any) => any) {
         const cfg = getCfg(api);
         const resolved = resolvePythonScript("backfill_moved_files.py");
         const defaultRootsFile = path.join(getExtensionRootDir(), "rules", "backfill_roots.yaml");
+        const scriptsProvision = ensureWindowsScripts(cfg);
+        if (!scriptsProvision.ok) {
+          return toToolResult({
+            ok: false,
+            tool: "video_pipeline_backfill_moved_files",
+            error: "failed to provision required windows scripts",
+            scriptsProvision: {
+              created: scriptsProvision.created,
+              updated: scriptsProvision.updated,
+              existing: scriptsProvision.existing,
+              failed: scriptsProvision.failed,
+              missingTemplates: scriptsProvision.missingTemplates,
+            },
+          });
+        }
         const args = [
           "run",
           "python",
@@ -95,6 +111,13 @@ export function registerToolBackfill(api: any, getCfg: (api: any) => any) {
           exitCode: r.code,
           stdout: r.stdout,
           stderr: r.stderr,
+          scriptsProvision: {
+            created: scriptsProvision.created,
+            updated: scriptsProvision.updated,
+            existing: scriptsProvision.existing,
+            failed: scriptsProvision.failed,
+            missingTemplates: scriptsProvision.missingTemplates,
+          },
         };
         if (parsed) {
           for (const [k, v] of Object.entries(parsed)) out[k] = v;

@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path, PureWindowsPath
@@ -77,7 +78,7 @@ def main() -> int:
     if not args.dest_root:
         raise SystemExit("destRoot is required: pass --dest-root")
 
-    run_id = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{os.getpid()}"
     out = Path(args.out) if args.out else Path(args.inventory).resolve().parent / f"move_plan_from_inventory_{run_id}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 

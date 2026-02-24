@@ -11,8 +11,16 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $here '_long_path_utils.ps1')
 $fix = Join-Path $here 'fix_prefix_timestamp_names.ps1'
 $norm = Join-Path $here 'normalize_unwatched_names.ps1'
+
+if (-not (Test-PathDirLong $Root)) {
+  throw "Root not found or not a directory: $Root"
+}
+if (-not (Test-PathDirLong $OpsRoot)) {
+  throw "OpsRoot not found or not a directory: $OpsRoot"
+}
 
 $invokeArgs = @{
   Root = $Root
@@ -45,4 +53,5 @@ Write-Output (([pscustomobject]@{
   fix_output = $fixOut
   normalize_output = $normOut
   warnings = $warnings
+  long_path_note = 'wrapper is long-path aware; user custom sub-scripts may still need long-path support'
 } | ConvertTo-Json -Compress -Depth 8))

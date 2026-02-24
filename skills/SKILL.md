@@ -28,7 +28,22 @@ Use one of the stage skills below for actual execution:
   - `video_pipeline_backfill_moved_files`
   - `video_pipeline_dedup_recordings`
 - Before running, always check path config mismatch risk (`sourceRoot`, `destRoot`, `windowsOpsRoot`) and ask the user to confirm if there is any possibility of wrong path settings.
+- Long path prerequisite for apply operations: require `pwsh7` and Windows `LongPathsEnabled=1` (check via `video_pipeline_validate`).
 - This plugin does not use `pnpm test` / `scripts/*.sh` style E2E. E2E is performed by tool-call sequence.
+
+## Tool scope / result semantics (required)
+
+- `video_pipeline_analyze_and_move_videos` targets the configured `sourceRoot` (normally `B:\\未視聴`) only.
+  - `remaining_files` means "files still remaining under `sourceRoot` after this run".
+  - `remaining_files == 0` does **not** mean all files under `destRoot` / `by_program` were reviewed, moved, or fixed.
+- `video_pipeline_backfill_moved_files` is a **DB synchronization** tool.
+  - It updates DB tracking (`paths`, `observations`, events, optional metadata queue).
+  - It does **not** physically move files.
+  - A successful backfill does **not** mean long-path files under `B:\\VideoLibrary\\by_program\\...` were physically relocated.
+- When reporting completion, always state the scope explicitly:
+  - "DB sync complete" vs "physical move complete"
+  - which root was scanned (`sourceRoot`, `destRoot`, `by_program` etc.)
+- If the user asks about residual files under `destRoot/by_program`, do not use `remaining_files` as evidence. Use an explicit scan of that root (or state that this run did not inspect it).
 
 ## Mandatory interactive flow (human review required)
 
@@ -80,6 +95,7 @@ Before `video_pipeline_validate` or pipeline execution, ask a short confirmation
 
 1. Validate environment:
    - Call `video_pipeline_validate` with `{"checkWindowsInterop": true}`
+   - This also auto-syncs plugin-managed PowerShell scripts under `<windowsOpsRoot>/scripts`.
    - Stop if `ok` is false.
 2. Optional pre-run backfill:
    - Call `video_pipeline_backfill_moved_files` with `{"apply": false}`
@@ -101,6 +117,7 @@ Before `video_pipeline_validate` or pipeline execution, ask a short confirmation
      - `applied`
      - `remaining_files`
      - `plan_stats`
+   - Interpret `remaining_files` as `sourceRoot`-scoped only (not `destRoot` / `by_program`).
 6. Collect latest pointers:
    - Call `video_pipeline_logs` with `{"kind":"all","tail":50}`.
 
@@ -129,5 +146,7 @@ Alert if any of:
 - `plan_stats.skipped_missing_fields > 0`
 - `plan_stats.skipped_outside > 0`
 - summary/log pointers missing (`inventory`, `queue`, `plan`, `applied`)
+
+Do not alert/claim success about `destRoot/by_program` cleanup based only on `remaining_files`.
 
 On healthy run, avoid noisy reports.

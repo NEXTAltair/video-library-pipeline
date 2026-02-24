@@ -15,64 +15,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-WIN_PWSH_CANDIDATES = [
-    "/mnt/c/Program Files/PowerShell/7/pwsh.exe",
-    "pwsh.exe",
-]
-
-
-def is_wsl_mnt_path(s: str) -> bool:
-    return s.startswith("/mnt/") and len(s) > 6 and s[6] == "/"
-
-
-def wsl_path_to_win_str(s: str) -> str:
-    if not is_wsl_mnt_path(s):
-        return s
-    drive = s[5].upper()
-    rest = s.split(f"/mnt/{s[5]}/", 1)[1].replace("/", "\\")
-    return f"{drive}:\\" + rest
-
-
-def canonicalize_windows_path(s: str) -> str:
-    p = wsl_path_to_win_str(s).replace("/", "\\")
-    if len(p) >= 2 and p[1] == ":":
-        return p[0].upper() + p[1:]
-    return p
-
-
-def normalize_arg_for_pwsh(arg: str) -> str:
-    return canonicalize_windows_path(arg)
-
-
-def run_pwsh_file(file_win: str, args: list[str]) -> str:
-    file_path = wsl_path_to_win_str(file_win)
-    norm_args = [normalize_arg_for_pwsh(a) for a in args]
-    last_out = ""
-    last_code = 1
-    tried: list[str] = []
-    for exe in WIN_PWSH_CANDIDATES:
-        cmd = [exe, "-NoProfile", "-File", file_path, *norm_args]
-        tried.append(exe)
-        try:
-            cp = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except FileNotFoundError:
-            last_out = f"{cmd[0]} not found"
-            last_code = 127
-            continue
-        out = unicodedata.normalize("NFKC", cp.stdout)
-        if cp.returncode == 0:
-            return out
-        last_out = out
-        last_code = cp.returncode
-    details = last_out.strip() or f"pwsh failed rc={last_code}"
-    raise RuntimeError(f"{details} (tried: {', '.join(tried)})")
+from windows_pwsh_bridge import canonicalize_windows_path, run_pwsh_file, run_pwsh_json
 
 
 def run_py(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = None) -> str:
@@ -117,6 +60,20 @@ def wsl_to_win(path: Path) -> str:
     raise ValueError(f"not on /mnt/<drive>: {path}")
 
 
+def win_to_wsl(path_str: str) -> str:
+    s = str(path_str or "").replace("/", "\\")
+    if len(s) >= 3 and s[1] == ":" and s[2] == "\\":
+        drive = s[0].lower()
+        tail = s[3:].replace("\\", "/")
+        return f"/mnt/{drive}/{tail}"
+    return path_str
+
+
+def local_path_from_any(path_str: str) -> Path:
+    """Accept either /mnt/<drive>/... or X:\\... and return a local WSL Path."""
+    return Path(win_to_wsl(path_str)).resolve()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
@@ -137,21 +94,23 @@ def main() -> int:
     if not args.dest_root:
         raise SystemExit("destRoot is required: pass --dest-root or configure plugin destRoot")
 
-    ops_root = Path(args.windows_ops_root).resolve()
+    ops_root = local_path_from_any(args.windows_ops_root)
     db_dir = ops_root / "db"
     move_dir = ops_root / "move"
     llm_dir = ops_root / "llm"
-    if not args.db:
+    if args.db:
+        args.db = str(local_path_from_any(args.db))
+    else:
         args.db = str(db_dir / "mediaops.sqlite")
 
     source_root_win = canonicalize_windows_path(args.source_root)
     dest_root_win = canonicalize_windows_path(args.dest_root)
-    ops_root_win = wsl_to_win(ops_root)
-    scripts_root_win = wsl_to_win(ops_root / "scripts")
+    ops_root_win = canonicalize_windows_path(args.windows_ops_root)
+    scripts_root_win = canonicalize_windows_path(str(ops_root / "scripts"))
     db_dir.mkdir(parents=True, exist_ok=True)
     move_dir.mkdir(parents=True, exist_ok=True)
     llm_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     here = Path(__file__).resolve().parent
     hints_yaml = here.parent / "rules" / "program_aliases.yaml"
 
@@ -160,11 +119,12 @@ def main() -> int:
         normalize_args.append("-DryRun")
     run_pwsh_file(scripts_root_win + r"\normalize_filenames.ps1", normalize_args)
 
-    run_pwsh_file(
+    inv_meta = run_pwsh_json(
         scripts_root_win + r"\unwatched_inventory.ps1",
         ["-Root", source_root_win, "-OpsRoot", ops_root_win, "-IncludeHash"],
     )
-    inv = latest(move_dir, "inventory_unwatched_*.jsonl")
+    inv_out = str(inv_meta.get("out_jsonl") or "")
+    inv = Path(win_to_wsl(inv_out)).resolve() if inv_out else latest(move_dir, "inventory_unwatched_*.jsonl")
 
     run_py_uv(
         here / "ingest_inventory_jsonl.py",
@@ -228,13 +188,15 @@ def main() -> int:
         plan_out = json.loads(plan_out_raw)
     except Exception:
         plan_out = {"raw": plan_out_raw}
-    plan = latest(move_dir, "move_plan_from_inventory_*.jsonl")
+    plan_out_path = str(plan_out.get("out") or "") if isinstance(plan_out, dict) else ""
+    plan = Path(plan_out_path).resolve() if plan_out_path else latest(move_dir, "move_plan_from_inventory_*.jsonl")
 
     apply_args = ["-PlanJsonl", wsl_to_win(plan), "-OpsRoot", ops_root_win]
     if not args.apply:
         apply_args.append("-DryRun")
-    run_pwsh_file(scripts_root_win + r"\apply_move_plan.ps1", apply_args)
-    applied = latest(move_dir, "move_apply_*.jsonl")
+    apply_meta = run_pwsh_json(scripts_root_win + r"\apply_move_plan.ps1", apply_args)
+    applied_out = str(apply_meta.get("out_jsonl") or "")
+    applied = Path(win_to_wsl(applied_out)).resolve() if applied_out else latest(move_dir, "move_apply_*.jsonl")
 
     run_py_uv(
         here / "update_db_paths_from_move_apply.py",

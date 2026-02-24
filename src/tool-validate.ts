@@ -36,6 +36,7 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           hintsYamlPresent: !!hintsPath && fs.existsSync(hintsPath),
           scriptsProvision: {
             created: scriptsProvision.created,
+            updated: scriptsProvision.updated,
             existing: scriptsProvision.existing,
             failed: scriptsProvision.failed,
             missingTemplates: scriptsProvision.missingTemplates,
@@ -69,6 +70,35 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           checks.pwshCommand = pw.command;
           checks.pwshVersion = pw.stdout.trim();
           checks.pwshStderr = pw.stderr.trim();
+
+          const regCandidates = ["/mnt/c/Windows/System32/reg.exe", "reg.exe"];
+          let reg = runCmd(regCandidates[0], [
+            "query",
+            "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+            "/v",
+            "LongPathsEnabled",
+          ]);
+          if (!reg.ok && regCandidates.length > 1) {
+            reg = runCmd(regCandidates[1], [
+              "query",
+              "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+              "/v",
+              "LongPathsEnabled",
+            ]);
+          }
+          checks.longPathsRegistryQuery = reg.command;
+          checks.longPathsRegistryStdout = reg.stdout.trim();
+          checks.longPathsRegistryStderr = reg.stderr.trim();
+          let longPathsEnabled = false;
+          if (reg.ok) {
+            const m = reg.stdout.match(/LongPathsEnabled\s+REG_DWORD\s+0x([0-9a-fA-F]+)/);
+            if (m) {
+              longPathsEnabled = parseInt(m[1], 16) === 1;
+            }
+          }
+          checks.longPathsEnabled = longPathsEnabled;
+        } else {
+          checks.longPathsEnabled = true;
         }
 
         const scriptChecks = Array.isArray(checks.requiredWindowsScripts)

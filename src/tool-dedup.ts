@@ -1,6 +1,7 @@
 import path from "node:path";
 import { getExtensionRootDir, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
+import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 function parseJsonObject(input: unknown): AnyObj | null {
   if (typeof input !== "string") return null;
@@ -36,6 +37,21 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         const cfg = getCfg(api);
         const resolved = resolvePythonScript("dedup_recordings.py");
         const defaultRulesPath = path.join(getExtensionRootDir(), "rules", "broadcast_buckets.yaml");
+        const scriptsProvision = ensureWindowsScripts(cfg);
+        if (!scriptsProvision.ok) {
+          return toToolResult({
+            ok: false,
+            tool: "video_pipeline_dedup_recordings",
+            error: "failed to provision required windows scripts",
+            scriptsProvision: {
+              created: scriptsProvision.created,
+              updated: scriptsProvision.updated,
+              existing: scriptsProvision.existing,
+              failed: scriptsProvision.failed,
+              missingTemplates: scriptsProvision.missingTemplates,
+            },
+          });
+        }
         const args = [
           "run",
           "python",
@@ -68,6 +84,13 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           exitCode: r.code,
           stdout: r.stdout,
           stderr: r.stderr,
+          scriptsProvision: {
+            created: scriptsProvision.created,
+            updated: scriptsProvision.updated,
+            existing: scriptsProvision.existing,
+            failed: scriptsProvision.failed,
+            missingTemplates: scriptsProvision.missingTemplates,
+          },
         };
         if (parsed) {
           for (const [k, v] of Object.entries(parsed)) out[k] = v;

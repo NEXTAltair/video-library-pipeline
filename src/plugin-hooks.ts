@@ -84,9 +84,30 @@ function collectApplyPreflightIssues(cfg: AnyObj): string[] {
   const py = runCmd("uv", ["run", "python", "--version"]);
   if (!py.ok) issues.push("python via uv is not available");
 
-  let pw = runCmd("pwsh", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
-  if (!pw.ok) pw = runCmd("pwsh.exe", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
-  if (!pw.ok) issues.push("pwsh/pwsh.exe is not available");
+  const pwshCandidates = ["/mnt/c/Program Files/PowerShell/7/pwsh.exe", "pwsh", "pwsh.exe"];
+  let pw = runCmd(pwshCandidates[0], ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
+  for (let i = 1; !pw.ok && i < pwshCandidates.length; i += 1) {
+    pw = runCmd(pwshCandidates[i], ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]);
+  }
+  if (!pw.ok) issues.push("pwsh7 is not available");
+
+  const regCandidates = ["/mnt/c/Windows/System32/reg.exe", "reg.exe"];
+  let reg = runCmd(regCandidates[0], [
+    "query",
+    "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+    "/v",
+    "LongPathsEnabled",
+  ]);
+  if (!reg.ok && regCandidates.length > 1) {
+    reg = runCmd(regCandidates[1], ["query", "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem", "/v", "LongPathsEnabled"]);
+  }
+  if (!reg.ok) {
+    issues.push("failed to query Windows LongPathsEnabled registry value");
+  } else {
+    const m = reg.stdout.match(/LongPathsEnabled\s+REG_DWORD\s+0x([0-9a-fA-F]+)/);
+    const enabled = !!m && Number.parseInt(m[1], 16) === 1;
+    if (!enabled) issues.push("Windows LongPathsEnabled is not enabled (expected REG_DWORD 0x1)");
+  }
 
   return issues;
 }

@@ -11,7 +11,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,6 +18,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
+from windows_pwsh_bridge import run_pwsh_json
 
 
 def now_iso() -> str:
@@ -215,6 +215,20 @@ def unique_dst_path(dst: Path) -> Path:
         if not p.exists():
             return p
     raise RuntimeError(f"failed to resolve unique dst path: {dst}")
+
+
+def iter_jsonl_file(path: Path):
+    with path.open("r", encoding="utf-8-sig") as f:
+        for line in f:
+            s = line.strip()
+            if not s:
+                continue
+            try:
+                rec = json.loads(s)
+            except Exception:
+                continue
+            if isinstance(rec, dict):
+                yield rec
 
 
 def build_group_key(md: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -488,92 +502,167 @@ def main() -> int:
         files_moved = 0
         run_id: str | None = None
         apply_rows: list[dict[str, Any]] = []
+        move_backend = "wsl_shutil_move"
         if args.apply:
-            run_id = str(uuid.uuid4())
-            begin_immediate(con)
-            con.execute(
-                """
-                INSERT INTO runs (run_id, kind, target_root, started_at, finished_at, tool_version, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    run_id,
-                    "dedup",
-                    str(quarantine_root),
-                    now_iso(),
-                    None,
-                    "dedup_recordings.py",
-                    f"groups={len(group_keys)} drops={len(rows_drop)}",
-                ),
-            )
-            for row in rows_drop:
-                src_win = canonicalize_windows_path(str(row["path"]))
-                src_wsl = Path(windows_to_wsl_path(src_win))
-                base_name = src_wsl.name
-                group_dir = quarantine_root / safe_group_key(str(row["group_key"]))
-                group_dir.mkdir(parents=True, exist_ok=True)
-                dst_wsl = unique_dst_path(group_dir / base_name)
-                ok = True
-                err_text = None
-                dst_win = None
+            move_backend = "pwsh7_apply_move_plan"
+            scripts_root = ops_root / "scripts"
+            apply_move_script = scripts_root / "apply_move_plan.ps1"
+            if not apply_move_script.exists():
+                errors.append(f"apply_move_plan.ps1 not found: {apply_move_script}")
+            else:
+                ops_root_win = wsl_to_windows_path(str(ops_root))
+                quarantine_root_win = wsl_to_windows_path(str(quarantine_root))
+                internal_move_plan = move_dir / f"dedup_move_plan_internal_{ts}.jsonl"
+                drop_by_path_id = {str(r["path_id"]): r for r in rows_drop if r.get("path_id")}
+                with internal_move_plan.open("w", encoding="utf-8") as w:
+                    w.write(
+                        safe_json(
+                            {
+                                "_meta": {
+                                    "kind": "dedup_move_plan_internal",
+                                    "generated_at": now_iso(),
+                                    "source": "dedup_recordings.py",
+                                    "rows": len(rows_drop),
+                                }
+                            }
+                        )
+                        + "\n"
+                    )
+                    for row in rows_drop:
+                        src_win = canonicalize_windows_path(str(row["path"]))
+                        group_dir_win = canonicalize_windows_path(
+                            quarantine_root_win + "\\" + safe_group_key(str(row["group_key"]))
+                        )
+                        base_name = PureWindowsPath(src_win).name
+                        dst_win = canonicalize_windows_path(group_dir_win + "\\" + base_name)
+                        w.write(
+                            safe_json(
+                                {
+                                    "op": "move",
+                                    "path_id": row["path_id"],
+                                    "src": src_win,
+                                    "dst": dst_win,
+                                }
+                            )
+                            + "\n"
+                        )
+
+                move_apply_file: Path | None = None
                 try:
-                    shutil.move(str(src_wsl), str(dst_wsl))
-                    dst_win = wsl_to_windows_path(str(dst_wsl))
-                    drive, dir_, name, ext = split_win(dst_win)
-                    con.execute(
-                        "UPDATE paths SET path=?, drive=?, dir=?, name=?, ext=?, updated_at=? WHERE path_id=?",
-                        (dst_win, drive, dir_, name, ext, now_iso(), str(row["path_id"])),
+                    apply_meta = run_pwsh_json(
+                        str(apply_move_script),
+                        [
+                            "-PlanJsonl",
+                            wsl_to_windows_path(str(internal_move_plan)),
+                            "-OpsRoot",
+                            ops_root_win,
+                            "-OnDstExists",
+                            "rename_suffix",
+                        ],
                     )
-                    con.execute(
-                        """
-                        INSERT INTO events (run_id, ts, kind, src_path_id, dst_path_id, detail_json, ok, error)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            run_id,
-                            now_iso(),
-                            "dedup_move",
-                            str(row["path_id"]),
-                            None,
-                            safe_json({"src": src_win, "dst": dst_win, "group_key": row["group_key"]}),
-                            1,
-                            None,
-                        ),
-                    )
-                    files_moved += 1
+                    out_jsonl = str(apply_meta.get("out_jsonl") or "").strip()
+                    if not out_jsonl:
+                        raise RuntimeError("apply_move_plan.ps1 did not return out_jsonl")
+                    move_apply_file = Path(windows_to_wsl_path(out_jsonl))
+                    if not move_apply_file.exists():
+                        raise RuntimeError(f"move apply JSONL not found: {move_apply_file}")
                 except Exception as e:
-                    ok = False
-                    err_text = str(e)
-                    errors.append(f"move failed: {src_win} -> {dst_wsl} :: {err_text}")
-                    con.execute(
-                        """
-                        INSERT INTO events (run_id, ts, kind, src_path_id, dst_path_id, detail_json, ok, error)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            run_id,
-                            now_iso(),
-                            "dedup_move",
-                            str(row["path_id"]),
-                            None,
-                            safe_json({"src": src_win, "dst": str(dst_wsl), "group_key": row["group_key"]}),
-                            0,
-                            err_text,
-                        ),
-                    )
-                apply_rows.append(
-                    {
-                        "group_key": row["group_key"],
-                        "path_id": row["path_id"],
-                        "src": src_win,
-                        "dst": dst_win or str(dst_wsl),
-                        "ok": ok,
-                        "error": err_text,
-                        "ts": now_iso(),
-                    }
-                )
-            con.execute("UPDATE runs SET finished_at=? WHERE run_id=?", (now_iso(), run_id))
-            con.commit()
+                    errors.append(f"dedup apply move engine failed: {e}")
+
+                if move_apply_file is not None:
+                    run_id = str(uuid.uuid4())
+                    try:
+                        begin_immediate(con)
+                        con.execute(
+                            """
+                            INSERT INTO runs (run_id, kind, target_root, started_at, finished_at, tool_version, notes)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                run_id,
+                                "dedup",
+                                str(quarantine_root),
+                                now_iso(),
+                                None,
+                                "dedup_recordings.py",
+                                f"groups={len(group_keys)} drops={len(rows_drop)}",
+                            ),
+                        )
+
+                        for rec in iter_jsonl_file(move_apply_file):
+                            if rec.get("op") != "move":
+                                continue
+                            pid = str(rec.get("path_id") or "")
+                            src_win = canonicalize_windows_path(str(rec.get("src") or ""))
+                            dst_win_val = canonicalize_windows_path(str(rec.get("dst") or ""))
+                            ok = bool(rec.get("ok"))
+                            err_text = None if ok else str(rec.get("error") or "")
+                            src_row = drop_by_path_id.get(pid, {})
+                            group_key = src_row.get("group_key")
+
+                            if ok and pid and dst_win_val:
+                                drive, dir_, name, ext = split_win(dst_win_val)
+                                con.execute(
+                                    "UPDATE paths SET path=?, drive=?, dir=?, name=?, ext=?, updated_at=? WHERE path_id=?",
+                                    (dst_win_val, drive, dir_, name, ext, now_iso(), pid),
+                                )
+                                con.execute(
+                                    """
+                                    INSERT INTO events (run_id, ts, kind, src_path_id, dst_path_id, detail_json, ok, error)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                    """,
+                                    (
+                                        run_id,
+                                        now_iso(),
+                                        "dedup_move",
+                                        pid,
+                                        None,
+                                        safe_json({"src": src_win, "dst": dst_win_val, "group_key": group_key}),
+                                        1,
+                                        None,
+                                    ),
+                                )
+                                files_moved += 1
+                            else:
+                                if src_win or dst_win_val or pid:
+                                    errors.append(
+                                        f"move failed: {src_win or '(empty)'} -> {dst_win_val or '(empty)'} :: {err_text or 'unknown_error'}"
+                                    )
+                                if pid:
+                                    con.execute(
+                                        """
+                                        INSERT INTO events (run_id, ts, kind, src_path_id, dst_path_id, detail_json, ok, error)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                        """,
+                                        (
+                                            run_id,
+                                            now_iso(),
+                                            "dedup_move",
+                                            pid,
+                                            None,
+                                            safe_json({"src": src_win, "dst": dst_win_val, "group_key": group_key}),
+                                            0,
+                                            err_text or "move_failed",
+                                        ),
+                                    )
+
+                            apply_rows.append(
+                                {
+                                    "group_key": group_key,
+                                    "path_id": pid or None,
+                                    "src": src_win,
+                                    "dst": dst_win_val,
+                                    "ok": ok,
+                                    "error": err_text,
+                                    "ts": str(rec.get("ts") or now_iso()),
+                                }
+                            )
+
+                        con.execute("UPDATE runs SET finished_at=? WHERE run_id=?", (now_iso(), run_id))
+                        con.commit()
+                    except Exception:
+                        con.rollback()
+                        raise
 
             with apply_path.open("w", encoding="utf-8") as w:
                 w.write(
@@ -606,6 +695,7 @@ def main() -> int:
             "filesKeptByBroadcastPolicy": files_kept_by_broadcast_policy,
             "filesDropped": files_dropped,
             "filesMoved": files_moved,
+            "moveBackend": move_backend,
             "errors": errors,
         }
         print(safe_json(summary))

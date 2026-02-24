@@ -9,6 +9,10 @@ export const REQUIRED_WINDOWS_SCRIPTS = [
   "list_remaining_unwatched.ps1",
 ] as const;
 
+export const INTERNAL_WINDOWS_SCRIPTS = ["_long_path_utils.ps1", "enumerate_files_jsonl.ps1"] as const;
+
+export const MANAGED_WINDOWS_SCRIPTS = [...REQUIRED_WINDOWS_SCRIPTS, ...INTERNAL_WINDOWS_SCRIPTS] as const;
+
 export type ProvisionFailure = {
   name: string;
   path: string;
@@ -19,6 +23,7 @@ export type ProvisionResult = {
   ok: boolean;
   scriptsDir: string;
   created: string[];
+  updated: string[];
   existing: string[];
   failed: ProvisionFailure[];
   missingTemplates: string[];
@@ -48,6 +53,7 @@ export function ensureWindowsScripts(cfg: { windowsOpsRoot: string }): Provision
     ok: false,
     scriptsDir,
     created: [],
+    updated: [],
     existing: [],
     failed: [],
     missingTemplates: [],
@@ -65,7 +71,7 @@ export function ensureWindowsScripts(cfg: { windowsOpsRoot: string }): Provision
     return result;
   }
 
-  for (const name of REQUIRED_WINDOWS_SCRIPTS) {
+  for (const name of MANAGED_WINDOWS_SCRIPTS) {
     const target = path.join(scriptsDir, name);
     const template = resolveTemplatePath(cfg, name);
 
@@ -75,8 +81,24 @@ export function ensureWindowsScripts(cfg: { windowsOpsRoot: string }): Provision
     }
 
     if (fs.existsSync(target)) {
-      result.existing.push(target);
-      continue;
+      try {
+        const targetBuf = fs.readFileSync(target);
+        const templateBuf = fs.readFileSync(template);
+        if (Buffer.compare(targetBuf, templateBuf) === 0) {
+          result.existing.push(target);
+          continue;
+        }
+        fs.copyFileSync(template, target);
+        result.updated.push(target);
+        continue;
+      } catch (e: any) {
+        result.failed.push({
+          name,
+          path: target,
+          error: String(e?.message || e),
+        });
+        continue;
+      }
     }
 
     try {

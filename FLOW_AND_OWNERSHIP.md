@@ -15,6 +15,7 @@ This document describes plugin-only execution order, ownership boundaries, and A
 - Windows PowerShell layer (`<windowsOpsRoot>/scripts/*.ps1`)
   - owns Windows filesystem mutation/enumeration
   - emits raw move/inventory evidence
+  - performs internal long-path (`\\?\`) handling and emits normal Windows paths externally
 
 ## 2) runtime contract
 
@@ -33,7 +34,9 @@ Runtime contract paths under `windowsOpsRoot`:
 
 - `db`, `move`, `llm`, `scripts`
 - `scripts` is auto-provisioned on validate/run if required PS1 files are missing.
-- Existing scripts are preserved (missing files only are created).
+- Plugin-managed scripts are auto-synced on validate/run/backfill/dedup (missing or outdated files are updated).
+- User custom sub-scripts are outside plugin management and are not overwritten.
+- Long path operation requires Windows `LongPathsEnabled=1` and PowerShell 7.
 
 Plugin-local backfill config:
 
@@ -100,5 +103,6 @@ User correction loop:
 ## 6) boundary rules
 
 - Do not implement Windows filesystem mutation directly in TypeScript or Python.
+- For long-path-sensitive filesystem access, prefer pwsh7 helpers over WSL file I/O.
 - Keep TS->Python argument names aligned exactly with runner CLI args.
 - Treat hints as optional assistive input, not as the primary extraction engine.

@@ -35,6 +35,7 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
             error: "failed to provision required windows scripts",
             scriptsProvision: {
               created: scriptsProvision.created,
+              updated: scriptsProvision.updated,
               existing: scriptsProvision.existing,
               failed: scriptsProvision.failed,
               missingTemplates: scriptsProvision.missingTemplates,
@@ -72,6 +73,7 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
           stderr: r.stderr,
           scriptsProvision: {
             created: scriptsProvision.created,
+            updated: scriptsProvision.updated,
             existing: scriptsProvision.existing,
             failed: scriptsProvision.failed,
             missingTemplates: scriptsProvision.missingTemplates,
