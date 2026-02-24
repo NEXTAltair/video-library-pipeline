@@ -18,6 +18,9 @@ Use one of the stage skills below for actual execution:
 
 - Use plugin tools, not direct script calls.
 - Execute in the main agent turn; do not delegate pipeline execution to subagents.
+- Do not treat plugin tool names as workspace skill names.
+  - Example: `video_pipeline_prepare_relocate_metadata` and `video_pipeline_relocate_existing_files` are **tools**, not `skills/<name>/SKILL.md`.
+  - If a `read` attempt fails with `.../workspace/.../skills/<tool-like-name>/SKILL.md`, recover by calling the plugin tool directly instead of searching for a symlink or alternate skill path.
 - Never substitute plugin tools with `exec` shell commands.
   - `video_pipeline_*` names are tool names, not shell commands.
   - If a tool call cannot be issued in the current environment, stop and report it as "tool registry / permissions issue".
@@ -27,22 +30,26 @@ Use one of the stage skills below for actual execution:
   - `video_pipeline_status`
   - `video_pipeline_backfill_moved_files`
   - `video_pipeline_relocate_existing_files`
+  - `video_pipeline_prepare_relocate_metadata`
   - `video_pipeline_dedup_recordings`
 - Before running, always check path config mismatch risk (`sourceRoot`, `destRoot`, `windowsOpsRoot`) and ask the user to confirm if there is any possibility of wrong path settings.
 - Long path prerequisite for apply operations: require `pwsh7` and Windows `LongPathsEnabled=1` (check via `video_pipeline_validate`).
 - This plugin does not use `pnpm test` / `scripts/*.sh` style E2E. E2E is performed by tool-call sequence.
 
-## Start by classifying the user request (required)
+## Intent Mapping (required)
 
-Before running tools, classify the request into one of these goals and follow the matching flow:
+Interpret natural-language requests by intent first, then choose the matching flow/tool sequence.
+Do not jump directly to shell file moves when the user is asking for rule-based cleanup/reorganization.
 
-1. **`sourceRoot` pipeline run (通常の未視聴処理)**
+Before running tools, classify the request into one of these goals:
+
+1. **`sourceRoot` pipeline run (normal incoming/unwatched processing)**
    - Use `video_pipeline_analyze_and_move_videos`
    - `remaining_files` is meaningful here
 2. **DB sync / inventory recovery only**
    - Use `video_pipeline_backfill_moved_files`
    - Do not claim physical move completion
-3. **任意ディレクトリ（既存ファイル）の再配置 / cleanup**
+3. **Arbitrary existing-directory relocation / cleanup**
    - Use `video_pipeline_relocate_existing_files`
    - Do not use `remaining_files` from analyze-and-move as evidence
 
@@ -50,7 +57,7 @@ If the user asks about cleanup/reorganization for an already-existing directory 
 
 ## Tool scope / result semantics (required)
 
-- `video_pipeline_analyze_and_move_videos` targets the configured `sourceRoot` (normally `B:\\未視聴`) only.
+- `video_pipeline_analyze_and_move_videos` targets the configured `sourceRoot` (normally the incoming/unwatched directory) only.
   - `remaining_files` means "files still remaining under `sourceRoot` after this run".
   - `remaining_files == 0` does **not** mean all files under `destRoot` or any custom cleanup target root were reviewed, moved, or fixed.
 - `video_pipeline_backfill_moved_files` is a **DB synchronization** tool.
@@ -66,10 +73,30 @@ If the user asks about cleanup/reorganization for an already-existing directory 
   - `backfill` is still the primary bulk DB sync tool; use it when the main goal is registration/sync rather than relocation.
   - `queueMissingMetadata` can collect registered files skipped by `missing_metadata` / invalid contract / `needs_review`.
   - To write the queue file during dry-run, set `writeMetadataQueueOnDryRun=true` (otherwise dry-run reports count only).
+- `video_pipeline_prepare_relocate_metadata` is an **orchestration tool** for relocate prerequisites.
+  - It runs `relocate` dry-run with queue generation, then runs `reextract` on that queue.
+  - It does **not** apply reviewed metadata and does **not** perform physical relocation.
+  - Prefer `followUpToolCalls` from this tool result to continue the flow (YAML export -> human review -> metadata apply -> relocate rerun).
+- Metadata state labels used in this skill:
+  - `machine_extracted_unreviewed_metadata`: machine-generated candidates from `reextract` (even if already written to DB, still not human-verified)
+  - `human_reviewed_metadata`: visually reviewed/edited metadata reflected by `video_pipeline_apply_reviewed_metadata`
+  - `auto_registered_file_facts`: `paths` / `observations` / register-type events (file existence/size/mtime facts, not program interpretation)
 - When reporting completion, always state the scope explicitly:
   - "DB sync complete" vs "physical move complete"
   - which root was scanned (`sourceRoot`, `roots[]`, `destRoot` subtree, etc.)
+  - if `autoRegisteredPaths > 0`, include the `autoRegisteredFiles` list (or state it was truncated) so the user can see which files were newly registered into DB tracking
+- If a tool result includes `followUpToolCalls`, use those exact tool names/params instead of inventing a new flow description.
 - If the user asks about residual files under a custom cleanup target root, do not use `remaining_files` as evidence. Use an explicit scan of that root (or state that this run did not inspect it).
+- When asking for human review after `video_pipeline_export_program_yaml`, do not provide only generic review themes.
+  - Prefer `reviewSummary` and `reviewCandidates` from the tool result.
+  - Treat YAML output as a human-facing artifact only; the agent should not infer corrections from YAML text.
+  - Report exact `path`, `columns[]`, and `reasons[]` for the rows that need review.
+  - If the list is truncated, say so explicitly (`reviewCandidatesTruncated=true`).
+  - Treat this as a metadata review stage only (`program_title`, `air_date`, `needs_review`, YAML aliases).
+  - Do not ask the user to decide destination folders, move plans, or genre/category strategy at this stage.
+  - If the user corrects a title/subtitle interpretation, restate it as a column-level correction (for example, "`program_title` should remain X; subtitle/description is not part of `program_title`").
+  - Do not claim YAML review was applied to DB unless `video_pipeline_apply_reviewed_metadata` succeeded on the corresponding JSONL input.
+- After `video_pipeline_apply_reviewed_metadata`, do not claim review was applied unless the tool result confirms it was not blocked by safety checks (for example, raw extraction input / no-content-change guard).
 
 ## Winning Flow (arbitrary existing-root relocation / cleanup)
 
@@ -83,10 +110,14 @@ Example targets:
    - `video_pipeline_validate {"checkWindowsInterop": true}`
 2. Relocate dry-run with queue planning:
    - `video_pipeline_relocate_existing_files {"apply": false, "roots":["B:\\\\VideoLibrary\\\\legacy_import"], "queueMissingMetadata": true, "writeMetadataQueueOnDryRun": true, "scanErrorPolicy":"warn", "scanRetryCount": 2}`
+   - Shortcut option (same purpose): `video_pipeline_prepare_relocate_metadata {...}`
 3. Read relocate result and branch:
    - If `plannedMoves > 0`: review plan and prepare for apply
-   - If `metadataQueuePlannedCount > 0`: run reextract/review flow first
+   - If `metadataQueuePlannedCount > 0`: this is a prerequisite/metadata-preparation state (not a physical-move failure); run reextract/review flow first
    - If `unregisteredSkipped > 0`: `relocate apply` can auto-register them (DB tracking only), then rerun relocate after metadata is filled
+   - Prefer `outcomeType`, `requiresMetadataPreparation`, and `nextActions` from the relocate tool result when present
+   - Do **not** describe files as "already in the correct place" unless `alreadyCorrect > 0` is explicitly reported
+   - `plannedMoves == 0` alone is insufficient to claim `alreadyCorrect`
 4. Reextract/review (when metadata is missing):
    - `video_pipeline_reextract` (use relocate metadata queue)
    - `video_pipeline_export_program_yaml`
@@ -97,6 +128,7 @@ Example targets:
 7. Optional dedup dry-run
 
 Do not run `backfill` expecting it to create metadata queue entries for `skippedExisting` rows. That is not its queue scope.
+When `relocate` reports metadata gaps, do not summarize it as "failed" unless `ok=false`; summarize it as "metadata preparation required" and follow the suggested next actions.
 
 ## Mandatory interactive flow (human review required)
 
@@ -118,6 +150,7 @@ Critical requirement:
   - `video_pipeline_validate`
   - `video_pipeline_backfill_moved_files`
   - `video_pipeline_relocate_existing_files`
+  - `video_pipeline_prepare_relocate_metadata`
   - `video_pipeline_dedup_recordings`
   - `video_pipeline_analyze_and_move_videos`
   - `video_pipeline_logs`
@@ -142,7 +175,7 @@ Critical requirement:
 
 Before `video_pipeline_validate` or pipeline execution, ask a short confirmation when path mismatch is possible:
 
-- "パス設定ミスの可能性があります。`sourceRoot` / `destRoot` / `windowsOpsRoot` は実在パスですか？"
+- "Possible path configuration mismatch. Do `sourceRoot` / `destRoot` / `windowsOpsRoot` point to real existing paths?"
 - If an error says `... does not exist`, first treat it as config/path mismatch and ask for the intended real path.
 
 ## Non-interactive automation flow (cron)

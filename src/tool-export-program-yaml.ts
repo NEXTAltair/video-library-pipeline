@@ -12,6 +12,39 @@ type ProgramStat = {
   sampleRawNames: string[];
 };
 
+type ReviewCandidate = {
+  pathId?: string;
+  path: string;
+  columns: string[];
+  reasons: string[];
+  severity: "required" | "review";
+  byProgramFolderTitle?: string;
+  current: {
+    program_title?: string;
+    air_date?: string;
+    subtitle?: string;
+    needs_review?: boolean;
+    needs_review_reason?: string;
+    normalized_program_key?: string;
+  };
+  evidence?: {
+    raw?: string;
+  };
+};
+
+type ReviewSummary = {
+  rowsNeedingReview: number;
+  requiredFieldMissingRows: number;
+  invalidAirDateRows: number;
+  needsReviewFlagRows: number;
+  suspiciousProgramTitleRows: number;
+  fieldCounts: Record<string, number>;
+  reasonCounts: Record<string, number>;
+};
+
+const MAX_REVIEW_CANDIDATES = 50;
+const MAX_PREVIEW_CHARS = 220;
+
 function tsCompact(d = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
@@ -29,6 +62,166 @@ function normalizeKey(title: string): string {
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "")
     .toLowerCase();
+}
+
+function asStr(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+function previewText(v: unknown, max = MAX_PREVIEW_CHARS): string | undefined {
+  const s = asStr(v).trim();
+  if (!s) return undefined;
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+function isIsoDate(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function splitWinPathParts(winPath: string): string[] {
+  return String(winPath || "")
+    .split(/[\\/]+/)
+    .filter(Boolean);
+}
+
+function byProgramFolderTitleFromPath(winPath: string): string | undefined {
+  const parts = splitWinPathParts(winPath);
+  const idx = parts.findIndex((p) => p.toLowerCase() === "by_program");
+  if (idx >= 0 && idx + 1 < parts.length) return parts[idx + 1];
+  return undefined;
+}
+
+function lowerCompact(s: string): string {
+  return s
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[<>:"/\\|?*]+/g, "");
+}
+
+function looksSwallowedProgramTitle(programTitle: string, folderTitle: string): boolean {
+  const p = programTitle.trim();
+  const f = folderTitle.trim();
+  if (!p || !f) return false;
+  if (p === f) return false;
+  const pNorm = lowerCompact(p);
+  const fNorm = lowerCompact(f);
+  if (!pNorm || !fNorm) return false;
+  if (!pNorm.startsWith(fNorm)) return false;
+  return pNorm.length >= fNorm.length + 8;
+}
+
+function pushCount(map: Record<string, number>, key: string) {
+  map[key] = (map[key] ?? 0) + 1;
+}
+
+function appendUnique(arr: string[], v: string) {
+  if (!v) return;
+  if (!arr.includes(v)) arr.push(v);
+}
+
+function buildReviewDiagnostics(rows: AnyObj[]): {
+  summary: ReviewSummary;
+  candidates: ReviewCandidate[];
+  truncated: boolean;
+} {
+  const fieldCounts: Record<string, number> = {};
+  const reasonCounts: Record<string, number> = {};
+  const candidates: ReviewCandidate[] = [];
+  let rowsNeedingReview = 0;
+  let requiredFieldMissingRows = 0;
+  let invalidAirDateRows = 0;
+  let needsReviewFlagRows = 0;
+  let suspiciousProgramTitleRows = 0;
+
+  for (const r of rows) {
+    const columns: string[] = [];
+    const reasons: string[] = [];
+    let severity: "required" | "review" = "review";
+    const programTitle = asStr(r.program_title).trim();
+    const airDate = asStr(r.air_date).trim();
+    const needsReview = r.needs_review === true;
+    const needsReviewReason = asStr(r.needs_review_reason).trim();
+    const pathValue = asStr(r.path).trim();
+
+    if (!programTitle) {
+      appendUnique(columns, "program_title");
+      appendUnique(reasons, "missing_program_title");
+      severity = "required";
+    }
+    if (!airDate) {
+      appendUnique(columns, "air_date");
+      appendUnique(reasons, "missing_air_date");
+      severity = "required";
+    } else if (!isIsoDate(airDate)) {
+      appendUnique(columns, "air_date");
+      appendUnique(reasons, "invalid_air_date");
+      severity = "required";
+    }
+    if (typeof r.needs_review !== "boolean") {
+      appendUnique(columns, "needs_review");
+      appendUnique(reasons, "missing_or_invalid_needs_review");
+      severity = "required";
+    }
+    if (needsReview) {
+      appendUnique(columns, "needs_review");
+      if (needsReviewReason) appendUnique(columns, "needs_review_reason");
+      appendUnique(reasons, needsReviewReason || "needs_review_flagged");
+    }
+
+    const byProgramFolderTitle = byProgramFolderTitleFromPath(pathValue);
+    if (byProgramFolderTitle && programTitle && looksSwallowedProgramTitle(programTitle, byProgramFolderTitle)) {
+      appendUnique(columns, "program_title");
+      appendUnique(reasons, "program_title_may_include_description");
+    }
+
+    if (reasons.length === 0) continue;
+    rowsNeedingReview += 1;
+    if (reasons.some((x) => x.startsWith("missing_") || x === "invalid_air_date" || x === "missing_or_invalid_needs_review")) {
+      requiredFieldMissingRows += 1;
+    }
+    if (reasons.includes("invalid_air_date")) invalidAirDateRows += 1;
+    if (needsReview) needsReviewFlagRows += 1;
+    if (reasons.includes("program_title_may_include_description")) suspiciousProgramTitleRows += 1;
+    for (const c of columns) pushCount(fieldCounts, c);
+    for (const reason of reasons) pushCount(reasonCounts, reason);
+
+    if (candidates.length < MAX_REVIEW_CANDIDATES) {
+      candidates.push({
+        pathId: typeof r.path_id === "string" ? r.path_id : undefined,
+        path: pathValue,
+        columns,
+        reasons,
+        severity,
+        byProgramFolderTitle,
+        current: {
+          program_title: previewText(r.program_title),
+          air_date: previewText(r.air_date),
+          subtitle: previewText(r.subtitle),
+          needs_review: typeof r.needs_review === "boolean" ? r.needs_review : undefined,
+          needs_review_reason: previewText(r.needs_review_reason),
+          normalized_program_key: previewText(r.normalized_program_key),
+        },
+        evidence: {
+          raw: previewText((r.evidence as AnyObj | undefined)?.raw),
+        },
+      });
+    }
+  }
+
+  return {
+    summary: {
+      rowsNeedingReview,
+      requiredFieldMissingRows,
+      invalidAirDateRows,
+      needsReviewFlagRows,
+      suspiciousProgramTitleRows,
+      fieldCounts,
+      reasonCounts,
+    },
+    candidates,
+    truncated: rowsNeedingReview > candidates.length,
+  };
 }
 
 function readJsonlRows(sourceJsonlPath: string): AnyObj[] {
@@ -174,6 +367,7 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
         const stats = Array.from(statsMap.values()).sort((a, b) =>
           a.canonicalTitle.localeCompare(b.canonicalTitle, "ja"),
         );
+        const review = buildReviewDiagnostics(rows);
         const yaml = buildYaml(source.path, rows.length, rowsUsed, includeNeedsReview, includeUnknown, stats);
 
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -190,6 +384,35 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
           includeNeedsReview,
           includeUnknown,
           maxSamplesPerProgram,
+          reviewSummary: review.summary,
+          reviewCandidates: review.candidates,
+          reviewCandidatesTruncated: review.truncated,
+          reviewGuidance: {
+            stage: "metadata_review",
+            yamlRole: "human_review_artifact_only",
+            agentShouldUseYamlForDecision: false,
+            agentShouldUseStructuredFields: true,
+            reviewColumnsInScope: [
+              "program_title",
+              "air_date",
+              "needs_review",
+              "needs_review_reason",
+              "normalized_program_key",
+              "aliases_in_yaml",
+            ],
+            reviewColumnsOutOfScope: [
+              "destination_folder_path",
+              "filesystem_move_plan",
+              "category_assignment",
+              "genre_classification_for_move",
+            ],
+            reportingRule:
+              "Ask the human to review specific records and columns using reviewCandidates (path + columns + reasons). Do not request generic title consistency checks only.",
+            handoffRule:
+              "This stage reviews metadata only. Physical move destination decisions belong to relocate/move stages after metadata is confirmed.",
+            yamlHandlingRule:
+              "Do not derive automated corrections from YAML text. YAML is for human visual review; agent should rely on reviewCandidates/reviewSummary and user-confirmed column-level edits.",
+          },
         });
       },
     },

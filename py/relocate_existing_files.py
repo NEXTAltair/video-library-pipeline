@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import subprocess
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ from pathscan_common import (
 from windows_pwsh_bridge import run_pwsh_json
 
 PATH_NAMESPACE = uuid.UUID("f4f67a6f-90c6-4ee4-9c1a-2c0d25b3b0c4")
+MAX_SUMMARY_AUTOREGISTER_FILES = 100
 
 
 def path_id_for(p: str) -> str:
@@ -84,6 +86,39 @@ def metadata_needs_queue(md: dict[str, Any] | None) -> bool:
     if not md.get("program_title"):
         return True
     if not md.get("air_date"):
+        return True
+    return False
+
+
+def _normalize_title_compare(s: str) -> str:
+    return unicodedata.normalize("NFKC", str(s or "")).casefold().strip()
+
+
+def by_program_group_name(src_path_win: str) -> str | None:
+    parts = str(src_path_win or "").split("\\")
+    # by_program may appear at different depths (arbitrary cleanup roots).
+    for i, seg in enumerate(parts[:-1]):
+        if str(seg).lower() == "by_program" and i + 1 < len(parts):
+            return parts[i + 1]
+    return None
+
+
+def looks_like_swallowed_program_title(src_path_win: str, md: dict[str, Any] | None) -> bool:
+    if not isinstance(md, dict):
+        return False
+    group = by_program_group_name(src_path_win)
+    title = md.get("program_title")
+    if not group or not isinstance(title, str):
+        return False
+    title = title.strip()
+    if not title:
+        return False
+    g = _normalize_title_compare(group)
+    t = _normalize_title_compare(title)
+    if not g or not t or t == g:
+        return False
+    # Main failure mode: LLM copies episode title/body and keeps the folder's program name as a prefix.
+    if t.startswith(g) and len(t) >= len(g) + 3:
         return True
     return False
 
@@ -216,11 +251,13 @@ def main() -> int:
     unregistered_skipped = 0
     metadata_missing_skipped = 0
     invalid_contract_skipped = 0
+    suspicious_program_title_skipped = 0
     needs_review_skipped = 0
     corrupt_candidates = 0
     dst_exists_errors = 0
     auto_registered_paths = 0
     auto_registered_observations = 0
+    auto_registered_files_committed: list[dict[str, Any]] = []
     errors: list[str] = list(scan_errors)
 
     try:
@@ -323,6 +360,26 @@ def main() -> int:
                     )
                 continue
 
+            if looks_like_swallowed_program_title(sf.win_path, md):
+                suspicious_program_title_skipped += 1
+                rows_for_plan.append(
+                    {
+                        "path_id": path_id,
+                        "src": sf.win_path,
+                        "status": "skipped",
+                        "reason": "suspicious_program_title",
+                        "metadata_source": md_source,
+                        "program_title": md.get("program_title"),
+                        "byProgramGroup": by_program_group_name(sf.win_path),
+                        "ts": ts_row,
+                    }
+                )
+                if queue_missing_metadata:
+                    queue_candidates.append(
+                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
+                    )
+                continue
+
             dst, dst_err = build_expected_dest_path(dest_root_win, sf.win_path, md)
             if not dst or dst_err:
                 invalid_contract_skipped += 1
@@ -410,6 +467,9 @@ def main() -> int:
         if args.apply and rows_for_autoreg:
             prereg_run_id = str(uuid.uuid4())
             try:
+                prereg_auto_registered_paths = 0
+                prereg_auto_registered_observations = 0
+                prereg_auto_registered_files: list[dict[str, Any]] = []
                 begin_immediate(con)
                 con.execute(
                     """
@@ -452,7 +512,7 @@ def main() -> int:
                             now_iso(),
                         ),
                     )
-                    auto_registered_paths += 1
+                    prereg_auto_registered_paths += 1
                     con.execute(
                         """
                         INSERT INTO observations (run_id, path_id, size_bytes, mtime_utc, type, name_flags)
@@ -472,7 +532,7 @@ def main() -> int:
                             None,
                         ),
                     )
-                    auto_registered_observations += 1
+                    prereg_auto_registered_observations += 1
                     con.execute(
                         """
                         INSERT INTO events (run_id, ts, kind, src_path_id, dst_path_id, detail_json, ok, error)
@@ -489,8 +549,20 @@ def main() -> int:
                             None,
                         ),
                     )
+                    prereg_auto_registered_files.append(
+                        {
+                            "path_id": pid,
+                            "path": pth,
+                            "name": row.get("name"),
+                            "size_bytes": int(row.get("size_bytes") or 0),
+                            "mtime_utc": row.get("mtime_utc"),
+                        }
+                    )
                 con.execute("UPDATE runs SET finished_at=? WHERE run_id=?", (now_iso(), prereg_run_id))
                 con.commit()
+                auto_registered_paths += prereg_auto_registered_paths
+                auto_registered_observations += prereg_auto_registered_observations
+                auto_registered_files_committed.extend(prereg_auto_registered_files)
             except Exception as e:
                 con.rollback()
                 errors.append(f"relocate auto-register failed: {e}")
@@ -669,6 +741,68 @@ def main() -> int:
             warnings_out = scan_warnings[:MAX_SUMMARY_WARNINGS]
             warnings_truncated = True
 
+        auto_registered_files_out = auto_registered_files_committed
+        auto_registered_files_truncated = False
+        if len(auto_registered_files_out) > MAX_SUMMARY_AUTOREGISTER_FILES:
+            auto_registered_files_out = auto_registered_files_out[:MAX_SUMMARY_AUTOREGISTER_FILES]
+            auto_registered_files_truncated = True
+
+        requires_metadata_preparation = metadata_queue_planned_count > 0 or suspicious_program_title_skipped > 0
+        requires_human_review = bool(requires_metadata_preparation or needs_review_skipped > 0)
+        can_proceed_to_relocate_apply = bool(
+            (not args.apply)
+            and planned_moves > 0
+            and metadata_queue_planned_count == 0
+            and suspicious_program_title_skipped == 0
+            and needs_review_skipped == 0
+            and len(errors) == 0
+        )
+
+        if len(errors) > 0:
+            outcome_type = "error"
+        elif args.apply and planned_moves > 0 and moved_files > 0 and moved_files == planned_moves:
+            outcome_type = "apply_completed"
+        elif args.apply and planned_moves > 0 and moved_files == 0:
+            outcome_type = "apply_failed_no_moves"
+        elif args.apply and requires_metadata_preparation and planned_moves == 0:
+            outcome_type = "metadata_preparation_required"
+        elif (not args.apply) and requires_metadata_preparation and planned_moves == 0:
+            outcome_type = "metadata_preparation_required"
+        elif (not args.apply) and planned_moves > 0:
+            outcome_type = "plan_ready_for_apply"
+        elif already_correct > 0 and planned_moves == 0 and metadata_queue_planned_count == 0 and suspicious_program_title_skipped == 0:
+            outcome_type = "already_correct_or_no_action_needed"
+        else:
+            outcome_type = "no_action_needed"
+
+        next_actions: list[str] = []
+        if metadata_queue_planned_count > 0:
+            if metadata_queue_path:
+                next_actions.append(
+                    "Run video_pipeline_reextract using metadataQueuePath, then export YAML, perform human review, apply reviewed metadata, and rerun relocate."
+                )
+            elif (not args.apply) and (not write_metadata_queue_on_dry_run):
+                next_actions.append(
+                    "Rerun relocate with writeMetadataQueueOnDryRun=true or use video_pipeline_prepare_relocate_metadata to generate the queue and start extraction."
+                )
+            next_actions.append(
+                "Do not treat this as physical-move failure: move-decision metadata is missing for some files."
+            )
+        if suspicious_program_title_skipped > 0:
+            next_actions.append(
+                "Some machine-extracted program titles look like swallowed episode titles under by_program; regenerate/review metadata before relocate apply."
+            )
+        if (not args.apply) and unregistered_skipped > 0:
+            next_actions.append(
+                "If desired, rerun relocate with apply=true to auto-register unregistered files into DB tracking (paths/observations/events); this does not move them until metadata exists."
+            )
+        if can_proceed_to_relocate_apply:
+            next_actions.append("Review relocate plan and rerun with apply=true to perform physical relocation.")
+        if args.apply and planned_moves > 0 and moved_files < planned_moves:
+            next_actions.append(
+                "Inspect relocate_apply and move_apply JSONL files for error breakdown (e.g., src_not_found, dst_exists) before retrying."
+            )
+
         summary = {
             "ok": len(errors) == 0,
             "tool": "video_pipeline_relocate_existing_files",
@@ -690,12 +824,19 @@ def main() -> int:
             "unregisteredSkipped": unregistered_skipped,
             "autoRegisteredPaths": auto_registered_paths if args.apply else 0,
             "autoRegisteredObservations": auto_registered_observations if args.apply else 0,
+            "autoRegisteredFiles": auto_registered_files_out if args.apply else [],
+            "autoRegisteredFilesTruncated": bool(auto_registered_files_truncated) if args.apply else False,
             "metadataMissingSkipped": metadata_missing_skipped,
             "invalidContractSkipped": invalid_contract_skipped,
+            "suspiciousProgramTitleSkipped": suspicious_program_title_skipped,
             "needsReviewSkipped": needs_review_skipped,
             "corruptCandidates": corrupt_candidates,
             "dstExistsErrors": dst_exists_errors,
             "metadataQueuePlannedCount": metadata_queue_planned_count,
+            "requiresMetadataPreparation": bool(requires_metadata_preparation),
+            "requiresHumanReview": bool(requires_human_review),
+            "canProceedToRelocateApply": bool(can_proceed_to_relocate_apply),
+            "outcomeType": outcome_type,
             "scanErrorPolicy": args.scan_error_policy,
             "scanErrorThreshold": int(args.scan_error_threshold or 0),
             "scanRetryCount": scan_retry_count,
@@ -707,6 +848,7 @@ def main() -> int:
             "windowsFallbackDirs": int(fallback_stats.get("windowsFallbackDirs") or 0),
             "windowsFallbackFiles": int(fallback_stats.get("windowsFallbackFiles") or 0),
             "windowsFallbackErrorCount": int(fallback_stats.get("windowsFallbackErrorCount") or 0),
+            "nextActions": next_actions,
             "errors": errors,
         }
         print(safe_json(summary))

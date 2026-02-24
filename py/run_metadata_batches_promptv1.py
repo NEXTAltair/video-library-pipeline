@@ -101,6 +101,35 @@ def norm_key(title: str) -> str:
     return t or "UNKNOWN"
 
 
+def _normalize_title_compare(s: str) -> str:
+    return BAD.sub("", norm_ws(str(s or "")).lower()).replace(" ", "")
+
+
+def _by_program_group_name_from_path(win_path: str) -> str | None:
+    parts = str(win_path or "").split("\\")
+    for i, seg in enumerate(parts[:-1]):
+        if str(seg).lower() == "by_program" and i + 1 < len(parts):
+            return parts[i + 1]
+    return None
+
+
+def _looks_swallowed_program_title(win_path: str, program_title: str) -> bool:
+    group = _by_program_group_name_from_path(win_path)
+    if not group:
+        return False
+    p = str(program_title or "").strip()
+    if not p:
+        return False
+    g_norm = _normalize_title_compare(group)
+    p_norm = _normalize_title_compare(p)
+    if not g_norm or not p_norm or p_norm == g_norm:
+        return False
+    if not p_norm.startswith(g_norm):
+        return False
+    # Require a meaningful tail to avoid flagging minor punctuation variants.
+    return len(p_norm) >= len(g_norm) + 8
+
+
 def drop_label_words(s: str) -> str:
     s = re.sub(r"(名作選|傑作選)", "", s)
     s = s.replace("選", "")
@@ -371,10 +400,13 @@ def main() -> int:
     batch_idx = 0
     processed = 0
     preserved_human_reviewed = 0
+    generated_input_jsonl_paths: list[str] = []
+    generated_output_jsonl_paths: list[str] = []
     db_con = sqlite3.connect(args.db)
 
     def flush():
         nonlocal batch, batch_idx, processed, preserved_human_reviewed
+        nonlocal generated_input_jsonl_paths, generated_output_jsonl_paths
         if not batch:
             return
         batch_idx += 1
@@ -430,6 +462,11 @@ def main() -> int:
                 needs = True
                 reasons.append("program_title_too_long")
                 conf = min(conf, 0.7)
+            if _looks_swallowed_program_title(str(rec.get("path") or ""), prog):
+                needs = True
+                if "program_title_may_include_description" not in reasons:
+                    reasons.append("program_title_may_include_description")
+                conf = min(conf, 0.65)
 
             row = {
                 "path_id": rec["path_id"],
@@ -468,6 +505,8 @@ def main() -> int:
         if _upsert_main() != 0:
             raise SystemExit(f"upsert failed: {epath}")
 
+        generated_input_jsonl_paths.append(str(bpath))
+        generated_output_jsonl_paths.append(str(epath))
         processed += len(batch)
         batch = []
 
@@ -483,6 +522,29 @@ def main() -> int:
         db_con.close()
     print(f"OK preserved_human_reviewed={preserved_human_reviewed}")
     print(f"OK processed={processed} batches={batch_idx}")
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "tool": "run_metadata_batches_promptv1",
+                "queuePath": str(args.queue),
+                "outdir": str(outdir),
+                "batchSize": int(args.batch_size),
+                "maxBatches": int(args.max_batches) if args.max_batches is not None else None,
+                "model": str(args.model),
+                "extractionVersion": str(args.extraction_version),
+                "preserveHumanReviewed": not bool(args.ignore_human_reviewed),
+                "preservedHumanReviewed": int(preserved_human_reviewed),
+                "processed": int(processed),
+                "batches": int(batch_idx),
+                "inputJsonlPaths": generated_input_jsonl_paths,
+                "outputJsonlPaths": generated_output_jsonl_paths,
+                "latestInputJsonlPath": generated_input_jsonl_paths[-1] if generated_input_jsonl_paths else None,
+                "latestOutputJsonlPath": generated_output_jsonl_paths[-1] if generated_output_jsonl_paths else None,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

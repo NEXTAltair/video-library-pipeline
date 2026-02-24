@@ -120,6 +120,53 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
         if (parsed) {
           for (const [k, v] of Object.entries(parsed)) out[k] = v;
         }
+        const followUpToolCalls: AnyObj[] = [];
+        const roots = Array.isArray(params.roots) ? params.roots.filter((v) => typeof v === "string") : undefined;
+        const rootsFilePath = typeof params.rootsFilePath === "string" ? params.rootsFilePath : undefined;
+        const commonRelocateParams: AnyObj = {
+          ...(roots && roots.length ? { roots } : {}),
+          ...(rootsFilePath ? { rootsFilePath } : {}),
+          ...(Array.isArray(params.extensions) ? { extensions: params.extensions } : {}),
+          ...(typeof params.limit === "number" ? { limit: Math.trunc(params.limit) } : {}),
+          ...(typeof params.scanErrorPolicy === "string" ? { scanErrorPolicy: params.scanErrorPolicy } : {}),
+          ...(typeof params.scanRetryCount === "number" ? { scanRetryCount: Math.trunc(params.scanRetryCount) } : {}),
+          ...(typeof params.scanErrorThreshold === "number"
+            ? { scanErrorThreshold: Math.trunc(params.scanErrorThreshold) }
+            : {}),
+        };
+        const metadataGap =
+          Number(out.metadataQueuePlannedCount || 0) > 0 ||
+          out.requiresMetadataPreparation === true ||
+          Number(out.metadataMissingSkipped || 0) > 0;
+        if (r.ok && params.apply !== true && metadataGap) {
+          followUpToolCalls.push({
+            tool: "video_pipeline_prepare_relocate_metadata",
+            reason: "metadata_preparation_required_before_relocate_apply",
+            params: {
+              ...commonRelocateParams,
+              runReextract: true,
+            },
+          });
+        }
+        if (r.ok && params.apply !== true && Number(out.plannedMoves || 0) > 0 && !metadataGap) {
+          followUpToolCalls.push({
+            tool: "video_pipeline_relocate_existing_files",
+            reason: "relocate_plan_ready_for_apply_after_review",
+            params: {
+              ...commonRelocateParams,
+              apply: true,
+              allowNeedsReview: params.allowNeedsReview === true,
+              onDstExists: typeof params.onDstExists === "string" ? params.onDstExists : "error",
+            },
+          });
+        }
+        if (followUpToolCalls.length > 0) {
+          out.followUpToolCalls = followUpToolCalls;
+          out.hasFollowUpToolCalls = true;
+        } else {
+          out.followUpToolCalls = [];
+          out.hasFollowUpToolCalls = false;
+        }
         return toToolResult(out);
       },
     },

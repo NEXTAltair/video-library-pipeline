@@ -86,6 +86,30 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
     },
   },
   {
+    name: "video_pipeline_prepare_relocate_metadata",
+    description:
+      "Run relocate dry-run with metadata queue generation, then run reextract on the generated queue (no physical moves).",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        roots: { type: "array", items: { type: "string" } },
+        rootsFilePath: { type: "string" },
+        extensions: { type: "array", items: { type: "string" }, default: [".mp4"] },
+        limit: { type: "integer", minimum: 1, maximum: 100000 },
+        allowNeedsReview: { type: "boolean", default: false },
+        scanErrorPolicy: { type: "string", enum: ["warn", "fail", "threshold"], default: "warn" },
+        scanErrorThreshold: { type: "integer", minimum: 1, maximum: 100000 },
+        scanRetryCount: { type: "integer", minimum: 0, maximum: 10, default: 1 },
+        extractionVersion: { type: "string" },
+        batchSize: { type: "integer", minimum: 1, maximum: 1000, default: 50 },
+        maxBatches: { type: "integer", minimum: 1, maximum: 1000 },
+        preserveHumanReviewed: { type: "boolean", default: true },
+        runReextract: { type: "boolean", default: true },
+      },
+    },
+  },
+  {
     name: "video_pipeline_status",
     description: "Read latest pipeline status summary from windowsOpsRoot/move.",
     parameters: {
@@ -129,6 +153,7 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
         sourceJsonlPath: { type: "string" },
         outputStampedJsonlPath: { type: "string" },
         markHumanReviewed: { type: "boolean", default: true },
+        allowNoContentChanges: { type: "boolean", default: false },
         reviewedBy: { type: "string" },
         source: { type: "string", default: "llm" },
       },

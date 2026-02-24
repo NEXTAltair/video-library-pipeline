@@ -6,6 +6,7 @@ import { registerToolBackfill } from "./src/tool-backfill";
 import { registerToolDedup } from "./src/tool-dedup";
 import { registerToolLogs } from "./src/tool-logs";
 import { registerToolExportProgramYaml } from "./src/tool-export-program-yaml";
+import { registerToolPrepareRelocateMetadata } from "./src/tool-prepare-relocate-metadata";
 import { registerToolRelocate } from "./src/tool-relocate";
 import { registerToolReextract } from "./src/tool-reextract";
 import { registerToolRepairDb } from "./src/tool-repair-db";
@@ -32,6 +33,7 @@ export default function register(api: any) {
   registerToolBackfill(api, getCfg);
   registerToolDedup(api, getCfg);
   registerToolRelocate(api, getCfg);
+  registerToolPrepareRelocateMetadata(api, getCfg);
   registerToolStatus(api, getCfg);
   registerToolValidate(api, getCfg);
   registerToolApplyReviewedMetadata(api, getCfg);
