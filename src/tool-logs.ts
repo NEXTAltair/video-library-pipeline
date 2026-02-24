@@ -24,6 +24,9 @@ export function registerToolLogs(api: any, getCfg: (api: any) => any) {
               "backfill-queue",
               "dedup-plan",
               "dedup-apply",
+              "relocate-plan",
+              "relocate-apply",
+              "relocate-queue",
               "all",
             ],
             default: "all",
@@ -47,6 +50,11 @@ export function registerToolLogs(api: any, getCfg: (api: any) => any) {
         }
         if (kind === "all" || kind === "dedup-plan") out.dedupPlan = latestJsonlFile(moveDir, "dedup_plan_");
         if (kind === "all" || kind === "dedup-apply") out.dedupApply = latestJsonlFile(moveDir, "dedup_apply_");
+        if (kind === "all" || kind === "relocate-plan") out.relocatePlan = latestJsonlFile(moveDir, "relocate_plan_");
+        if (kind === "all" || kind === "relocate-apply") out.relocateApply = latestJsonlFile(moveDir, "relocate_apply_");
+        if (kind === "all" || kind === "relocate-queue") {
+          out.relocateQueue = latestJsonlFile(path.join(cfg.windowsOpsRoot || "", "llm"), "relocate_metadata_queue_");
+        }
 
         if (kind === "all" || kind === "remaining") {
           const rem = fs.existsSync(moveDir)

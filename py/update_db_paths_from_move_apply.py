@@ -37,6 +37,9 @@ def main() -> int:
     ap.add_argument("--db", default="")
     ap.add_argument("--applied", required=True)
     ap.add_argument("--notes", default=None)
+    ap.add_argument("--run-kind", default="apply")
+    ap.add_argument("--event-kind", default="move")
+    ap.add_argument("--detail-source", default="apply_move_plan.ps1")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -69,10 +72,10 @@ def main() -> int:
             (
                 "TBD",
                 rec.get("ts") or now_iso(),
-                "move",
+                str(args.event_kind or "move"),
                 pid,
                 None,
-                json.dumps({"src": src, "dst": dst, "source": "apply_move_plan.ps1"}, ensure_ascii=False),
+                json.dumps({"src": src, "dst": dst, "source": str(args.detail_source or "apply_move_plan.ps1")}, ensure_ascii=False),
                 1,
                 None,
             )
@@ -94,12 +97,12 @@ def main() -> int:
             """,
             (
                 run_id,
-                "apply",
+                str(args.run_kind or "apply"),
                 None,
                 started,
                 None,
                 None,
-                args.notes or f"update_db_paths_from_move_apply {os.path.basename(args.applied)}",
+                args.notes or f"{str(args.run_kind or 'apply')} update_db_paths_from_move_apply {os.path.basename(args.applied)}",
             ),
         )
         if updates:
@@ -124,10 +127,21 @@ def main() -> int:
     finally:
         con.close()
 
-    print(json.dumps({"applied": args.applied, "updated": len(updates), "events": len(rows_events), "run_id": run_id}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "applied": args.applied,
+                "updated": len(updates),
+                "events": len(rows_events),
+                "run_id": run_id,
+                "run_kind": str(args.run_kind or "apply"),
+                "event_kind": str(args.event_kind or "move"),
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

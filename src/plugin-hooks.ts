@@ -5,6 +5,8 @@ import type { AnyObj } from "./types";
 import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 const TARGET_TOOL = "video_pipeline_analyze_and_move_videos";
+const RELOCATE_TOOL = "video_pipeline_relocate_existing_files";
+const APPLY_PREFLIGHT_TOOLS = new Set([TARGET_TOOL, RELOCATE_TOOL]);
 const ALERT_MARKER = "[hook-alert]";
 const TOOL_NAME_REGEX = /^video_pipeline_[a-z0-9_]+$/;
 const CALIBRE_SERVER_TOKENS = new Set(["calibre-server", "calibre-server.exe"]);
@@ -62,17 +64,18 @@ function getToolEnvelopeFromResult(result: unknown): AnyObj | null {
   return null;
 }
 
-function collectApplyPreflightIssues(cfg: AnyObj): string[] {
+function collectApplyPreflightIssues(cfg: AnyObj, opts?: { requireHintsYaml?: boolean }): string[] {
   const issues: string[] = [];
   const dbDir = typeof cfg.db === "string" ? path.dirname(cfg.db) : "";
   const opsRoot = typeof cfg.windowsOpsRoot === "string" ? cfg.windowsOpsRoot : "";
   const scriptsDir = opsRoot ? path.join(opsRoot, "scripts") : "";
   const hintsPath = path.join(getExtensionRootDir(), "rules", "program_aliases.yaml");
+  const requireHintsYaml = opts?.requireHintsYaml !== false;
 
   if (!dbDir || !fs.existsSync(dbDir)) issues.push(`db parent dir missing: ${dbDir || "(empty)"}`);
   if (!opsRoot || !fs.existsSync(opsRoot)) issues.push(`windowsOpsRoot missing: ${opsRoot || "(empty)"}`);
   if (!scriptsDir || !fs.existsSync(scriptsDir)) issues.push(`scripts dir missing: ${scriptsDir || "(empty)"}`);
-  if (!fs.existsSync(hintsPath)) issues.push(`hints yaml missing: ${hintsPath}`);
+  if (requireHintsYaml && !fs.existsSync(hintsPath)) issues.push(`hints yaml missing: ${hintsPath}`);
 
   for (const name of REQUIRED_WINDOWS_SCRIPTS) {
     const p = path.join(scriptsDir, name);
@@ -418,14 +421,15 @@ export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
       };
     }
 
-    if (event?.toolName !== TARGET_TOOL) return;
+    const hookToolName = String(event?.toolName || "");
+    if (!APPLY_PREFLIGHT_TOOLS.has(hookToolName)) return;
     const params = isObj(event?.params) ? event.params : {};
 
     // 安全上、レビュー許容での実applyはブロックする。
     if (params.apply === true && params.allowNeedsReview === true) {
       return {
         block: true,
-        blockReason: `${TARGET_TOOL} blocked: apply=true with allowNeedsReview=true is not allowed.`,
+        blockReason: `${hookToolName} blocked: apply=true with allowNeedsReview=true is not allowed.`,
       };
     }
 
@@ -437,7 +441,7 @@ export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
     } catch (e: any) {
       return {
         block: true,
-        blockReason: `${TARGET_TOOL} preflight failed: ${String(e?.message || e)}`,
+        blockReason: `${hookToolName} preflight failed: ${String(e?.message || e)}`,
       };
     }
 
@@ -452,15 +456,15 @@ export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
       }
       return {
         block: true,
-        blockReason: `${TARGET_TOOL} preflight failed:\n- ${issues.join("\n- ")}`,
+        blockReason: `${hookToolName} preflight failed:\n- ${issues.join("\n- ")}`,
       };
     }
 
-    const issues = collectApplyPreflightIssues(cfg);
+    const issues = collectApplyPreflightIssues(cfg, { requireHintsYaml: hookToolName === TARGET_TOOL });
     if (issues.length === 0) return;
     return {
       block: true,
-      blockReason: `${TARGET_TOOL} preflight failed:\n- ${issues.join("\n- ")}`,
+      blockReason: `${hookToolName} preflight failed:\n- ${issues.join("\n- ")}`,
     };
   });
 

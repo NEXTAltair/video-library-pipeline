@@ -5,32 +5,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
 import json
 import os
-import re
 import sqlite3
 from pathlib import Path, PureWindowsPath
 
-FORB = re.compile(r'[<>:"/\\|?*]')
-CTRL = re.compile(r"[\x00-\x1f]")
-TRAIL = re.compile(r"[\. ]+$")
-WS = re.compile(r"[\s\u3000]+")
-DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
-
-
-def safe_dir_name(name: str, maxlen: int = 60) -> str:
-    s = (name or "").strip()
-    s = CTRL.sub("", s)
-    s = FORB.sub("＿", s)
-    s = WS.sub(" ", s)
-    s = TRAIL.sub("", s)
-    if not s:
-        s = "UNKNOWN"
-    if len(s) > maxlen:
-        h = hashlib.sha1(s.encode("utf-8")).hexdigest()[:8]
-        s = s[: maxlen - 9].rstrip() + "_" + h
-    return s
+from path_placement_rules import build_expected_dest_path, has_required_db_contract
 
 
 def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
@@ -51,15 +31,6 @@ def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
         return json.loads(row[0])
     except Exception:
         return None
-
-
-def has_required_db_contract(md: dict) -> bool:
-    for k in DB_CONTRACT_REQUIRED:
-        if k not in md:
-            return False
-    return isinstance(md.get("needs_review"), bool)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
@@ -133,15 +104,11 @@ def main() -> int:
                 if not air or not prog:
                     skipped_missing_fields += 1
                     continue
-                try:
-                    y, m, _ = air.split("-", 2)
-                except Exception:
+                filename = PureWindowsPath(src).name
+                dst, dst_err = build_expected_dest_path(args.dest_root, src, md)
+                if not dst or dst_err:
                     skipped_missing_fields += 1
                     continue
-
-                prog_dir = safe_dir_name(prog)
-                filename = PureWindowsPath(src).name
-                dst = args.dest_root.rstrip("\\") + f"\\{prog_dir}\\{y}\\{m}\\{filename}"
                 w.write(json.dumps({"path_id": pid, "src": src, "dst": dst, "program_title": prog, "air_date": air}, ensure_ascii=False) + "\n")
                 planned += 1
                 if args.limit and planned >= args.limit:

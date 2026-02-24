@@ -43,6 +43,9 @@ export function registerToolStatus(api: any, getCfg: (api: any) => any) {
         const latestBackfillQueue = latestJsonlFile(llmDir, "backfill_metadata_queue_");
         const latestDedupPlan = latestJsonlFile(moveDir, "dedup_plan_");
         const latestDedupApply = latestJsonlFile(moveDir, "dedup_apply_");
+        const latestRelocatePlan = latestJsonlFile(moveDir, "relocate_plan_");
+        const latestRelocateApply = latestJsonlFile(moveDir, "relocate_apply_");
+        const latestRelocateQueue = latestJsonlFile(llmDir, "relocate_metadata_queue_");
         const hintsYaml = path.join(getExtensionRootDir(), "rules", "program_aliases.yaml");
         const hintsPresent = fs.existsSync(hintsYaml);
         const out: AnyObj = {
@@ -62,6 +65,9 @@ export function registerToolStatus(api: any, getCfg: (api: any) => any) {
           out.latestBackfillQueue = latestBackfillQueue;
           out.latestDedupPlan = latestDedupPlan;
           out.latestDedupApply = latestDedupApply;
+          out.latestRelocatePlan = latestRelocatePlan;
+          out.latestRelocateApply = latestRelocateApply;
+          out.latestRelocateQueue = latestRelocateQueue;
         }
         return toToolResult(out);
       },

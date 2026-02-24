@@ -11,10 +11,13 @@ metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipe
 - Use plugin tools only. Do not call scripts directly.
 - Keep execution in the main agent turn. Do not use subagents.
 - Require explicit user confirmation before `apply=true`.
+- This skill is for the normal `sourceRoot` move stage only.
+  - If the user goal is arbitrary existing-root cleanup (for example a legacy/staging subtree under `destRoot`), switch to `video_pipeline_relocate_existing_files` flow instead of continuing here.
 - `video_pipeline_analyze_and_move_videos` is `sourceRoot`-scoped.
   - `remaining_files` is only the count under configured `sourceRoot` (usually `B:\\未視聴`).
-  - Do not treat `remaining_files == 0` as proof that `destRoot/by_program` residual files are gone.
-- If the user asks about `by_program` leftovers, report that this stage did not inspect that root unless an explicit scan was performed.
+  - Do not treat `remaining_files == 0` as proof that residual files under other roots are gone.
+- For arbitrary existing-root cleanup, use `video_pipeline_relocate_existing_files` (separate tool / separate review).
+- If the user asks about an existing-root cleanup target, report that this stage did not inspect that root unless an explicit scan was performed.
 
 ## Tool sequence
 

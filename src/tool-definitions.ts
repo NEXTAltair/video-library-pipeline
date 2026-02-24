@@ -63,6 +63,29 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
     },
   },
   {
+    name: "video_pipeline_relocate_existing_files",
+    description:
+      "Relocate existing files under specified roots to current placement rules using DB metadata (dry-run/apply).",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        apply: { type: "boolean", default: false },
+        roots: { type: "array", items: { type: "string" } },
+        rootsFilePath: { type: "string" },
+        extensions: { type: "array", items: { type: "string" }, default: [".mp4"] },
+        limit: { type: "integer", minimum: 1, maximum: 100000 },
+        allowNeedsReview: { type: "boolean", default: false },
+        queueMissingMetadata: { type: "boolean", default: false },
+        writeMetadataQueueOnDryRun: { type: "boolean", default: false },
+        scanErrorPolicy: { type: "string", enum: ["warn", "fail", "threshold"], default: "warn" },
+        scanErrorThreshold: { type: "integer", minimum: 1, maximum: 100000 },
+        scanRetryCount: { type: "integer", minimum: 0, maximum: 10, default: 1 },
+        onDstExists: { type: "string", enum: ["error", "rename_suffix"], default: "error" },
+      },
+    },
+  },
+  {
     name: "video_pipeline_status",
     description: "Read latest pipeline status summary from windowsOpsRoot/move.",
     parameters: {
@@ -160,6 +183,9 @@ export const TOOL_DEFINITIONS: ToolDef[] = [
             "backfill-queue",
             "dedup-plan",
             "dedup-apply",
+            "relocate-plan",
+            "relocate-apply",
+            "relocate-queue",
             "all",
           ],
           default: "all",

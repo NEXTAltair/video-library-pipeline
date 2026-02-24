@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import unicodedata
 from typing import Any
 
 WIN_PWSH_CANDIDATES = [
@@ -72,8 +71,11 @@ def run_pwsh_file(file_win_or_wsl: str, args: list[str], *, normalize_args: bool
     except FileNotFoundError:
         # Defensive: executable was found during probe but disappeared before invocation.
         raise RuntimeError(f"pwsh executable vanished before invocation: {exe}")
-    stdout = unicodedata.normalize("NFKC", cp.stdout or "")
-    stderr = unicodedata.normalize("NFKC", cp.stderr or "")
+    # Do not normalize PowerShell output text here.
+    # JSON/JSONL payloads can contain exact filesystem paths, and Unicode normalization
+    # (e.g. NFKC) can change code points and cause false `src_not_found` failures.
+    stdout = cp.stdout or ""
+    stderr = cp.stderr or ""
     if cp.returncode == 0:
         return stdout
     msg_parts = [p for p in [stdout.strip(), stderr.strip()] if p]

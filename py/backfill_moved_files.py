@@ -18,6 +18,25 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall, fetchone
+from pathscan_common import (
+    DEFAULT_EXTENSIONS as SHARED_DEFAULT_EXTENSIONS,
+    DEFAULT_SCAN_RETRY_COUNT as SHARED_DEFAULT_SCAN_RETRY_COUNT,
+    MAX_SUMMARY_WARNINGS as SHARED_MAX_SUMMARY_WARNINGS,
+    ScannedFile as SharedScannedFile,
+    as_bool as shared_as_bool,
+    canonicalize_windows_path as shared_canonicalize_windows_path,
+    ensure_exts as shared_ensure_exts,
+    now_iso as shared_now_iso,
+    parse_json_arg as shared_parse_json_arg,
+    parse_simple_yaml_lists as shared_parse_simple_yaml_lists,
+    safe_json as shared_safe_json,
+    scan_files as shared_scan_files,
+    split_win as shared_split_win,
+    ts_compact as shared_ts_compact,
+    wsl_to_windows_path as shared_wsl_to_windows_path,
+    windows_to_wsl_path as shared_windows_to_wsl_path,
+    normalize_win_for_id as shared_normalize_win_for_id,
+)
 from windows_pwsh_bridge import run_pwsh_jsonl
 
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
@@ -453,6 +472,26 @@ def metadata_row_needs_queue(data_json: str | None) -> bool:
     if md.get("air_date") is None:
         return True
     return False
+
+
+# Rebind to shared implementations (整理優先: 走査/パス変換の実装を pathscan_common に集約).
+ScannedFile = SharedScannedFile
+as_bool = shared_as_bool
+canonicalize_windows_path = shared_canonicalize_windows_path
+ensure_exts = shared_ensure_exts
+now_iso = shared_now_iso
+parse_json_arg = shared_parse_json_arg
+parse_simple_yaml_lists = shared_parse_simple_yaml_lists
+safe_json = shared_safe_json
+scan_files = shared_scan_files
+split_win = shared_split_win
+ts_compact = shared_ts_compact
+wsl_to_windows_path = shared_wsl_to_windows_path
+windows_to_wsl_path = shared_windows_to_wsl_path
+normalize_win_for_id = shared_normalize_win_for_id
+DEFAULT_EXTENSIONS = SHARED_DEFAULT_EXTENSIONS
+DEFAULT_SCAN_RETRY_COUNT = SHARED_DEFAULT_SCAN_RETRY_COUNT
+MAX_SUMMARY_WARNINGS = SHARED_MAX_SUMMARY_WARNINGS
 
 
 def main() -> int:
