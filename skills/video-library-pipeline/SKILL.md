@@ -7,13 +7,6 @@ metadata: {"openclaw":{"emoji":"🎬","requires":{"plugins":["video-library-pipe
 # video-library-pipeline
 
 This skill is the orchestrator for `video-library-pipeline`.
-
-Use one of the stage skills below for actual execution:
-
-- `extensions/video-library-pipeline/skills/normalize-review/SKILL.md`
-- `extensions/video-library-pipeline/skills/extract-review/SKILL.md`
-- `extensions/video-library-pipeline/skills/move-review/SKILL.md`
-
 ## Rule
 
 - Use plugin tools, not direct script calls.

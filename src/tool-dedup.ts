@@ -1,4 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { getExtensionRootDir, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
@@ -52,6 +55,42 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
             },
           });
         }
+
+        // --- czkawka ハッシュスキャン前段 ---
+        const czkawkaCfgRaw = api?.config?.plugins?.entries?.["czkawka-cli"]?.config ?? {};
+        const czkawkaCliPath: string = String(czkawkaCfgRaw.czkawkaCliPath || "czkawka_cli");
+        const tmpJsonPath = path.join(os.tmpdir(), `dedup_hash_${Date.now()}.json`);
+
+        let hashScanOk = false;
+        let hashScanExitCode: number | null = null;
+        let hashScanError: string | undefined;
+
+        try {
+          const czkawkaArgs = [
+            "dup",
+            "--search-method", "HASH",
+            "--hash-type", "BLAKE3",
+            "--directories", cfg.sourceRoot, cfg.destRoot,
+            "--thread-number", "4",
+            "--compact-file-to-save", tmpJsonPath,
+          ];
+          const cp = spawnSync(czkawkaCliPath, czkawkaArgs, {
+            env: process.env,
+            encoding: "utf-8",
+            timeout: 10 * 60 * 1000,
+          });
+          hashScanExitCode = cp.status ?? null;
+          if (cp.error) {
+            hashScanError = String(cp.error?.message || cp.error);
+          } else if (cp.status !== 0) {
+            hashScanError = `czkawka exited with code ${cp.status}. stderr: ${String(cp.stderr || "").slice(0, 500)}`;
+          } else {
+            hashScanOk = true;
+          }
+        } catch (e: any) {
+          hashScanError = String(e?.message || e);
+        }
+
         const args = [
           "run",
           "python",
@@ -68,6 +107,8 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           String(params.keepTerrestrialAndBscs !== false),
           "--bucket-rules-path",
           String(params.bucketRulesPath || defaultRulesPath),
+          "--hash-scan-path",
+          hashScanOk ? tmpJsonPath : "",
         ];
         if (params.apply === true) args.push("--apply");
         if (typeof params.maxGroups === "number" && Number.isFinite(params.maxGroups)) {
@@ -75,6 +116,14 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         }
 
         const r = runCmd("uv", args, resolved.cwd);
+
+        // 一時 JSON を削除
+        try {
+          if (fs.existsSync(tmpJsonPath)) fs.rmSync(tmpJsonPath);
+        } catch {
+          // ignore cleanup errors
+        }
+
         const parsed = parseJsonObject(r.stdout);
         const out: AnyObj = {
           ok: r.ok,
@@ -84,6 +133,12 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           exitCode: r.code,
           stdout: r.stdout,
           stderr: r.stderr,
+          hashScan: {
+            ok: hashScanOk,
+            exitCode: hashScanExitCode,
+            tmpJsonPath: hashScanOk ? tmpJsonPath : null,
+            error: hashScanError ?? null,
+          },
           scriptsProvision: {
             created: scriptsProvision.created,
             updated: scriptsProvision.updated,

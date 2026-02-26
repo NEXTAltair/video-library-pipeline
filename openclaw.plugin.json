@@ -3,6 +3,15 @@
   "name": "Video Library Pipeline",
   "description": "Config-driven video library pipeline for inventory, metadata extraction, move planning, apply, and audit logging.",
   "version": "0.1.1",
+  "requires": {
+    "plugins": ["czkawka-cli"]
+  },
+  "skills": [
+    "./skills/normalize-review",
+    "./skills/extract-review",
+    "./skills/move-review",
+    "./skills/normalize-review"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

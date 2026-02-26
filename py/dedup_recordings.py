@@ -244,6 +244,40 @@ def build_group_key(md: dict[str, Any]) -> tuple[str | None, str | None]:
     return None, "missing_episode_and_subtitle"
 
 
+def load_hash_groups(path: str) -> list[frozenset[str]]:
+    """czkawka compact JSON を読んでハッシュ一致グループのリストを返す。
+
+    compact JSON 形式: {"<size>": [[{path, size, ...}, ...], ...], ...}
+    各サブ配列がバイト一致グループ。path は Windows スタイル (B:\\...) の場合がある。
+    """
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    groups: list[frozenset[str]] = []
+    for size_key, size_val in data.items():
+        if not isinstance(size_val, list):
+            continue
+        for group in size_val:
+            if not isinstance(group, list) or len(group) < 2:
+                continue
+            paths: set[str] = set()
+            for entry in group:
+                if not isinstance(entry, dict):
+                    continue
+                p = str(entry.get("path") or "").strip()
+                if p:
+                    paths.add(canonicalize_windows_path(p))
+            if len(paths) >= 2:
+                groups.append(frozenset(paths))
+    return groups
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -254,6 +288,7 @@ def main() -> int:
     ap.add_argument("--allow-needs-review", default="false")
     ap.add_argument("--keep-terrestrial-and-bscs", default="true")
     ap.add_argument("--bucket-rules-path", default="")
+    ap.add_argument("--hash-scan-path", default="", help="czkawka compact JSON path for hash-exact dedup pre-pass")
     args = ap.parse_args()
 
     if not os.path.exists(args.db):
@@ -349,6 +384,12 @@ def main() -> int:
             )
             grouped.setdefault(group_key, []).append(c)
 
+        # path -> Candidate インデックス（ハッシュ方式での検索用）
+        path_to_candidate: dict[str, Candidate] = {}
+        for candidates_list in grouped.values():
+            for c in candidates_list:
+                path_to_candidate[c.path] = c
+
         group_keys = [k for k, arr in grouped.items() if len(arr) > 1]
         group_keys.sort()
         if max_groups > 0:
@@ -363,8 +404,65 @@ def main() -> int:
         files_kept_by_broadcast_policy = 0
         files_dropped = 0
 
+        # --- Phase 1: czkawka ハッシュ一致グループによる優先 dedup ---
+        hash_claimed_paths: set[str] = set()
+        hash_groups_total = 0
+        hash_groups_processed = 0
+
+        hash_groups = load_hash_groups(args.hash_scan_path)
+        for hg in hash_groups:
+            hash_groups_total += 1
+            candidates = [path_to_candidate[p] for p in hg if p in path_to_candidate]
+            if len(candidates) < 2:
+                continue
+            # keep/drop 判定（confidence・needs_review チェックをスキップ: バイト一致は確実）
+            keep = choose_keep(candidates)
+            hash_groups_processed += 1
+            groups_auto_processed += 1
+            files_kept += 1
+            rows_plan.append(
+                {
+                    "group_key": f"hash::{keep.path_id}",
+                    "path_id": keep.path_id,
+                    "path": keep.path,
+                    "bucket": keep.bucket,
+                    "decision": "keep",
+                    "reason": "hash_exact_best_ranked",
+                    "confidence": keep.confidence,
+                    "needs_review": keep.needs_review,
+                    "bucket_reason": keep.bucket_reason,
+                    "method": "hash_exact",
+                    "ts": now_iso(),
+                }
+            )
+            for x in candidates:
+                if x.path_id == keep.path_id:
+                    continue
+                files_dropped += 1
+                row = {
+                    "group_key": f"hash::{keep.path_id}",
+                    "path_id": x.path_id,
+                    "path": x.path,
+                    "bucket": x.bucket,
+                    "decision": "drop",
+                    "reason": "hash_exact_lower_rank",
+                    "confidence": x.confidence,
+                    "needs_review": x.needs_review,
+                    "bucket_reason": x.bucket_reason,
+                    "method": "hash_exact",
+                    "ts": now_iso(),
+                }
+                rows_plan.append(row)
+                rows_drop.append(row)
+            # ハッシュ方式で処理したすべてのパスを記録
+            for p in hg:
+                hash_claimed_paths.add(p)
+
+        # --- Phase 2: メタデータ方式（ハッシュ済みパスを除外） ---
         for gk in group_keys:
-            arr = grouped[gk]
+            arr = [x for x in grouped[gk] if x.path not in hash_claimed_paths]
+            if len(arr) < 2:
+                continue
             auto_eligible = [x for x in arr if (allow_needs_review or not x.needs_review) and x.confidence >= args.confidence_threshold]
             if len(auto_eligible) < 2:
                 groups_manual_review += 1
@@ -696,6 +794,9 @@ def main() -> int:
             "filesDropped": files_dropped,
             "filesMoved": files_moved,
             "moveBackend": move_backend,
+            "hashScanPath": args.hash_scan_path or None,
+            "hashGroupsTotal": hash_groups_total,
+            "hashGroupsProcessed": hash_groups_processed,
             "errors": errors,
         }
         print(safe_json(summary))

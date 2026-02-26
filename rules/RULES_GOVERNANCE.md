@@ -25,7 +25,6 @@ hints:
   - canonical_title: "ドキュメント72時間"
     aliases:
       - "ドキュメント72時"
-      - "手話で楽しむみんなのテレビ×ドキュメント72時間"
 user_learned:
   - canonical_title: "午後LIVE_ニュースーン_4時台"
     aliases:

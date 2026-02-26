@@ -1,6 +1,7 @@
 # video-library-pipeline dependencies
 
 This document defines plugin-only runtime dependencies and the minimum preflight for safe execution.
+For document roles and current source-of-truth mapping, start with `docs/CURRENT_SPEC_INDEX.md`.
 For stage order and ownership boundaries, see `FLOW_AND_OWNERSHIP.md`.
 
 ## Scope

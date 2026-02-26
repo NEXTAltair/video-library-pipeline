@@ -1,6 +1,7 @@
 # video-library-pipeline flow and ownership
 
 This document describes plugin-only execution order, ownership boundaries, and AI-primary extraction policy.
+For document roles and current source-of-truth mapping, start with `docs/CURRENT_SPEC_INDEX.md`.
 
 ## 1) layer responsibilities
 
