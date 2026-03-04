@@ -7,10 +7,11 @@
     "plugins": ["czkawka-cli"]
   },
   "skills": [
+    "./skills/video-library-pipeline",
     "./skills/normalize-review",
     "./skills/extract-review",
     "./skills/move-review",
-    "./skills/normalize-review"
+    "./skills/relocate-review"
   ],
   "configSchema": {
     "type": "object",
@@ -21,7 +22,9 @@
       "sourceRoot": { "type": "string", "minLength": 1 },
       "destRoot": { "type": "string", "minLength": 1 },
       "windowsOpsRoot": { "type": "string", "minLength": 1 },
-      "defaultMaxFilesPerRun": { "type": "integer", "minimum": 1, "maximum": 5000 }
+      "defaultMaxFilesPerRun": { "type": "integer", "minimum": 1, "maximum": 5000 },
+      "tsRoot": { "type": "string", "minLength": 1 },
+      "driveRoutesPath": { "type": "string", "minLength": 1 }
     }
   },
   "uiHints": {
@@ -29,6 +32,8 @@
     "sourceRoot": { "label": "Source root", "placeholder": "<source-root>" },
     "destRoot": { "label": "Destination root", "placeholder": "<dest-root>" },
     "windowsOpsRoot": { "label": "Windows ops root", "placeholder": "<windows-ops-root>" },
-    "defaultMaxFilesPerRun": { "label": "Default batch limit" }
+    "defaultMaxFilesPerRun": { "label": "Default batch limit" },
+    "tsRoot": { "label": "TS recording root", "placeholder": "J:\\TVFile" },
+    "driveRoutesPath": { "label": "Drive routes YAML", "placeholder": "rules/drive_routes.yaml" }
   }
 }

@@ -156,6 +156,19 @@ function analyzeToolEnvelope(toolEnvelope: AnyObj | null, eventError?: unknown):
   return Array.from(new Set(alerts));
 }
 
+const VIDEO_LIBRARY_PATH_PATTERNS = [
+  /\/mnt\/[a-z]\/VideoLibrary\b/i,
+  /\/mnt\/[a-z]\/未視聴\b/,
+  /[A-Z]:\\\\?VideoLibrary\b/i,
+  /[A-Z]:\\\\?未視聴\b/,
+];
+
+function detectVideoLibraryExec(event: AnyObj): boolean {
+  const command = getExecCommand(event);
+  if (!command) return false;
+  return VIDEO_LIBRARY_PATH_PATTERNS.some((re) => re.test(command));
+}
+
 function detectMistakenExecToolName(event: AnyObj): string | null {
   if (event?.toolName !== "exec") return null;
   const command = getExecCommand(event);
@@ -418,6 +431,20 @@ export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
         blockReason:
           `blocked mistaken exec call: '${mistakenToolName}' is a plugin tool name, not a shell command. ` +
           `Call the tool directly as ${mistakenToolName} with JSON params.`,
+      };
+    }
+
+    const blockedVideoLibraryExec = detectVideoLibraryExec(event);
+    if (blockedVideoLibraryExec) {
+      return {
+        block: true,
+        blockReason:
+          `blocked exec call: shell commands on VideoLibrary/未視聴 paths are not allowed. ` +
+          `These paths are on Windows drives and require plugin tools. ` +
+          `Use video_pipeline_relocate_existing_files (for reorganizing existing files), ` +
+          `video_pipeline_analyze_and_move_videos (for new recordings from sourceRoot), ` +
+          `or video_pipeline_backfill_moved_files (for DB registration). ` +
+          `Do NOT use exec/ls/find/mv on these paths.`,
       };
     }
 

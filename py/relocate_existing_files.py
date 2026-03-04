@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
-from path_placement_rules import build_expected_dest_path, has_required_db_contract
+from path_placement_rules import build_expected_dest_path, detect_subtitle_in_program_title, has_required_db_contract
 from pathscan_common import (
     DEFAULT_EXTENSIONS,
     DEFAULT_SCAN_RETRY_COUNT,
@@ -103,10 +103,25 @@ def by_program_group_name(src_path_win: str) -> str | None:
     return None
 
 
+def _folder_title_from_path(src_path_win: str) -> str | None:
+    """パスからプログラムタイトルらしきフォルダ名を抽出。
+    by_program\\ があればその直下、なければ VideoLibrary\\ 直下のフォルダ名を返す。"""
+    # 1. by_program\ パターン (既存)
+    group = by_program_group_name(src_path_win)
+    if group:
+        return group
+    # 2. 汎用: VideoLibrary\<title>\... パターン
+    parts = str(src_path_win or "").split("\\")
+    for i, seg in enumerate(parts[:-1]):
+        if seg.lower() == "videolibrary" and i + 1 < len(parts):
+            return parts[i + 1]
+    return None
+
+
 def looks_like_swallowed_program_title(src_path_win: str, md: dict[str, Any] | None) -> bool:
     if not isinstance(md, dict):
         return False
-    group = by_program_group_name(src_path_win)
+    group = _folder_title_from_path(src_path_win)
     title = md.get("program_title")
     if not group or not isinstance(title, str):
         return False
@@ -371,6 +386,26 @@ def main() -> int:
                         "metadata_source": md_source,
                         "program_title": md.get("program_title"),
                         "byProgramGroup": by_program_group_name(sf.win_path),
+                        "ts": ts_row,
+                    }
+                )
+                if queue_missing_metadata:
+                    queue_candidates.append(
+                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
+                    )
+                continue
+
+            if detect_subtitle_in_program_title(str(md.get("program_title", ""))):
+                suspicious_program_title_skipped += 1
+                rows_for_plan.append(
+                    {
+                        "path_id": path_id,
+                        "src": sf.win_path,
+                        "status": "skipped",
+                        "reason": "subtitle_separator_in_program_title",
+                        "metadata_source": md_source,
+                        "program_title": md.get("program_title"),
+                        "folderTitle": _folder_title_from_path(sf.win_path),
                         "ts": ts_row,
                     }
                 )

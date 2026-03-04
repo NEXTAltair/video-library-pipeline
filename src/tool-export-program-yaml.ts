@@ -120,7 +120,7 @@ function appendUnique(arr: string[], v: string) {
   if (!arr.includes(v)) arr.push(v);
 }
 
-function buildReviewDiagnostics(rows: AnyObj[]): {
+export function buildReviewDiagnostics(rows: AnyObj[]): {
   summary: ReviewSummary;
   candidates: ReviewCandidate[];
   truncated: boolean;
@@ -224,7 +224,7 @@ function buildReviewDiagnostics(rows: AnyObj[]): {
   };
 }
 
-function readJsonlRows(sourceJsonlPath: string): AnyObj[] {
+export function readJsonlRows(sourceJsonlPath: string): AnyObj[] {
   const rows: AnyObj[] = [];
   const text = fs.readFileSync(sourceJsonlPath, "utf-8");
   for (const line of text.split(/\r?\n/)) {
@@ -254,7 +254,7 @@ function chooseSourceJsonl(llmDir: string, sourceJsonlPath: string | undefined):
   return { ok: true, path: latest };
 }
 
-function buildYaml(
+export function buildYaml(
   sourceJsonlPath: string,
   rowsTotal: number,
   rowsUsed: number,
@@ -413,6 +413,11 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
             yamlHandlingRule:
               "Do not derive automated corrections from YAML text. YAML is for human visual review; agent should rely on reviewCandidates/reviewSummary and user-confirmed column-level edits.",
           },
+          nextStep:
+            "Present reviewCandidates (path + columns + reasons) to the user. " +
+            "Ask the user to edit the JSONL file if corrections are needed (program_title, air_date, needs_review). " +
+            "Once the user confirms edits are done (or says no edits are needed), call video_pipeline_apply_reviewed_metadata with sourceJsonlPath set to the extraction JSONL (.jsonl file, NOT the .yaml file). " +
+            "Do NOT ask for additional permission to call video_pipeline_apply_reviewed_metadata — proceed immediately after user confirmation.",
         });
       },
     },

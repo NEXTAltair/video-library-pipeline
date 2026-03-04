@@ -11,9 +11,12 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from edcb_program_parser import match_key_from_filename, datetime_key_from_filename
+
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
 UND = re.compile(r"_+")
+SUBTITLE_SEPARATORS = re.compile(r"[▽▼◇]")
 
 PAT_US = re.compile(r"(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})(?=\.[^.]+$)")
 PAT_SP = re.compile(r"(\d{4}) (\d{2}) (\d{2}) (\d{2}) (\d{2})(?=\.[^.]+$)")
@@ -155,7 +158,31 @@ def _normalize_alias_key(s: str) -> str:
     return norm_ws(s).lower()
 
 
+class HintSet:
+    """ヒントの2形式 (alias_map / regex_rules) をまとめて保持するコンテナ。
+
+    alias_map:   {正規化済み文字列キー → canonical_title}  — canonical_title/aliases 形式
+    regex_rules: [(compiled_pattern, canonical_title, field), ...]  — rules: 形式 (program_aliases.yaml)
+                 field: "base" = ファイル名base に適用, "program_title" = LLM出力のprogram_titleに適用
+    """
+
+    def __init__(
+        self,
+        alias_map: dict[str, str] | None = None,
+        regex_rules: list[tuple[re.Pattern, str, str]] | None = None,
+    ) -> None:
+        self.alias_map: dict[str, str] = alias_map or {}
+        self.regex_rules: list[tuple[re.Pattern, str, str]] = regex_rules or []
+
+    def __bool__(self) -> bool:
+        return bool(self.alias_map or self.regex_rules)
+
+    def __len__(self) -> int:
+        return len(self.alias_map) + len(self.regex_rules)
+
+
 def _iter_hint_items(obj: Any) -> list[dict[str, Any]]:
+    """canonical_title/aliases 形式のアイテムを返す。"""
     if isinstance(obj, list):
         return [x for x in obj if isinstance(x, dict)]
     if isinstance(obj, dict):
@@ -168,33 +195,72 @@ def _iter_hint_items(obj: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _load_hint_items_from_file(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
+def _iter_regex_rules(obj: Any) -> list[tuple[re.Pattern, str, str]]:
+    """rules: 形式 (program_aliases.yaml) から (compiled_pattern, canonical_title, field) を返す。
+    field: "base" = ファイル名baseに適用, "program_title" = LLM出力のprogram_titleに適用。
+    未指定時のデフォルトは "base"。
+    """
+    if not isinstance(obj, dict):
         return []
+    rules = obj.get("rules")
+    if not isinstance(rules, list):
+        return []
+    result: list[tuple[re.Pattern, str, str]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if not rule.get("enabled", True):
+            continue
+        match = rule.get("match")
+        set_ = rule.get("set")
+        if not isinstance(match, dict) or not isinstance(set_, dict):
+            continue
+        pattern = match.get("regex")
+        canonical = set_.get("program_title")
+        field = match.get("field", "base")
+        if field not in ("base", "program_title"):
+            field = "base"
+        if not isinstance(pattern, str) or not isinstance(canonical, str):
+            continue
+        if not pattern or not canonical:
+            continue
+        try:
+            result.append((re.compile(pattern), canonical.strip(), field))
+        except re.error as e:
+            print(f"W invalid regex in rules: pattern={pattern!r} error={e}")
+    return result
+
+
+def _load_hint_items_from_file(path: Path) -> tuple[list[dict[str, Any]], list[tuple[re.Pattern, str]]]:
+    """ファイルから (alias_items, regex_rules) を読み込む。"""
+    if not path.exists():
+        return [], []
     try:
+        obj: Any = None
         if path.suffix.lower() == ".json":
             with path.open("r", encoding="utf-8-sig") as f:
                 obj = json.load(f)
-            return _iter_hint_items(obj)
-        if path.suffix.lower() in {".yaml", ".yml"}:
+        elif path.suffix.lower() in {".yaml", ".yml"}:
             if yaml is None:
                 print(f"W hints yaml parser unavailable, skip={path}")
-                return []
+                return [], []
             with path.open("r", encoding="utf-8-sig") as f:
                 obj = yaml.safe_load(f)
-            return _iter_hint_items(obj)
+        if obj is None:
+            return [], []
+        return _iter_hint_items(obj), _iter_regex_rules(obj)
     except Exception as e:
         print(f"W failed to load hints: path={path} error={e}")
-    return []
+    return [], []
 
 
-def _load_hints(path: str | None) -> tuple[dict[str, str], bool]:
+def _load_hints(path: str | None) -> tuple[HintSet, bool]:
     if not path:
-        return {}, False
+        return HintSet(), False
     p = Path(path)
     if not p.exists():
         print(f"W hints file missing: {p}")
-        return {}, False
+        return HintSet(), False
 
     files: list[Path]
     if p.is_dir():
@@ -205,8 +271,10 @@ def _load_hints(path: str | None) -> tuple[dict[str, str], bool]:
         files = [p]
 
     alias_map: dict[str, str] = {}
+    regex_rules: list[tuple[re.Pattern, str]] = []
     for fp in files:
-        for item in _load_hint_items_from_file(fp):
+        alias_items, rules = _load_hint_items_from_file(fp)
+        for item in alias_items:
             canonical = item.get("canonical_title")
             if not isinstance(canonical, str):
                 continue
@@ -222,17 +290,34 @@ def _load_hints(path: str | None) -> tuple[dict[str, str], bool]:
                 key = _normalize_alias_key(alias)
                 if key:
                     alias_map[key] = canonical
-    return alias_map, len(alias_map) > 0
+        regex_rules.extend(rules)
+
+    hints = HintSet(alias_map=alias_map, regex_rules=regex_rules)
+    return hints, bool(hints)
 
 
-def _canonicalize_title_from_hints(base: str, parsed_program_title: str, alias_map: dict[str, str]) -> str:
+def _canonicalize_title_from_hints(base: str, parsed_program_title: str, alias_map: HintSet) -> str:
+    # 1. regex_rules を先に評価 (program_aliases.yaml の rules: 形式)
+    for pattern, canonical, field in alias_map.regex_rules:
+        target = parsed_program_title if field == "program_title" else base
+        m = pattern.search(target)
+        if m:
+            try:
+                return m.expand(canonical)  # \1 等のバックリファレンスを展開
+            except re.error:
+                return canonical
+
+    # 2. alias_map で完全一致 (exact key lookup)
     key = _normalize_alias_key(parsed_program_title)
-    if key in alias_map:
-        return alias_map[key]
+    if key in alias_map.alias_map:
+        return alias_map.alias_map[key]
+
+    # 3. alias_map でサブストリング一致 (substring fallback)
     base_norm = _normalize_alias_key(base)
-    for alias_key, canonical in alias_map.items():
+    for alias_key, canonical in alias_map.alias_map.items():
         if alias_key and alias_key in base_norm:
             return canonical
+
     return parsed_program_title
 
 
@@ -286,7 +371,7 @@ def parse_program_and_subtitle(base: str) -> tuple[str, str | None]:
     return prog[:80], parse_quoted_subtitle(b)
 
 
-def extract_title_ai_primary(name: str, base: str, alias_hints: dict[str, str]) -> dict:
+def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict:
     # Architecture A: AI-primary path with optional alias guardrails.
     prog, sub = parse_program_and_subtitle(base)
     canonical = _canonicalize_title_from_hints(base=base, parsed_program_title=prog, alias_map=alias_hints)
@@ -301,6 +386,62 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: dict[str, str]) 
         "air_date": extract_air_date(name),
         "title_extraction_path": source,
     }
+
+
+class _EpgCache:
+    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key."""
+
+    def __init__(self, con: sqlite3.Connection):
+        self._by_match_key: dict[str, dict] = {}
+        self._by_datetime_key: dict[str, dict] = {}
+        try:
+            rows = con.execute(
+                "SELECT data_json FROM path_metadata WHERE source='edcb_epg'",
+            ).fetchall()
+        except sqlite3.Error:
+            return
+        for row in rows:
+            try:
+                data = json.loads(row[0])
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            mk = data.get("match_key")
+            dk = data.get("datetime_key")
+            if mk:
+                self._by_match_key[mk] = data
+            if dk:
+                self._by_datetime_key[dk] = data
+
+    def lookup(self, match_key: str | None, datetime_key: str | None) -> dict | None:
+        """Find EPG data by match_key (exact), then fallback to datetime_key."""
+        if match_key and match_key in self._by_match_key:
+            return self._by_match_key[match_key]
+        if datetime_key and datetime_key in self._by_datetime_key:
+            return self._by_datetime_key[datetime_key]
+        return None
+
+
+def _enrich_with_epg(row: dict, epg: dict | None) -> None:
+    """Add EPG-sourced fields to a metadata row (in-place)."""
+    if not epg:
+        return
+    row["broadcaster"] = epg.get("broadcaster")
+    row["epg_genre"] = None
+    genres = epg.get("epg_genres")
+    if isinstance(genres, list) and genres:
+        first = genres[0]
+        if isinstance(first, dict):
+            cat = first.get("category", "")
+            sub = first.get("subcategory", "")
+            row["epg_genre"] = f"{cat} - {sub}" if sub else cat
+        elif isinstance(first, str):
+            row["epg_genre"] = first
+    row["epg_genres"] = genres
+    row["is_rebroadcast_flag"] = epg.get("is_rebroadcast_flag", False)
+    if epg.get("description"):
+        row["epg_description"] = epg["description"][:300]
 
 
 def enforce_db_contract(row: dict) -> None:
@@ -386,13 +527,17 @@ def main() -> int:
     ap.add_argument("--extraction-version", default="prompt_v1_20260208")
     ap.add_argument("--hints", default="")
     ap.add_argument("--ignore-human-reviewed", action="store_true")
+    ap.add_argument("--prepare-only", action="store_true",
+                    help="Write input JSONL batches and exit without running extraction or upserting to DB.")
     args = ap.parse_args()
 
     alias_hints, hints_loaded = _load_hints(args.hints)
     print(
         f"INFO title_architecture={ACTIVE_TITLE_ARCHITECTURE} "
         f"deferred={','.join(DEFERRED_TITLE_ARCHITECTURES)} "
-        f"hints_loaded={str(hints_loaded).lower()} hints_count={len(alias_hints)}"
+        f"hints_loaded={str(hints_loaded).lower()} "
+        f"alias_count={len(alias_hints.alias_map)} "
+        f"regex_rules_count={len(alias_hints.regex_rules)}"
     )
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -403,6 +548,7 @@ def main() -> int:
     generated_input_jsonl_paths: list[str] = []
     generated_output_jsonl_paths: list[str] = []
     db_con = sqlite3.connect(args.db)
+    epg_cache = _EpgCache(db_con)
 
     def flush():
         nonlocal batch, batch_idx, processed, preserved_human_reviewed
@@ -467,6 +613,11 @@ def main() -> int:
                 if "program_title_may_include_description" not in reasons:
                     reasons.append("program_title_may_include_description")
                 conf = min(conf, 0.65)
+            if SUBTITLE_SEPARATORS.search(prog):
+                needs = True
+                if "subtitle_separator_in_program_title" not in reasons:
+                    reasons.append("subtitle_separator_in_program_title")
+                conf = min(conf, 0.65)
 
             row = {
                 "path_id": rec["path_id"],
@@ -488,6 +639,13 @@ def main() -> int:
                 "title_extraction_path": title_res.get("title_extraction_path"),
                 "evidence": {"source_name": "filename", "raw": name},
             }
+
+            # EPG enrichment: look up ingested program.txt data
+            mk = match_key_from_filename(name)
+            dk = datetime_key_from_filename(name)
+            epg = epg_cache.lookup(mk, dk)
+            _enrich_with_epg(row, epg)
+
             enforce_db_contract(row)
             rows.append(row)
 
@@ -510,6 +668,47 @@ def main() -> int:
         processed += len(batch)
         batch = []
 
+    if args.prepare_only:
+        # --prepare-only: write input JSONL batches only, no extraction or upsert
+        def flush_prepare_only():
+            nonlocal batch, batch_idx
+            if not batch:
+                return
+            batch_idx += 1
+            batch_no = args.start_batch + batch_idx - 1
+            bpath = outdir / f"llm_filename_extract_input_{batch_no:04d}_{len(batch):04d}.jsonl"
+            write_jsonl(bpath, batch)
+            generated_input_jsonl_paths.append(str(bpath))
+            batch = []
+
+        for rec in load_queue(args.queue):
+            batch.append(rec)
+            if len(batch) >= args.batch_size:
+                flush_prepare_only()
+                if args.max_batches is not None and batch_idx >= args.max_batches:
+                    break
+        flush_prepare_only()
+        db_con.close()
+        print(f"OK prepare_only batches={batch_idx} total_records={sum(1 for _ in [])}")
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "tool": "run_metadata_batches_promptv1",
+                    "prepareOnly": True,
+                    "queuePath": str(args.queue),
+                    "outdir": str(outdir),
+                    "batchSize": int(args.batch_size),
+                    "maxBatches": int(args.max_batches) if args.max_batches is not None else None,
+                    "batches": int(batch_idx),
+                    "inputJsonlPaths": generated_input_jsonl_paths,
+                    "latestInputJsonlPath": generated_input_jsonl_paths[-1] if generated_input_jsonl_paths else None,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
     try:
         for rec in load_queue(args.queue):
             batch.append(rec)
@@ -527,6 +726,7 @@ def main() -> int:
             {
                 "ok": True,
                 "tool": "run_metadata_batches_promptv1",
+                "prepareOnly": False,
                 "queuePath": str(args.queue),
                 "outdir": str(outdir),
                 "batchSize": int(args.batch_size),

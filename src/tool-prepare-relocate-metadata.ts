@@ -227,6 +227,19 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
           out.followUpToolCalls = [];
           out.hasFollowUpToolCalls = false;
           out.reextractSkippedReason = "no_queue_candidates";
+          if (interpretation === "already_correct_no_relocation_needed") {
+            out.nextStep =
+              "All scanned files are already in correct locations (alreadyCorrect > 0, no metadata gaps). " +
+              "Task is complete. Stop here and report the result to the user.";
+          } else if (interpretation === "relocate_plan_ready_for_apply") {
+            out.nextStep =
+              "Relocate plan exists (plannedMoves > 0). " +
+              "Call video_pipeline_relocate_existing_files with {apply: true, planPath: <plan_path from relocate result>}.";
+          } else {
+            out.nextStep =
+              "No files require metadata preparation (queuePlanned=0). " +
+              "Task is complete. Stop here and report the result to the user.";
+          }
           return toToolResult(out);
         }
         if (!queuePath) {

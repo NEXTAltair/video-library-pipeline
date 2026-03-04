@@ -85,6 +85,7 @@ def main() -> int:
     ap.add_argument("--allow-needs-review", action="store_true")
     ap.add_argument("--keep-batches", type=int, default=5)
     ap.add_argument("--ttl-days", type=int, default=30)
+    ap.add_argument("--drive-routes", default="", help="Path to drive_routes.yaml for multi-dest routing")
     args = ap.parse_args()
 
     if not args.windows_ops_root:
@@ -181,6 +182,8 @@ def main() -> int:
         "--limit",
         str(args.max_files_per_run),
     ]
+    if args.drive_routes:
+        plan_cmd.extend(["--drive-routes", args.drive_routes])
     if args.allow_needs_review:
         plan_cmd.insert(-2, "--allow-needs-review")
     plan_out_raw = run_py_uv(here / "make_move_plan_from_inventory.py", plan_cmd, cwd=str(here))
