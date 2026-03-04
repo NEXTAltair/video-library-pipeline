@@ -25,9 +25,11 @@ from pathscan_common import (
     as_bool,
     canonicalize_windows_path,
     ensure_exts,
+    iter_jsonl,
     now_iso,
     parse_json_arg,
     parse_simple_yaml_lists,
+    path_id_for,
     safe_json,
     scan_files,
     split_win,
@@ -38,21 +40,7 @@ from pathscan_common import (
 )
 from windows_pwsh_bridge import run_pwsh_json
 
-PATH_NAMESPACE = uuid.UUID("f4f67a6f-90c6-4ee4-9c1a-2c0d25b3b0c4")
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
-
-
-def path_id_for(p: str) -> str:
-    return str(uuid.uuid5(PATH_NAMESPACE, "winpath:" + normalize_win_for_id(p)))
-
-
-def iter_jsonl(path: str):
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            yield json.loads(line)
 
 
 def latest_metadata_for_path(con, path_id: str) -> tuple[dict[str, Any] | None, str | None]:

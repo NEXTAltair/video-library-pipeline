@@ -7,29 +7,9 @@ import argparse
 import json
 import os
 import uuid
-from datetime import datetime, timezone
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def split_win(p: str) -> tuple[str, str, str]:
-    p = p.replace("/", "\\")
-    dir_ = "\\".join(p.split("\\")[:-1])
-    name = p.split("\\")[-1]
-    return p, dir_, name
-
-
-def iter_jsonl(path: str):
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            yield json.loads(line)
+from pathscan_common import iter_jsonl, now_iso, split_win
 
 
 def _json_obj(s: str | None) -> dict:
@@ -205,8 +185,8 @@ def main() -> int:
         dst = rec.get("dst")
         if not pid or not dst:
             continue
-        full, dir_, name = split_win(dst)
-        move_rows.append({"path_id": pid, "src": src, "dst": full, "dir": dir_, "name": name, "ts": rec.get("ts") or now_iso()})
+        _drive, dir_, name, _ext = split_win(dst)
+        move_rows.append({"path_id": pid, "src": src, "dst": dst, "dir": dir_, "name": name, "ts": rec.get("ts") or now_iso()})
 
     if args.dry_run:
         # Detect uniqueness collisions against current DB state so callers can preview merge work.

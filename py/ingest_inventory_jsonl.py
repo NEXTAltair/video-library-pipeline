@@ -17,39 +17,9 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import PureWindowsPath
-from typing import Iterable
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def normalize_win_path(p: str) -> str:
-    p = p.replace("/", "\\")
-    return p.lower()
-
-
-# Stable namespace for deterministic path_id generation across runs/environments.
-# This is intentionally fixed so the same normalized path always maps to the same UUIDv5.
-PATH_NAMESPACE = uuid.UUID("f4f67a6f-90c6-4ee4-9c1a-2c0d25b3b0c4")
-
-
-def path_id_for(p: str) -> str:
-    norm = normalize_win_path(p)
-    return str(uuid.uuid5(PATH_NAMESPACE, "winpath:" + norm))
-
-
-def split_path(p: str) -> tuple[str | None, str | None, str | None, str | None]:
-    wp = PureWindowsPath(p)
-    drive = wp.drive[:-1] if wp.drive.endswith(":") else (wp.drive or None)
-    name = wp.name or None
-    ext = wp.suffix or None
-    parent = str(wp.parent) if str(wp.parent) not in (".", "") else None
-    return drive, parent, name, ext
+from pathscan_common import iter_jsonl, now_iso, path_id_for, split_win
 
 
 @dataclass
@@ -57,15 +27,6 @@ class Counters:
     lines: int = 0
     paths_upserted: int = 0
     obs_upserted: int = 0
-
-
-def iter_jsonl(path: str) -> Iterable[dict]:
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            yield json.loads(line)
 
 
 def main() -> int:
@@ -106,7 +67,7 @@ def main() -> int:
             if not p:
                 continue
             pid = path_id_for(p)
-            drive, parent, name, ext = split_path(p)
+            drive, parent, name, ext = split_win(p)
             ts = now_iso()
 
             con.execute(

@@ -18,31 +18,15 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
 
 sys.path.insert(0, str(__file__).rsplit("/", 1)[0])  # ensure local imports work
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
+from pathscan_common import iter_jsonl, now_iso
 
 SUBTITLE_SEPARATORS = re.compile(r"[▽▼◇]")
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 AIR_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def iter_jsonl(path: str):
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError as e:
-                raise SystemExit(f"JSONL parse error: {e}  line={line[:120]!r}")
 
 
 def _append_reason(rec: dict, reason: str) -> None:

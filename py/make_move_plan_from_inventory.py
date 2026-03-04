@@ -10,6 +10,7 @@ import os
 import sqlite3
 from pathlib import Path, PureWindowsPath
 
+from mediaops_schema import connect_db
 from path_placement_rules import (
     build_expected_dest_path,
     build_routed_dest_path,
@@ -64,7 +65,7 @@ def main() -> int:
     out = Path(args.out) if args.out else Path(args.inventory).resolve().parent / f"move_plan_from_inventory_{run_id}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    con = sqlite3.connect(args.db)
+    con = connect_db(args.db)
     cur = con.cursor()
     total = 0
     planned = 0

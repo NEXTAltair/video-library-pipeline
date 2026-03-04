@@ -18,8 +18,7 @@ import argparse
 import json
 import os
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
 from edcb_program_parser import (
@@ -29,41 +28,7 @@ from edcb_program_parser import (
     parse_program_txt,
 )
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def normalize_win_path(p: str) -> str:
-    p = p.replace("/", "\\")
-    return p.lower()
-
-
-PATH_NAMESPACE = uuid.UUID("f4f67a6f-90c6-4ee4-9c1a-2c0d25b3b0c4")
-
-
-def path_id_for(p: str) -> str:
-    norm = normalize_win_path(p)
-    return str(uuid.uuid5(PATH_NAMESPACE, "winpath:" + norm))
-
-
-def wsl_to_windows_path(s: str) -> str:
-    p = str(s or "")
-    if p.startswith("/mnt/") and len(p) > 6 and p[6] == "/":
-        drive = p[5].upper()
-        rest = p.split(f"/mnt/{p[5]}/", 1)[1].replace("/", "\\")
-        return f"{drive}:\\{rest}"
-    return p
-
-
-def split_path(p: str) -> tuple[str | None, str | None, str | None, str | None]:
-    wp = PureWindowsPath(p)
-    drive = wp.drive[:-1] if wp.drive.endswith(":") else (wp.drive or None)
-    name = wp.name or None
-    ext = wp.suffix or None
-    parent = str(wp.parent) if str(wp.parent) not in (".", "") else None
-    return drive, parent, name, ext
+from pathscan_common import now_iso, path_id_for, split_win, wsl_to_windows_path
 
 
 def find_program_txt_files(ts_root: Path) -> list[Path]:
@@ -209,7 +174,7 @@ def main() -> int:
             pid = row["pid"]
             ts_win_path = row["ts_win_path"]
             data = row["data"]
-            drive, dir_, name, ext = split_path(ts_win_path)
+            drive, dir_, name, ext = split_win(ts_win_path)
             ts_now = now_iso()
 
             # Ensure path exists in paths table
