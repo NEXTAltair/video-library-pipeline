@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getExtensionRootDir, runCmd } from "./runtime";
+import { getExtensionRootDir, parseJsonObject, runCmd } from "./runtime";
 import type { AnyObj } from "./types";
 import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
@@ -35,17 +35,6 @@ const calibreSkillGateBySession = new Map<string, CalibreSkillGateState>();
 
 function isObj(v: unknown): v is AnyObj {
   return !!v && typeof v === "object" && !Array.isArray(v);
-}
-
-function parseJsonObject(input: string): AnyObj | null {
-  const s = String(input || "").trim();
-  if (!s) return null;
-  try {
-    const parsed = JSON.parse(s);
-    return isObj(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 function parseSummaryFromStdout(stdout: unknown): AnyObj | null {

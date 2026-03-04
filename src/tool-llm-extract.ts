@@ -1,23 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { normalizeKey, resolvePythonScript, runCmd, toToolResult, tsCompact } from "./runtime";
 import { buildReviewDiagnostics, buildYaml, readJsonlRows } from "./tool-export-program-yaml";
 import type { AnyObj } from "./types";
-
-function tsCompact(d = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-
-function normalizeKey(title: string): string {
-  return String(title || "")
-    .trim()
-    .replace(/\s+/g, "_")
-    .replace(/[<>:"/\\|?*]+/g, "")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toLowerCase();
-}
 
 function generateReviewYaml(sourceJsonlPath: string, outDir: string, rows: AnyObj[]): { yamlPath: string | null; error?: string } {
   try {

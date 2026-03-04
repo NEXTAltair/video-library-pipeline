@@ -1,21 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getExtensionRootDir, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
-
-function parseJsonObject(input: unknown): AnyObj | null {
-  if (typeof input !== "string") return null;
-  const s = input.trim();
-  if (!s) return null;
-  try {
-    const parsed = JSON.parse(s);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as AnyObj;
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
   api.registerTool(

@@ -892,4 +892,4 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 **対応:** `pathscan_common.py` に `PATH_NAMESPACE`, `path_id_for`, `iter_jsonl` を追加し、全11スクリプトのローカル定義を削除して `from pathscan_common import ...` に統一。`backfill_moved_files.py` の中間rebindingパターンも完全に解消。`make_move_plan_from_inventory.py` は `sqlite3.connect` 直書きを `mediaops_schema.connect_db` に統一。
 
-**残課題:** TypeScript層 (`src/tool-*.ts`) にも類似の重複パターンがあるが未着手。
+**完了:** TypeScript層も整理済み。`runtime.ts` に `parseJsonObject`, `tsCompact`, `chooseSourceJsonl`, `normalizeKey`, `lowerCompact`, `byProgramGroupFromPath`, `looksSwallowedProgramTitle` を集約し、全ツールファイルのローカル定義を削除。

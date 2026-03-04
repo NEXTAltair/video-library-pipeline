@@ -1,23 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { latestJsonlFile, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { byProgramGroupFromPath, chooseSourceJsonl, looksSwallowedProgramTitle, lowerCompact, resolvePythonScript, runCmd, toToolResult, tsCompact } from "./runtime";
 import type { AnyObj } from "./types";
-
-function tsCompact(d = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-
-function chooseSourceJsonl(llmDir: string, sourceJsonlPath: string | undefined): { ok: boolean; path?: string; error?: string } {
-  const p = String(sourceJsonlPath || "").trim();
-  if (p) {
-    if (!fs.existsSync(p)) return { ok: false, error: `sourceJsonlPath does not exist: ${p}` };
-    return { ok: true, path: p };
-  }
-  const latest = latestJsonlFile(llmDir, "llm_filename_extract_output_");
-  if (!latest) return { ok: false, error: `no extraction output jsonl found in: ${llmDir}` };
-  return { ok: true, path: latest };
-}
 
 function isRawExtractOutputJsonl(p: string): boolean {
   const base = path.basename(p);
@@ -47,30 +31,11 @@ function stableStringify(v: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 
-function lowerCompact(s: string): string {
-  return String(s || "")
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[<>:"/\\|?*]+/g, "");
-}
-
-function byProgramGroupFromPath(p: string | undefined): string | undefined {
-  const parts = String(p || "").split("\\");
-  const idx = parts.findIndex((seg) => seg.toLowerCase() === "by_program");
-  if (idx >= 0 && idx + 1 < parts.length) return parts[idx + 1];
-  return undefined;
-}
-
 function looksSwallowedProgramTitleInRow(row: AnyObj): boolean {
   const programTitle = typeof row.program_title === "string" ? row.program_title : "";
   const folderTitle = byProgramGroupFromPath(typeof row.path === "string" ? row.path : undefined);
   if (!folderTitle) return false;
-  const pNorm = lowerCompact(programTitle);
-  const fNorm = lowerCompact(folderTitle);
-  if (!pNorm || !fNorm || pNorm === fNorm) return false;
-  if (!pNorm.startsWith(fNorm)) return false;
-  return pNorm.length >= fNorm.length + 8;
+  return looksSwallowedProgramTitle(programTitle, folderTitle);
 }
 
 function readComparableRows(sourcePath: string): { rows: AnyObj[]; parseErrors: number } {
