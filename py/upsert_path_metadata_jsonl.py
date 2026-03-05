@@ -45,7 +45,6 @@ def main() -> int:
     ap.add_argument("--db", default="")
     ap.add_argument("--in", dest="inp", required=True)
     ap.add_argument("--source", default="llm")
-    ap.add_argument("--drive-routes", default="")
     ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -95,7 +94,7 @@ def main() -> int:
                     existing = {}
 
             merged = merge_data(existing, rec, args.source)
-            merged["genre"] = resolve_genre(merged, args.drive_routes or None)
+            merged["genre"] = resolve_genre(merged)
             merged["franchise"] = resolve_franchise(merged, args.franchise_rules or None)
             data_json = json.dumps(merged, ensure_ascii=False)
             to_upsert.append((path_id, args.source, data_json, updated_at))
@@ -116,6 +115,7 @@ def main() -> int:
                   source=excluded.source,
                   data_json=excluded.data_json,
                   updated_at=excluded.updated_at
+                WHERE json_extract(path_metadata.data_json, '$.human_reviewed') IS NOT 1
                 """,
                 to_upsert,
             )

@@ -529,7 +529,6 @@ def main() -> int:
     ap.add_argument("--model", default="openai-codex/gpt-5.2")
     ap.add_argument("--extraction-version", default="prompt_v1_20260208")
     ap.add_argument("--hints", default="")
-    ap.add_argument("--drive-routes", default="")
     ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--ignore-human-reviewed", action="store_true")
     ap.add_argument("--prepare-only", action="store_true",
@@ -670,8 +669,6 @@ def main() -> int:
         import sys
 
         sys.argv = ["upsert", "--db", args.db, "--in", str(epath), "--source", "llm"]
-        if args.drive_routes:
-            sys.argv += ["--drive-routes", args.drive_routes]
         if args.franchise_rules:
             sys.argv += ["--franchise-rules", args.franchise_rules]
         if _upsert_main() != 0:

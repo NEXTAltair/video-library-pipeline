@@ -67,7 +67,6 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
         const llmDir = path.join(hostRoot, "llm");
         const defaultRootsFile = path.join(getExtensionRootDir(), "rules", "relocate_roots.yaml");
         const hintsPath = path.join(getExtensionRootDir(), "rules", "program_aliases.yaml");
-        const driveRoutesPath = path.join(getExtensionRootDir(), "rules", "drive_routes.yaml");
         const franchiseRulesPath = path.join(getExtensionRootDir(), "rules", "franchise_rules.yaml");
         const scriptsProvision = ensureWindowsScripts(cfg);
         if (!scriptsProvision.ok) {
@@ -268,8 +267,6 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
           hintsPath,
           "--batch-size",
           String(params.batchSize ?? 50),
-          "--drive-routes",
-          driveRoutesPath,
           "--franchise-rules",
           franchiseRulesPath,
         ];

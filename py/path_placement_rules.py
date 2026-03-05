@@ -112,6 +112,13 @@ class DriveRoutes:
 
         Returns (route, reason). route is None if no match → use default.
         """
+        # 0. Pre-resolved genre fast-path
+        pre = md.get("genre")
+        if pre:
+            for route in self.routes:
+                if route.genre == pre:
+                    return route, f"pre_resolved_genre:{pre}"
+
         # 1. Try EPG genre match
         epg_genres = md.get("epg_genres") or []
         epg_genre_str = md.get("epg_genre") or ""

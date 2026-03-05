@@ -30,7 +30,7 @@ def main() -> int:
             data = {}
         data.setdefault('path_id', r['path_id'])
         data.setdefault('path', r['path'])
-        genre = resolve_genre(data, args.drive_routes or None)
+        genre = resolve_genre(data)
         franchise = resolve_franchise(data, args.franchise_rules or None)
         if genre is not None:
             data['genre'] = genre

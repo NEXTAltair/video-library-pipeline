@@ -29,6 +29,7 @@ from edcb_program_parser import (
 )
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from pathscan_common import now_iso, path_id_for, split_win, wsl_to_windows_path
+from source_history import make_entry
 
 
 def find_program_txt_files(ts_root: Path) -> list[Path]:
@@ -137,6 +138,7 @@ def main() -> int:
                 "program_txt_path": str(ptxt),
                 "ingested_at": now_iso(),
             }
+            data["source_history"] = [make_entry("edcb_epg", list(data.keys()))]
 
             rows_to_insert.append({
                 "pid": pid,

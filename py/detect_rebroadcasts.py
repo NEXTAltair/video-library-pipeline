@@ -13,14 +13,10 @@ import argparse
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from pathscan_common import now_iso
 
 
 def safe_json(v: Any) -> str:
@@ -69,7 +65,7 @@ def main() -> int:
             SELECT pm.path_id, pm.data_json, p.path
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
-            WHERE pm.source='llm'
+            WHERE pm.source != 'edcb_epg'
             """,
             (),
         )

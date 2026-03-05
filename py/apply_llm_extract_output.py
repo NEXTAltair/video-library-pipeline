@@ -21,8 +21,11 @@ import sys
 
 sys.path.insert(0, str(__file__).rsplit("/", 1)[0])  # ensure local imports work
 
+from genre_resolver import resolve_genre
+from franchise_resolver import resolve_franchise
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from pathscan_common import iter_jsonl, now_iso
+from source_history import make_entry, merge_data
 
 SUBTITLE_SEPARATORS = re.compile(r"[▽▼◇]")
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
@@ -136,6 +139,21 @@ def main() -> int:
         if not path_id:
             skipped += 1
             continue
+
+        # Genre / franchise resolution
+        if not rec.get("genre"):
+            rec["genre"] = resolve_genre(rec)
+        if not rec.get("franchise"):
+            rec["franchise"] = resolve_franchise(rec)
+
+        # Merge with existing data in DB
+        existing_row = fetchone(con, "SELECT data_json FROM path_metadata WHERE path_id = ?", (path_id,))
+        if existing_row and existing_row["data_json"]:
+            existing_data = json.loads(existing_row["data_json"])
+            rec["source_history"] = [make_entry(args.source, [k for k, v in rec.items() if v is not None and k != "source_history"])]
+            rec = merge_data(existing_data, rec, args.source)
+        else:
+            rec["source_history"] = [make_entry(args.source, [k for k, v in rec.items() if v is not None and k != "source_history"])]
 
         data_json = json.dumps(rec, ensure_ascii=False)
         to_upsert.append((path_id, args.source, data_json, updated_at))

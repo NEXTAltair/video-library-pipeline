@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from pathscan_common import now_iso
 
 
 def make_entry(source: str, fields: list[str], at: str | None = None) -> dict[str, Any]:

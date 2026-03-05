@@ -24,7 +24,7 @@ def _pick_from_text(s: str) -> str | None:
     return None
 
 
-def resolve_genre(md: dict[str, Any], routes_path: str | None = None) -> str | None:
+def resolve_genre(md: dict[str, Any]) -> str | None:
     if md.get("genre"):
         return str(md.get("genre"))
     epg = md.get("epg_genres")
