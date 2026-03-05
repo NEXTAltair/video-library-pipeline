@@ -174,7 +174,6 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         const hostRoot = String(cfg.windowsOpsRoot || "/tmp").replace(/\/+$/, "");
         const llmDir = path.join(hostRoot, "llm");
         const resolved = resolvePythonScript("upsert_path_metadata_jsonl.py");
-        const driveRoutesPath = path.join(getExtensionRootDir(), "rules", "drive_routes.yaml");
         const franchiseRulesPath = path.join(getExtensionRootDir(), "rules", "franchise_rules.yaml");
         const source = chooseSourceJsonl(llmDir, typeof params.sourceJsonlPath === "string" ? params.sourceJsonlPath : undefined);
         if (!source.ok || !source.path) {
@@ -302,8 +301,6 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           outputStampedJsonlPath,
           "--source",
           String(params.source || "rule_based"),
-          "--drive-routes",
-          driveRoutesPath,
           "--franchise-rules",
           franchiseRulesPath,
         ];
