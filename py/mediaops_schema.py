@@ -123,6 +123,29 @@ DDL_STATEMENTS = [
       FOREIGN KEY (path_id) REFERENCES paths(path_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS broadcast_groups (
+      group_id TEXT PRIMARY KEY,
+      program_title TEXT NOT NULL,
+      episode_key TEXT,
+      created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS broadcast_group_members (
+      group_id TEXT NOT NULL,
+      path_id TEXT NOT NULL,
+      broadcast_type TEXT NOT NULL DEFAULT 'unknown',
+      air_date TEXT,
+      broadcaster TEXT,
+      added_at TEXT NOT NULL,
+      CONSTRAINT uq_bgm UNIQUE (group_id, path_id),
+      FOREIGN KEY (group_id) REFERENCES broadcast_groups(group_id),
+      FOREIGN KEY (path_id) REFERENCES paths(path_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_bgm_group ON broadcast_group_members(group_id)",
+    "CREATE INDEX IF NOT EXISTS idx_bgm_path ON broadcast_group_members(path_id)",
 ]
 
 

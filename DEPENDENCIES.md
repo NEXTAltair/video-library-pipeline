@@ -1,124 +1,141 @@
-# video-library-pipeline dependencies
+# video-library-pipeline 依存関係
 
-This document defines plugin-only runtime dependencies and the minimum preflight for safe execution.
-For document roles and current source-of-truth mapping, start with `docs/CURRENT_SPEC_INDEX.md`.
-For stage order and ownership boundaries, see `FLOW_AND_OWNERSHIP.md`.
+このドキュメントはプラグインのランタイム依存関係と安全な実行に必要な最小プリフライト条件を定義する。
+ドキュメント体系と情報源マッピングは `docs/CURRENT_SPEC_INDEX.md` から参照すること。
+ステージ順序と責務境界については `FLOW_AND_OWNERSHIP.md` を参照すること。
 
-## Scope
+## スコープ
 
-- Plugin package: `extensions/video-library-pipeline`
-- Tool entrypoints: `src/tool-run.ts`, `src/tool-backfill.ts`, `src/tool-relocate.ts`, `src/tool-dedup.ts`, `src/tool-status.ts`, `src/tool-validate.ts`, `src/tool-reextract.ts`
-- Python orchestration: `py/unwatched_pipeline_runner.py`, `py/backfill_moved_files.py`, `py/relocate_existing_files.py`, `py/dedup_recordings.py`, `py/run_metadata_batches_promptv1.py`
-- Windows operations: scripts under `<windowsOpsRoot>/scripts`
+- プラグインパッケージ: `extensions/video-library-pipeline`
+- ツールエントリポイント: `src/tool-run.ts`, `src/tool-backfill.ts`, `src/tool-relocate.ts`, `src/tool-dedup.ts`, `src/tool-status.ts`, `src/tool-validate.ts`, `src/tool-reextract.ts`, `src/tool-ingest-epg.ts`, `src/tool-detect-rebroadcasts.ts`
+- Python オーケストレーション: `py/unwatched_pipeline_runner.py`, `py/backfill_moved_files.py`, `py/relocate_existing_files.py`, `py/dedup_recordings.py`, `py/run_metadata_batches_promptv1.py`, `py/ingest_program_txt.py`, `py/detect_rebroadcasts.py`
+- Windows 操作: `<windowsOpsRoot>/scripts` 配下のスクリプト
 
-## Plugin config contract
+## プラグイン設定コントラクト
 
-Required config keys:
+必須設定キー:
 
 - `windowsOpsRoot`
 - `sourceRoot`
 - `destRoot`
 
-Optional config keys:
+任意設定キー:
 
-- `db` (default: `<windowsOpsRoot>/db/mediaops.sqlite`)
-- `defaultMaxFilesPerRun` (default: `200`)
+- `db`（デフォルト: `<windowsOpsRoot>/db/mediaops.sqlite`）
+- `defaultMaxFilesPerRun`（デフォルト: `200`）
+- `tsRoot`（デフォルト: なし）— EPG取り込みで使用するTS録画ディレクトリ（例: `J:\TVFile`）
+- `driveRoutesPath`（デフォルト: プラグインルートの `rules/drive_routes.yaml`）— ジャンル別ルーティング設定
 
-Expected directories under `windowsOpsRoot`:
+`windowsOpsRoot` 配下の必要ディレクトリ:
 
 - `db`
 - `move`
 - `llm`
 - `scripts`
 
-Notes:
+補足:
 
-- Plugin hints file `rules/program_aliases.yaml` is optional. If missing, extraction continues in AI-only mode.
-- Backfill roots file `rules/backfill_roots.yaml` is optional input for backfill tool; if unresolved, `destRoot` is used.
-- Relocate roots file `rules/relocate_roots.yaml` is optional input for relocate tool; for safety, relocate still requires explicit `roots` or `rootsFilePath`.
-- Broadcast bucket rules `rules/broadcast_buckets.yaml` are used by dedup tool (terrestrial / bs_cs / unknown).
-- `db/move/llm` are created by the runner when missing.
-- `scripts` is required for runtime, but missing directory/files are auto-provisioned from plugin templates on `video_pipeline_validate` and `video_pipeline_analyze_and_move_videos`.
-- Plugin-managed scripts under `<windowsOpsRoot>/scripts` are auto-synced from templates on validate/run/backfill/relocate/dedup (missing or outdated files are updated).
-- User custom scripts (for example `fix_prefix_timestamp_names.ps1`, `normalize_unwatched_names.ps1`) are not plugin-managed and are not overwritten.
+- ヒントファイル `rules/program_aliases.yaml` は任意。欠損時は AI のみのモードで抽出を継続する
+- バックフィルルートファイル `rules/backfill_roots.yaml` は backfill ツールへのオプション入力。未設定時は `destRoot` を使用
+- 再配置ルートファイル `rules/relocate_roots.yaml` は relocate ツールへのオプション入力。安全のため、relocate には依然として明示的な `roots` または `rootsFilePath` が必要
+- 放送バケットルール `rules/broadcast_buckets.yaml` は dedup ツールが使用（terrestrial / bs_cs / unknown 分類）
+- ドライブルーティングルール `rules/drive_routes.yaml` は移動計画時にジャンル別デスト振り分けで使用
+- `db/move/llm` はランナーが欠損時に自動作成する
+- `scripts` は実行時に必要だが、ディレクトリ/ファイルの欠損は `video_pipeline_validate` および `video_pipeline_analyze_and_move_videos` 実行時にプラグインテンプレートから自動プロビジョニングされる
+- `<windowsOpsRoot>/scripts` 配下のプラグイン管理スクリプトは validate/run/backfill/relocate/dedup 実行時にテンプレートから自動同期される（欠損または古いファイルは更新される）
+- ユーザーカスタムスクリプト（例: `fix_prefix_timestamp_names.ps1`, `normalize_unwatched_names.ps1`）はプラグイン管理外であり上書きされない
 
-## Required binaries
+## 必須バイナリ
 
 - `uv`
-- `python` (invoked as `uv run python ...`)
-- `pwsh` or `pwsh.exe` (PowerShell 7)
-- Windows long path support enabled (`LongPathsEnabled=1`)
+- `python`（`uv run python ...` として起動）
+- `pwsh` または `pwsh.exe`（PowerShell 7）
+- Windows 長パスサポート有効（`LongPathsEnabled=1`）
 
-## Python runtime dependencies
+## Python ランタイム依存関係
 
-- `pyyaml` is optional and only needed when loading YAML hints
-- Python standard library modules (`sqlite3`, `argparse`, `json`, etc.)
-- DB access is implemented with standard `sqlite3` only (no external ORM dependency)
+- `pyyaml` — `drive_routes.yaml` ロードに必要（`py/path_placement_rules.py`）。標準ライブラリ外では唯一の必須依存
+- Python 標準ライブラリ（`sqlite3`, `argparse`, `json`, `unicodedata` 等）
+- DB アクセスは標準 `sqlite3` のみ（外部 ORM 依存なし）
 
-## Required Windows-side scripts
+## 必須 Windows スクリプト
 
-Under `<windowsOpsRoot>/scripts`:
+`<windowsOpsRoot>/scripts` 配下:
 
 - `normalize_filenames.ps1`
 - `unwatched_inventory.ps1`
 - `apply_move_plan.ps1`
 - `list_remaining_unwatched.ps1`
 
-Plugin-internal helper scripts (auto-managed):
+プラグイン内部ヘルパースクリプト（自動管理）:
 
 - `_long_path_utils.ps1`
 - `enumerate_files_jsonl.ps1`
 
-Template source of truth:
+テンプレートの情報源:
 
-- Preferred (user override): `<windowsOpsRoot>/templates/windows-scripts/*.ps1`
-- Fallback (plugin bundled): `<plugin-root>/assets/windows-scripts/*.ps1`
+- 優先（ユーザー上書き可能）: `<windowsOpsRoot>/templates/windows-scripts/*.ps1`
+- フォールバック（プラグイン同梱）: `<plugin-root>/assets/windows-scripts/*.ps1`
 
-## Minimum preflight
+## 最小プリフライト
 
-1) config sanity
+**1) 設定確認**
 
-- `openclaw gateway call video-library-pipeline.status --json`
-- `openclaw video-pipeline-status`
+```
+openclaw gateway call video-library-pipeline.status --json
+openclaw video-pipeline-status
+```
 
-2) binary sanity
+**2) バイナリ確認**
 
-- `uv --version`
-- `pwsh -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"`
-- `reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem" /v LongPathsEnabled` (expect `0x1`)
+```
+uv --version
+pwsh -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v LongPathsEnabled
+# → 0x1 であること
+```
 
-Long path notes:
+**3) dry-run（1ファイル）**
 
-- This plugin preserves original filenames and does not shorten paths.
-- Long path handling is implemented in plugin-managed PowerShell scripts and Windows-side fallback enumeration.
-- DB/JSONL/logs keep normal Windows paths (`C:\\...`), not `\\?\\` paths.
+```
+uv run python "<plugin-dir>/py/unwatched_pipeline_runner.py" \
+  --windows-ops-root "<windows-ops-root>" \
+  --source-root "<source-root>" \
+  --dest-root "<dest-root>" \
+  --max-files-per-run 1
+```
 
-3) dry-run (1 file)
+**4) apply（1ファイル）**
 
-- `uv run python "<plugin-dir>/py/unwatched_pipeline_runner.py" --windows-ops-root "<windows-ops-root>" --source-root "<source-root>" --dest-root "<dest-root>" --max-files-per-run 1`
+```
+uv run python "<plugin-dir>/py/unwatched_pipeline_runner.py" \
+  --windows-ops-root "<windows-ops-root>" \
+  --source-root "<source-root>" \
+  --dest-root "<dest-root>" \
+  --max-files-per-run 1 --apply
+```
 
-4) apply (1 file)
+長パスに関する補足:
 
-- `uv run python "<plugin-dir>/py/unwatched_pipeline_runner.py" --windows-ops-root "<windows-ops-root>" --source-root "<source-root>" --dest-root "<dest-root>" --max-files-per-run 1 --apply`
+- このプラグインは元のファイル名を保持し、パスを短縮しない
+- 長パス処理はプラグイン管理の PowerShell スクリプトおよび Windows 側のフォールバック列挙で実装されている
+- DB / JSONL / ログは通常の Windows パス（`C:\\...`）を保持し、`\\?\` パスは使用しない
 
-## Operational outputs
+## 操作上の出力先
 
-- DB state: `<windowsOpsRoot>/db/mediaops.sqlite`
-- Move/audit artifacts: `<windowsOpsRoot>/move`
-- Extraction artifacts: `<windowsOpsRoot>/llm`
-- Hints dictionary: `<plugin-root>/rules/program_aliases.yaml`
-- Backfill roots config: `<plugin-root>/rules/backfill_roots.yaml`
-- Relocate roots config: `<plugin-root>/rules/relocate_roots.yaml`
-- Broadcast bucket rules: `<plugin-root>/rules/broadcast_buckets.yaml`
-- Backfill artifacts:
-  - `<windowsOpsRoot>/move/backfill_plan_*.jsonl`
-  - `<windowsOpsRoot>/move/backfill_apply_*.jsonl`
-  - `<windowsOpsRoot>/llm/backfill_metadata_queue_*.jsonl`
-- Relocate artifacts:
-  - `<windowsOpsRoot>/move/relocate_plan_*.jsonl`
-  - `<windowsOpsRoot>/move/relocate_apply_*.jsonl`
-  - `<windowsOpsRoot>/llm/relocate_metadata_queue_*.jsonl`
-- Dedup artifacts:
-  - `<windowsOpsRoot>/move/dedup_plan_*.jsonl`
-  - `<windowsOpsRoot>/move/dedup_apply_*.jsonl`
-  - `<windowsOpsRoot>/duplicates/quarantine`
+| 種別 | パス |
+|------|------|
+| DB 状態 | `<windowsOpsRoot>/db/mediaops.sqlite` |
+| 移動・監査アーティファクト | `<windowsOpsRoot>/move/` |
+| 抽出アーティファクト | `<windowsOpsRoot>/llm/` |
+| ヒント辞書 | `<plugin-root>/rules/program_aliases.yaml` |
+| バックフィルルート設定 | `<plugin-root>/rules/backfill_roots.yaml` |
+| 再配置ルート設定 | `<plugin-root>/rules/relocate_roots.yaml` |
+| 放送バケットルール | `<plugin-root>/rules/broadcast_buckets.yaml` |
+| ドライブルーティングルール | `<plugin-root>/rules/drive_routes.yaml` |
+| バックフィルアーティファクト | `<windowsOpsRoot>/move/backfill_plan_*.jsonl` / `backfill_apply_*.jsonl` |
+| バックフィルキュー | `<windowsOpsRoot>/llm/backfill_metadata_queue_*.jsonl` |
+| 再配置アーティファクト | `<windowsOpsRoot>/move/relocate_plan_*.jsonl` / `relocate_apply_*.jsonl` |
+| 再配置キュー | `<windowsOpsRoot>/llm/relocate_metadata_queue_*.jsonl` |
+| 重複削除アーティファクト | `<windowsOpsRoot>/move/dedup_plan_*.jsonl` / `dedup_apply_*.jsonl` |
+| 隔離先 | `<windowsOpsRoot>/duplicates/quarantine/` |

@@ -61,3 +61,92 @@ export function latestJsonlFile(dir: string, prefix: string): string | null {
 export function toToolResult(obj: Record<string, unknown>) {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
+
+// JSON文字列からオブジェクトをパースし、配列やプリミティブは除外して返す。
+export function parseJsonObject(input: unknown): Record<string, any> | null {
+  if (typeof input !== "string") return null;
+  const s = input.trim();
+  if (!s) return null;
+  try {
+    const parsed = JSON.parse(s);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+      return parsed as Record<string, any>;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// コンパクトなタイムスタンプ文字列を生成 (例: 20260304_153042)。
+export function tsCompact(d = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+// LLM抽出出力のJSONLファイルを選択する。明示パス優先、なければ最新を自動選択。
+export function chooseSourceJsonl(
+  llmDir: string,
+  sourceJsonlPath: string | undefined,
+): { ok: boolean; path?: string; error?: string } {
+  const p = String(sourceJsonlPath || "").trim();
+  if (p) {
+    if (!fs.existsSync(p))
+      return { ok: false, error: `sourceJsonlPath does not exist: ${p}` };
+    return { ok: true, path: p };
+  }
+  const latest = latestJsonlFile(llmDir, "llm_filename_extract_output_");
+  if (!latest)
+    return {
+      ok: false,
+      error: `no extraction output jsonl found in: ${llmDir}`,
+    };
+  return { ok: true, path: latest };
+}
+
+// タイトルをファイルシステム安全な正規化キーに変換。
+export function normalizeKey(title: string): string {
+  return String(title || "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[<>:"/\\|?*]+/g, "")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+// 文字列を正規化・小文字化し空白と特殊文字を除去。比較用。
+export function lowerCompact(s: string): string {
+  return String(s || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[<>:"/\\|?*]+/g, "");
+}
+
+// Windowsパスから by_program 直下のフォルダ名（番組グループ）を抽出。
+export function byProgramGroupFromPath(
+  winPath: string | undefined,
+): string | undefined {
+  const parts = String(winPath || "")
+    .split(/[\\/]+/)
+    .filter(Boolean);
+  const idx = parts.findIndex((p) => p.toLowerCase() === "by_program");
+  if (idx >= 0 && idx + 1 < parts.length) return parts[idx + 1];
+  return undefined;
+}
+
+// program_titleがフォルダ名を飲み込んでいる（フォルダ名+8文字以上のサフィックス）かを判定。
+export function looksSwallowedProgramTitle(
+  programTitle: string,
+  folderTitle: string,
+): boolean {
+  const p = programTitle.trim();
+  const f = folderTitle.trim();
+  if (!p || !f) return false;
+  if (p === f) return false;
+  const pNorm = lowerCompact(p);
+  const fNorm = lowerCompact(f);
+  if (!pNorm || !fNorm) return false;
+  if (!pNorm.startsWith(fNorm)) return false;
+  return pNorm.length >= fNorm.length + 8;
+}

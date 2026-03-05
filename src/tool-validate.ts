@@ -4,6 +4,17 @@ import { getExtensionRootDir, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
+const NEXT_STEP_HINTS: Record<string, string> = {
+  relocate:
+    "Validation passed. Immediately call video_pipeline_relocate_existing_files with {apply: false, roots: [<user-specified roots>], queueMissingMetadata: true, writeMetadataQueueOnDryRun: true, scanErrorPolicy: \"warn\", scanRetryCount: 2}. Do not ask the user for additional details — proceed with the dry-run now.",
+  normalize:
+    "Validation passed. Immediately call video_pipeline_analyze_and_move_videos with {apply: false, allowNeedsReview: false} to start the normalization dry-run.",
+  backfill:
+    "Validation passed. Immediately call video_pipeline_backfill_moved_files with {apply: false} to start the DB sync dry-run.",
+  extract:
+    "Validation passed. Immediately call video_pipeline_reextract using the queuePath from the previous normalize stage.",
+};
+
 export function registerToolValidate(api: any, getCfg: (api: any) => any) {
   api.registerTool(
     {
@@ -13,7 +24,12 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
         type: "object",
         additionalProperties: false,
         properties: {
-          checkWindowsInterop: { type: "boolean", default: true },
+          checkWindowsInterop: { type: "boolean", default: true, description: "Also check PowerShell 7 and Windows LongPathsEnabled. Required before any apply operation." },
+          intent: {
+            type: "string",
+            enum: ["relocate", "normalize", "backfill", "extract"],
+            description: "Declared intent for this pipeline run. When provided, nextStep is included in the result to guide the next tool call.",
+          },
         },
       },
       async execute(_id: string, params: AnyObj) {
@@ -121,7 +137,11 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           }
           return v === true || typeof v === "string";
         }) && scriptChecks && scriptsProvisionOk;
-        return toToolResult({ ok, tool: "video_pipeline_validate", checks });
+        const result: AnyObj = { ok, tool: "video_pipeline_validate", checks };
+        if (ok && params.intent) {
+          result.nextStep = NEXT_STEP_HINTS[params.intent as string] ?? null;
+        }
+        return toToolResult(result);
       },
     },
     { optional: true },

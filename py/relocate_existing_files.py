@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
-from path_placement_rules import build_expected_dest_path, has_required_db_contract
+from path_placement_rules import build_expected_dest_path, detect_subtitle_in_program_title, has_required_db_contract
 from pathscan_common import (
     DEFAULT_EXTENSIONS,
     DEFAULT_SCAN_RETRY_COUNT,
@@ -25,9 +25,11 @@ from pathscan_common import (
     as_bool,
     canonicalize_windows_path,
     ensure_exts,
+    iter_jsonl,
     now_iso,
     parse_json_arg,
     parse_simple_yaml_lists,
+    path_id_for,
     safe_json,
     scan_files,
     split_win,
@@ -38,21 +40,7 @@ from pathscan_common import (
 )
 from windows_pwsh_bridge import run_pwsh_json
 
-PATH_NAMESPACE = uuid.UUID("f4f67a6f-90c6-4ee4-9c1a-2c0d25b3b0c4")
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
-
-
-def path_id_for(p: str) -> str:
-    return str(uuid.uuid5(PATH_NAMESPACE, "winpath:" + normalize_win_for_id(p)))
-
-
-def iter_jsonl(path: str):
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            yield json.loads(line)
 
 
 def latest_metadata_for_path(con, path_id: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -103,10 +91,25 @@ def by_program_group_name(src_path_win: str) -> str | None:
     return None
 
 
+def _folder_title_from_path(src_path_win: str) -> str | None:
+    """パスからプログラムタイトルらしきフォルダ名を抽出。
+    by_program\\ があればその直下、なければ VideoLibrary\\ 直下のフォルダ名を返す。"""
+    # 1. by_program\ パターン (既存)
+    group = by_program_group_name(src_path_win)
+    if group:
+        return group
+    # 2. 汎用: VideoLibrary\<title>\... パターン
+    parts = str(src_path_win or "").split("\\")
+    for i, seg in enumerate(parts[:-1]):
+        if seg.lower() == "videolibrary" and i + 1 < len(parts):
+            return parts[i + 1]
+    return None
+
+
 def looks_like_swallowed_program_title(src_path_win: str, md: dict[str, Any] | None) -> bool:
     if not isinstance(md, dict):
         return False
-    group = by_program_group_name(src_path_win)
+    group = _folder_title_from_path(src_path_win)
     title = md.get("program_title")
     if not group or not isinstance(title, str):
         return False
@@ -371,6 +374,26 @@ def main() -> int:
                         "metadata_source": md_source,
                         "program_title": md.get("program_title"),
                         "byProgramGroup": by_program_group_name(sf.win_path),
+                        "ts": ts_row,
+                    }
+                )
+                if queue_missing_metadata:
+                    queue_candidates.append(
+                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
+                    )
+                continue
+
+            if detect_subtitle_in_program_title(str(md.get("program_title", ""))):
+                suspicious_program_title_skipped += 1
+                rows_for_plan.append(
+                    {
+                        "path_id": path_id,
+                        "src": sf.win_path,
+                        "status": "skipped",
+                        "reason": "subtitle_separator_in_program_title",
+                        "metadata_source": md_source,
+                        "program_title": md.get("program_title"),
+                        "folderTitle": _folder_title_from_path(sf.win_path),
                         "ts": ts_row,
                     }
                 )

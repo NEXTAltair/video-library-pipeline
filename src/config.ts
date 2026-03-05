@@ -11,6 +11,8 @@ export type VideoPipelinePluginConfig = {
   destRoot?: string;
   windowsOpsRoot?: string;
   defaultMaxFilesPerRun?: number;
+  tsRoot?: string;
+  driveRoutesPath?: string;
 };
 
 export type VideoPipelineResolvedConfig = {
@@ -19,6 +21,8 @@ export type VideoPipelineResolvedConfig = {
   destRoot: string;
   windowsOpsRoot: string;
   defaultMaxFilesPerRun: number;
+  tsRoot: string;
+  driveRoutesPath: string;
 };
 
 // 入力が不正・未指定のときに使う既定値。
@@ -89,11 +93,15 @@ export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined)
   }
 
   const resolvedDb = dbPath ? path.resolve(dbPath) : path.join(resolvedOpsRoot, "db", "mediaops.sqlite");
+  const tsRoot = normalizePathInput(cfg.tsRoot);
+  const driveRoutesPath = asNonEmptyString(cfg.driveRoutesPath);
   return {
     db: resolvedDb,
     sourceRoot: resolvedSourceRoot,
     destRoot: resolvedDestRoot,
     windowsOpsRoot: resolvedOpsRoot,
     defaultMaxFilesPerRun: asLimit(cfg.defaultMaxFilesPerRun),
+    tsRoot: tsRoot ? path.resolve(tsRoot) : "",
+    driveRoutesPath: driveRoutesPath ? path.resolve(driveRoutesPath) : "",
   };
 }

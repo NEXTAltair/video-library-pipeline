@@ -1,23 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getExtensionRootDir, latestJsonlFile, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { byProgramGroupFromPath, chooseSourceJsonl, getExtensionRootDir, latestJsonlFile, looksSwallowedProgramTitle, lowerCompact, resolvePythonScript, runCmd, toToolResult, tsCompact } from "./runtime";
 import type { AnyObj } from "./types";
-
-function tsCompact(d = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-
-function chooseSourceJsonl(llmDir: string, sourceJsonlPath: string | undefined): { ok: boolean; path?: string; error?: string } {
-  const p = String(sourceJsonlPath || "").trim();
-  if (p) {
-    if (!fs.existsSync(p)) return { ok: false, error: `sourceJsonlPath does not exist: ${p}` };
-    return { ok: true, path: p };
-  }
-  const latest = latestJsonlFile(llmDir, "llm_filename_extract_output_");
-  if (!latest) return { ok: false, error: `no extraction output jsonl found in: ${llmDir}` };
-  return { ok: true, path: latest };
-}
 
 function isRawExtractOutputJsonl(p: string): boolean {
   const base = path.basename(p);
@@ -47,30 +31,11 @@ function stableStringify(v: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 
-function lowerCompact(s: string): string {
-  return String(s || "")
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[<>:"/\\|?*]+/g, "");
-}
-
-function byProgramGroupFromPath(p: string | undefined): string | undefined {
-  const parts = String(p || "").split("\\");
-  const idx = parts.findIndex((seg) => seg.toLowerCase() === "by_program");
-  if (idx >= 0 && idx + 1 < parts.length) return parts[idx + 1];
-  return undefined;
-}
-
 function looksSwallowedProgramTitleInRow(row: AnyObj): boolean {
   const programTitle = typeof row.program_title === "string" ? row.program_title : "";
   const folderTitle = byProgramGroupFromPath(typeof row.path === "string" ? row.path : undefined);
   if (!folderTitle) return false;
-  const pNorm = lowerCompact(programTitle);
-  const fNorm = lowerCompact(folderTitle);
-  if (!pNorm || !fNorm || pNorm === fNorm) return false;
-  if (!pNorm.startsWith(fNorm)) return false;
-  return pNorm.length >= fNorm.length + 8;
+  return looksSwallowedProgramTitle(programTitle, folderTitle);
 }
 
 function readComparableRows(sourcePath: string): { rows: AnyObj[]; parseErrors: number } {
@@ -188,12 +153,15 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
   api.registerTool(
     {
       name: "video_pipeline_apply_reviewed_metadata",
-      description: "Apply reviewed extracted metadata JSONL to DB and mark rows as human-reviewed.",
+      description:
+        "Apply reviewed extracted metadata JSONL to DB and mark rows as human-reviewed. " +
+        "IMPORTANT: sourceJsonlPath must be a human-edited copy of the extraction output — NOT the original llm_filename_extract_output_*.jsonl (that filename is rejected). " +
+        "If video_pipeline_apply_llm_extract_output returned needsReviewFlagRows=0, do NOT call this tool — records are already in DB; proceed to video_pipeline_relocate_existing_files instead.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
-          sourceJsonlPath: { type: "string" },
+          sourceJsonlPath: { type: "string", description: "Path to the human-edited reviewed JSONL (must NOT be a llm_filename_extract_output_*.jsonl raw file, and must NOT be a .yaml file)." },
           outputStampedJsonlPath: { type: "string" },
           markHumanReviewed: { type: "boolean", default: true },
           allowNoContentChanges: { type: "boolean", default: false },
@@ -231,19 +199,21 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         const sourceComparable = readComparableRows(source.path);
         const reviewRiskSummary = summarizeReviewRisk(sourceComparable.rows);
 
+        // Gate 1: raw 抽出ファイルは allowNoContentChanges でもバイパス不可
+        if (markHumanReviewed && sourceLooksRawExtractionOutput) {
+          return toToolResult({
+            ok: false,
+            tool: "video_pipeline_apply_reviewed_metadata",
+            error: "refusing to mark raw extraction output as human-reviewed; this check cannot be bypassed",
+            sourceJsonlPath: source.path,
+            sourceBaseName: sourceBase,
+            sourceLooksRawExtractionOutput: true,
+            hint: "Copy the extraction output, review/edit it, then apply the reviewed copy.",
+          });
+        }
+
+        // Gate 2: 変更なしチェック (allowNoContentChanges で合法的にバイパス可能)
         if (markHumanReviewed && !allowNoContentChanges) {
-          if (sourceLooksRawExtractionOutput) {
-            return toToolResult({
-              ok: false,
-              tool: "video_pipeline_apply_reviewed_metadata",
-              error:
-                "refusing to mark raw extraction output as human-reviewed without explicit override; edit a reviewed JSONL copy or set allowNoContentChanges=true if intentionally accepting machine output as-is",
-              sourceJsonlPath: source.path,
-              sourceBaseName: sourceBase,
-              sourceLooksRawExtractionOutput: true,
-              hint: "Use a *_reviewed_*.jsonl file for human edits, then apply it.",
-            });
-          }
           if (diff && diff.comparable && diff.changedRowsCount === 0) {
             return toToolResult({
               ok: false,
@@ -298,6 +268,30 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
             : path.join(llmDir, `reviewed_metadata_apply_${tsCompact()}.jsonl`);
         writeJsonlRows(outputStampedJsonlPath, stamped.rows);
 
+        // --- auto backup before DB write ---
+        const backupResolved = resolvePythonScript("backup_mediaops_db.py");
+        const backupResult = runCmd("uv", [
+          "run", "python", backupResolved.scriptPath,
+          "--db", String(cfg.db || ""),
+          "--action", "backup",
+          "--descriptor", "pre_apply_reviewed_metadata",
+        ], backupResolved.cwd);
+        if (backupResult.code !== 0) {
+          return toToolResult({
+            ok: false,
+            tool: "video_pipeline_apply_reviewed_metadata",
+            error: "pre-apply DB backup failed; aborting to protect data",
+            backupStderr: backupResult.stderr,
+          });
+        }
+        // auto rotate after successful backup
+        runCmd("uv", [
+          "run", "python", backupResolved.scriptPath,
+          "--db", String(cfg.db || ""),
+          "--action", "rotate",
+          "--keep", "10",
+        ], backupResolved.cwd);
+
         const upsertArgs = [
           "run",
           "python",
@@ -314,6 +308,28 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           franchiseRulesPath,
         ];
         const r = runCmd("uv", upsertArgs, resolved.cwd);
+
+        // Archive program_aliases_review_*.yaml files after successful DB write
+        const archivedYamls: string[] = [];
+        if (r.ok) {
+          const archiveDir = path.join(llmDir, "archive");
+          try {
+            const yamlFiles = fs.readdirSync(llmDir)
+              .filter((n) => n.startsWith("program_aliases_review_") && n.endsWith(".yaml"));
+            if (yamlFiles.length > 0) {
+              fs.mkdirSync(archiveDir, { recursive: true });
+              for (const name of yamlFiles) {
+                const src = path.join(llmDir, name);
+                const dst = path.join(archiveDir, name);
+                fs.renameSync(src, dst);
+                archivedYamls.push(name);
+              }
+            }
+          } catch {
+            // archive failure is non-fatal
+          }
+        }
+
         return toToolResult({
           ok: r.ok,
           tool: "video_pipeline_apply_reviewed_metadata",
@@ -336,6 +352,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           reviewDiff: diff,
           reviewRiskSummary,
           sourceParseErrors: sourceComparable.parseErrors,
+          archivedYamls,
         });
       },
     },

@@ -21,27 +21,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timezone
 
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
+from pathscan_common import iter_jsonl, now_iso
 from source_history import merge_data
 
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def iter_jsonl(path: str):
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            yield json.loads(line)
 
 
 def validate_db_contract(rec: dict) -> tuple[bool, str]:

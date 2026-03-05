@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
@@ -27,6 +28,24 @@ def ts_compact(d: datetime | None = None) -> str:
 
 def normalize_win_for_id(p: str) -> str:
     return p.replace("/", "\\").lower()
+
+
+# Stable namespace for deterministic path_id generation across runs/environments.
+# This is intentionally fixed so the same normalized path always maps to the same UUIDv5.
+PATH_NAMESPACE = uuid.UUID("f4f67a6f-90c6-4ee4-9c1a-2c0d25b3b0c4")
+
+
+def path_id_for(win_path: str) -> str:
+    return str(uuid.uuid5(PATH_NAMESPACE, "winpath:" + normalize_win_for_id(win_path)))
+
+
+def iter_jsonl(path: str):
+    with open(path, "r", encoding="utf-8-sig") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            yield json.loads(line)
 
 
 def split_win(p: str) -> tuple[str | None, str | None, str | None, str | None]:

@@ -14,16 +14,20 @@ metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipe
 
 ## Tool sequence
 
-1. Call `video_pipeline_validate` with `{"checkWindowsInterop": true}`.
+1. Call `video_pipeline_validate` with `{"checkWindowsInterop": true, "intent": "normalize"}`. Follow the `nextStep` field in the result.
 2. Call `video_pipeline_analyze_and_move_videos` with:
    - `apply=false`
    - `allowNeedsReview=false`
    - optional `maxFilesPerRun` (default plugin value is acceptable)
 3. Parse summary JSON in tool result `stdout` and extract:
-   - `inventory`
-   - `queue`
-   - `plan`
-   - `plan_stats`
+   - `inventory` — path to the inventory file for this run
+   - `queue` — path to the metadata extraction queue; pass as `queuePath` to Stage 2 (`/extract-review`)
+   - `plan` — move plan for the current dry-run
+   - `plan_stats` — per-category skip/move counters:
+     - `skipped_needs_review`: files flagged for human review (not moved)
+     - `skipped_missing_fields`: files without required metadata (not moved)
+     - `skipped_outside`: files outside configured destination roots (investigate if > 0)
+     - `genre_route_counts`: per-genre destination drive counts (multi-route mode)
 4. Call `video_pipeline_logs` with `{"kind":"all","tail":50}`.
 
 ## Human review checklist
@@ -36,4 +40,5 @@ metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipe
 ## Handoff
 
 - Report `inventory` and `queue` pointers to the user.
-- Ask user whether to proceed to Stage 2 (Extraction + YAML review).
+- Pass `queue` path as `queuePath` to Stage 2.
+- Ask user whether to proceed to Stage 2: `/extract-review` (Extraction + YAML review).
