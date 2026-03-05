@@ -22,15 +22,6 @@ function findLatestRawJson(outputRoot: string, prefix: string): string {
   return files[0] || "";
 }
 
-function getFileMtimeMs(filePath: string): number {
-  if (!filePath) return 0;
-  try {
-    return fs.statSync(filePath).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-
 export function registerToolDedup(api: any, getCfg: (api: any) => any) {
   api.registerTool(
     {
@@ -72,9 +63,6 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         const czkawkaCfgRaw = api?.config?.plugins?.entries?.["czkawka-cli"]?.config ?? {};
         const czkawkaCliPath: string = String(czkawkaCfgRaw.czkawkaCliPath || "czkawka_cli");
         const czkawkaOutputRoot: string = String(czkawkaCfgRaw.outputRoot || "");
-        const latestRawJsonBeforeScan = findLatestRawJson(czkawkaOutputRoot, "dup_hash");
-        const latestRawJsonBeforeScanMtimeMs = getFileMtimeMs(latestRawJsonBeforeScan);
-        const hashScanStartedAtMs = Date.now();
         const tmpJsonPath = path.join(os.tmpdir(), `dedup_hash_${Date.now()}.json`);
 
         let hashScanOk = false;
@@ -107,19 +95,9 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           hashScanError = String(e?.message || e);
         }
 
-        let hashRawJsonPath = "";
-        if (hashScanOk) {
-          const latestRawJsonAfterScan = findLatestRawJson(czkawkaOutputRoot, "dup_hash");
-          const latestRawJsonAfterScanMtimeMs = getFileMtimeMs(latestRawJsonAfterScan);
-          const producedByCurrentScan = !!latestRawJsonAfterScan && (
-            latestRawJsonAfterScan !== latestRawJsonBeforeScan
-            || latestRawJsonAfterScanMtimeMs > latestRawJsonBeforeScanMtimeMs
-            || latestRawJsonAfterScanMtimeMs >= hashScanStartedAtMs
-          );
-          if (producedByCurrentScan) {
-            hashRawJsonPath = latestRawJsonAfterScan;
-          }
-        }
+        // czkawka-cli プラグインの最新 raw JSON を使用（ハッシュ値付き）
+        // 直接実行は compact JSON のみ生成するため、raw JSON はプラグイン側の出力を参照
+        const hashRawJsonPath = findLatestRawJson(czkawkaOutputRoot, "dup_hash");
 
         const args = [
           "run",

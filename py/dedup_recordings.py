@@ -332,11 +332,11 @@ def main() -> int:
     con = connect_db(args.db)
     create_schema_if_needed(con)
 
-    all_paths = fetchall(con, "SELECT path_id, path FROM paths", ())
-    path_to_path_id = {canonicalize_windows_path(str(r["path"])): str(r["path_id"]) for r in all_paths}
     hash_entries = load_hash_entries_from_raw(args.hash_raw_json)
     files_hash_rows_upserted = 0
     if hash_entries:
+        all_paths = fetchall(con, "SELECT path_id, path FROM paths", ())
+        path_to_path_id = {canonicalize_windows_path(str(r["path"])): str(r["path_id"]) for r in all_paths}
         begin_immediate(con)
         try:
             files_hash_rows_upserted = store_hash_entries_to_files_table(con, hash_entries, path_to_path_id)
