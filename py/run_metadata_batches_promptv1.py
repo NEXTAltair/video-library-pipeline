@@ -653,7 +653,7 @@ def main() -> int:
 
             row["genre"] = resolve_genre(row)
             row["franchise"] = resolve_franchise(row, args.franchise_rules or None)
-            row["source_history"] = [make_entry("llm", [k for k, v in row.items() if v is not None and k not in {"path_id", "path"}])]
+            row["source_history"] = [make_entry("rule_based", [k for k, v in row.items() if v is not None and k not in {"path_id", "path"}])]
 
             enforce_db_contract(row)
             rows.append(row)
@@ -668,7 +668,7 @@ def main() -> int:
         from upsert_path_metadata_jsonl import main as _upsert_main  # type: ignore
         import sys
 
-        sys.argv = ["upsert", "--db", args.db, "--in", str(epath), "--source", "llm"]
+        sys.argv = ["upsert", "--db", args.db, "--in", str(epath), "--source", "rule_based"]
         if args.franchise_rules:
             sys.argv += ["--franchise-rules", args.franchise_rules]
         if _upsert_main() != 0:

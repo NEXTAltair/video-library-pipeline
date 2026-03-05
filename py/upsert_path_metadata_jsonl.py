@@ -10,7 +10,7 @@ We also stamp:
 
 Usage:
   cd <video-library-pipeline-dir>/py
-  python upsert_path_metadata_jsonl.py --in extracted.jsonl --source llm
+  python upsert_path_metadata_jsonl.py --in extracted.jsonl --source rule_based
 
 Safety:
 - DB write only. No file operations.
@@ -44,7 +44,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
     ap.add_argument("--in", dest="inp", required=True)
-    ap.add_argument("--source", default="llm")
+    ap.add_argument("--source", default="rule_based")
     ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()

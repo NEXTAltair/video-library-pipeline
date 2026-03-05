@@ -378,7 +378,7 @@ relocateフロー専用の複合オーケストレーター。内部で relocate
 | `sourceJsonlPath`       | string  | レビュー済みJSONLのパス（生ファイル名は拒否される）        |
 | `markHumanReviewed`     | boolean | `human_reviewed=true` を付与 (default: true)             |
 | `allowNoContentChanges` | boolean | 内容未変更でも適用を許可 (default: false)                  |
-| `source`                | string  | `path_metadata.source` に記録する値 (default: `"llm"`) |
+| `source`                | string  | `path_metadata.source` に記録する値 (default: `"rule_based"`) |
 
 **安全機構:** apply前に自動DBバックアップ + ローテーション (最新10世代)。適用成功後、`program_aliases_review_*.yaml` をアーカイブに移動。
 
@@ -733,11 +733,11 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 | source値         | 意味                    | 生成元                               |
 | ---------------- | ----------------------- | ------------------------------------ |
-| `llm`          | ルールベース抽出        | `run_metadata_batches_promptv1.py` |
+| `rule_based`   | ルールベース抽出        | `run_metadata_batches_promptv1.py` |
 | `llm_subagent` | LLMサブエージェント抽出 | `apply_llm_extract_output.py`      |
 | `edcb_epg`     | EPG取り込み             | `ingest_program_txt.py`            |
 
-> **既知の問題:** `source='llm'` は歴史的命名の残滓。→ [#3](https://github.com/NEXTAltair/video-library-pipeline/issues/3)
+> `source='rule_based'` はルールベース抽出の結果を示す。旧値 `llm` は移行スクリプトで `rule_based` に統一可能。
 
 ### is_current 運用
 
