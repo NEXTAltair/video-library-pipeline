@@ -31,6 +31,9 @@ from pathscan_common import (
 from windows_pwsh_bridge import run_pwsh_json
 
 
+FILE_NAMESPACE = uuid.UUID("88e78892-867e-4e54-b432-2f251e75ac9f")
+
+
 def normalize_subtitle(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip().lower())
 
@@ -214,6 +217,84 @@ def load_hash_groups(path: str) -> list[frozenset[str]]:
     return groups
 
 
+def load_hash_entries_from_raw(raw_json_path: str) -> list[dict[str, Any]]:
+    """czkawka raw JSON からハッシュ付きエントリを読み込む。"""
+    if not raw_json_path or not os.path.exists(raw_json_path):
+        return []
+    try:
+        with open(raw_json_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for size_val in data.values():
+        if not isinstance(size_val, list):
+            continue
+        for group in size_val:
+            if not isinstance(group, list):
+                continue
+            for entry in group:
+                if not isinstance(entry, dict):
+                    continue
+                win_path = canonicalize_windows_path(str(entry.get("path") or "").strip())
+                hash_val = str(entry.get("hash") or "").strip()
+                if not win_path or not hash_val:
+                    continue
+                try:
+                    size_bytes = int(entry.get("size") or 0)
+                except Exception:
+                    size_bytes = 0
+                entries.append({"path": win_path, "size": max(0, size_bytes), "hash": hash_val})
+    return entries
+
+
+def store_hash_entries_to_files_table(
+    con,
+    entries: list[dict[str, Any]],
+    path_to_path_id: dict[str, str],
+) -> int:
+    if not entries:
+        return 0
+    written = 0
+    ts = now_iso()
+    for entry in entries:
+        win_path = canonicalize_windows_path(str(entry.get("path") or ""))
+        path_id = path_to_path_id.get(win_path)
+        hash_val = str(entry.get("hash") or "").strip()
+        if not path_id or not hash_val:
+            continue
+        try:
+            size_bytes = int(entry.get("size") or 0)
+        except Exception:
+            size_bytes = 0
+        file_id = str(uuid.uuid5(FILE_NAMESPACE, f"path:{path_id}"))
+        con.execute(
+            """
+            INSERT INTO files (file_id, size_bytes, content_hash, hash_algo, created_at, updated_at)
+            VALUES (?, ?, ?, 'BLAKE3', ?, ?)
+            ON CONFLICT(file_id) DO UPDATE SET
+              size_bytes=excluded.size_bytes,
+              content_hash=excluded.content_hash,
+              hash_algo=excluded.hash_algo,
+              updated_at=excluded.updated_at
+            """,
+            (file_id, max(0, size_bytes), hash_val, ts, ts),
+        )
+        con.execute(
+            """
+            INSERT INTO file_paths (file_id, path_id, is_current)
+            VALUES (?, ?, 1)
+            ON CONFLICT(file_id, path_id) DO UPDATE SET is_current=1
+            """,
+            (file_id, path_id),
+        )
+        written += 1
+    return written
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -225,6 +306,7 @@ def main() -> int:
     ap.add_argument("--keep-terrestrial-and-bscs", default="true")
     ap.add_argument("--bucket-rules-path", default="")
     ap.add_argument("--hash-scan-path", default="", help="czkawka compact JSON path for hash-exact dedup pre-pass")
+    ap.add_argument("--hash-raw-json", default="", help="czkawka raw JSON path (with BLAKE3 hash values)")
     args = ap.parse_args()
 
     if not os.path.exists(args.db):
@@ -249,6 +331,19 @@ def main() -> int:
 
     con = connect_db(args.db)
     create_schema_if_needed(con)
+
+    all_paths = fetchall(con, "SELECT path_id, path FROM paths", ())
+    path_to_path_id = {canonicalize_windows_path(str(r["path"])): str(r["path_id"]) for r in all_paths}
+    hash_entries = load_hash_entries_from_raw(args.hash_raw_json)
+    files_hash_rows_upserted = 0
+    if hash_entries:
+        begin_immediate(con)
+        try:
+            files_hash_rows_upserted = store_hash_entries_to_files_table(con, hash_entries, path_to_path_id)
+            con.commit()
+        except Exception:
+            con.rollback()
+            raise
 
     ts = ts_compact()
     plan_path = move_dir / f"dedup_plan_{ts}.jsonl"
@@ -731,6 +826,8 @@ def main() -> int:
             "filesMoved": files_moved,
             "moveBackend": move_backend,
             "hashScanPath": args.hash_scan_path or None,
+            "hashRawJson": args.hash_raw_json or None,
+            "files_hash_rows_upserted": files_hash_rows_upserted,
             "hashGroupsTotal": hash_groups_total,
             "hashGroupsProcessed": hash_groups_processed,
             "errors": errors,

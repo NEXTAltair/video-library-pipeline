@@ -431,7 +431,7 @@ video-library-pipeline (本プラグイン)
     └── czkawka-cli プラグインのツール (dup_hash_scan等) は使用しない
 ```
 
-設計上、`dedup_recordings` は czkawka-cli プラグインの **設定のみ** を参照し、ツールは経由しない。これは dedup のフローが czkawka スキャン→Python判定→PowerShell隔離の一連のパイプラインであり、途中でツール境界を置くとエラーハンドリングが複雑化するため。czkawka の出力は一時 JSON (`/tmp/dedup_hash_*.json`) に書き出され、Python スクリプト `dedup_recordings.py` が DB メタデータと突合してdrop候補を決定する。
+設計上、`dedup_recordings` は czkawka-cli プラグインの設定と出力フォルダを参照し、ツールは経由しない。これは dedup のフローが czkawka スキャン→Python判定→PowerShell隔離の一連のパイプラインであり、途中でツール境界を置くとエラーハンドリングが複雑化するため。czkawka の compact JSON は一時ファイル (`/tmp/dedup_hash_*.json`) として使い、同時にプラグイン側 raw JSON (`dup_hash*.json`) から BLAKE3 ハッシュを読み取って `files` / `file_paths` テーブルへ UPSERT する。Python スクリプト `dedup_recordings.py` はハッシュ結果と DB メタデータを突合して drop 候補を決定する。
 
 ---
 
@@ -614,6 +614,12 @@ erDiagram
         INTEGER size_bytes
         TEXT content_hash
         TEXT hash_algo
+        REAL duration_sec
+        INTEGER width
+        INTEGER height
+        TEXT codec
+        INTEGER bitrate
+        TEXT fps
         TEXT created_at
         TEXT updated_at
     }

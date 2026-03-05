@@ -6,6 +6,31 @@ import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toTo
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
+
+function findLatestRawJson(outputRoot: string, prefix: string): string {
+  if (!outputRoot) return "";
+  if (!fs.existsSync(outputRoot)) return "";
+  const files = fs.readdirSync(outputRoot, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.startsWith(prefix) && d.name.endsWith(".json"))
+    .map((d) => path.join(outputRoot, d.name));
+  if (files.length === 0) return "";
+  files.sort((a, b) => {
+    const am = fs.statSync(a).mtimeMs;
+    const bm = fs.statSync(b).mtimeMs;
+    return bm - am;
+  });
+  return files[0] || "";
+}
+
+function getFileMtimeMs(filePath: string): number {
+  if (!filePath) return 0;
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 export function registerToolDedup(api: any, getCfg: (api: any) => any) {
   api.registerTool(
     {
@@ -46,6 +71,10 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         // --- czkawka ハッシュスキャン前段 ---
         const czkawkaCfgRaw = api?.config?.plugins?.entries?.["czkawka-cli"]?.config ?? {};
         const czkawkaCliPath: string = String(czkawkaCfgRaw.czkawkaCliPath || "czkawka_cli");
+        const czkawkaOutputRoot: string = String(czkawkaCfgRaw.outputRoot || "");
+        const latestRawJsonBeforeScan = findLatestRawJson(czkawkaOutputRoot, "dup_hash");
+        const latestRawJsonBeforeScanMtimeMs = getFileMtimeMs(latestRawJsonBeforeScan);
+        const hashScanStartedAtMs = Date.now();
         const tmpJsonPath = path.join(os.tmpdir(), `dedup_hash_${Date.now()}.json`);
 
         let hashScanOk = false;
@@ -78,6 +107,20 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           hashScanError = String(e?.message || e);
         }
 
+        let hashRawJsonPath = "";
+        if (hashScanOk) {
+          const latestRawJsonAfterScan = findLatestRawJson(czkawkaOutputRoot, "dup_hash");
+          const latestRawJsonAfterScanMtimeMs = getFileMtimeMs(latestRawJsonAfterScan);
+          const producedByCurrentScan = !!latestRawJsonAfterScan && (
+            latestRawJsonAfterScan !== latestRawJsonBeforeScan
+            || latestRawJsonAfterScanMtimeMs > latestRawJsonBeforeScanMtimeMs
+            || latestRawJsonAfterScanMtimeMs >= hashScanStartedAtMs
+          );
+          if (producedByCurrentScan) {
+            hashRawJsonPath = latestRawJsonAfterScan;
+          }
+        }
+
         const args = [
           "run",
           "python",
@@ -96,6 +139,8 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           String(params.bucketRulesPath || defaultRulesPath),
           "--hash-scan-path",
           hashScanOk ? tmpJsonPath : "",
+          "--hash-raw-json",
+          hashRawJsonPath,
         ];
         if (params.apply === true) args.push("--apply");
         if (typeof params.maxGroups === "number" && Number.isFinite(params.maxGroups)) {
@@ -124,6 +169,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
             ok: hashScanOk,
             exitCode: hashScanExitCode,
             tmpJsonPath: hashScanOk ? tmpJsonPath : null,
+            rawJsonPath: hashRawJsonPath || null,
             error: hashScanError ?? null,
           },
           scriptsProvision: {

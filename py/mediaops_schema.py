@@ -28,6 +28,12 @@ DDL_STATEMENTS = [
       size_bytes INTEGER NOT NULL,
       content_hash TEXT NULL,
       hash_algo TEXT NULL,
+      duration_sec REAL NULL,
+      width INTEGER NULL,
+      height INTEGER NULL,
+      codec TEXT NULL,
+      bitrate INTEGER NULL,
+      fps TEXT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -148,6 +154,22 @@ DDL_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_bgm_path ON broadcast_group_members(path_id)",
 ]
 
+_FILES_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("duration_sec", "REAL"),
+    ("width", "INTEGER"),
+    ("height", "INTEGER"),
+    ("codec", "TEXT"),
+    ("bitrate", "INTEGER"),
+    ("fps", "TEXT"),
+]
+
+
+def _migrate_files_columns(con: sqlite3.Connection) -> None:
+    existing = {str(row[1]) for row in con.execute("PRAGMA table_info(files)").fetchall()}
+    for col, typ in _FILES_NEW_COLUMNS:
+        if col not in existing:
+            con.execute(f"ALTER TABLE files ADD COLUMN {col} {typ}")
+
 
 def connect_db(db_path: str) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
@@ -159,6 +181,7 @@ def connect_db(db_path: str) -> sqlite3.Connection:
 def create_schema_if_needed(con: sqlite3.Connection) -> None:
     for stmt in DDL_STATEMENTS:
         con.execute(stmt)
+    _migrate_files_columns(con)
 
 
 def begin_immediate(con: sqlite3.Connection) -> None:
@@ -171,4 +194,3 @@ def fetchone(con: sqlite3.Connection, sql: str, params: tuple = ()) -> sqlite3.R
 
 def fetchall(con: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
     return con.execute(sql, params).fetchall()
-
