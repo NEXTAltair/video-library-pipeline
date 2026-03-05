@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
-from path_placement_rules import build_expected_dest_path, detect_subtitle_in_program_title, has_required_db_contract
+from path_placement_rules import (
+    build_expected_dest_path,
+    build_routed_dest_path,
+    detect_subtitle_in_program_title,
+    has_required_db_contract,
+    load_drive_routes,
+)
 from pathscan_common import (
     DEFAULT_EXTENSIONS,
     DEFAULT_SCAN_RETRY_COUNT,
@@ -172,6 +178,7 @@ def main() -> int:
     ap.add_argument("--scan-error-threshold", type=int, default=0)
     ap.add_argument("--scan-retry-count", type=int, default=DEFAULT_SCAN_RETRY_COUNT)
     ap.add_argument("--on-dst-exists", choices=["error", "rename_suffix"], default="error")
+    ap.add_argument("--drive-routes", default="", help="Path to drive_routes.yaml for multi-dest routing")
     args = ap.parse_args()
 
     db_path = windows_to_wsl_path(args.db)
@@ -235,6 +242,10 @@ def main() -> int:
 
     con = connect_db(db_path)
     create_schema_if_needed(con)
+
+    routes = None
+    if args.drive_routes and os.path.exists(args.drive_routes):
+        routes = load_drive_routes(args.drive_routes)
 
     ts = ts_compact()
     plan_path = move_dir / f"relocate_plan_{ts}.jsonl"
@@ -403,7 +414,11 @@ def main() -> int:
                     )
                 continue
 
-            dst, dst_err = build_expected_dest_path(dest_root_win, sf.win_path, md)
+            genre_route = None
+            if routes:
+                dst, genre_route, dst_err = build_routed_dest_path(routes, sf.win_path, md)
+            else:
+                dst, dst_err = build_expected_dest_path(dest_root_win, sf.win_path, md)
             if not dst or dst_err:
                 invalid_contract_skipped += 1
                 rows_for_plan.append(
@@ -441,18 +456,19 @@ def main() -> int:
 
             planned_moves += 1
             reason = "recompute_destination"
-            rows_for_plan.append(
-                {
-                    "path_id": path_id,
-                    "src": sf.win_path,
-                    "dst": dst,
-                    "status": "planned",
-                    "reason": reason,
-                    "program_title": md.get("program_title"),
-                    "air_date": md.get("air_date"),
-                    "ts": ts_row,
-                }
-            )
+            plan_row: dict[str, Any] = {
+                "path_id": path_id,
+                "src": sf.win_path,
+                "dst": dst,
+                "status": "planned",
+                "reason": reason,
+                "program_title": md.get("program_title"),
+                "air_date": md.get("air_date"),
+                "ts": ts_row,
+            }
+            if genre_route:
+                plan_row["genre_route"] = genre_route
+            rows_for_plan.append(plan_row)
             row_move = {"path_id": path_id, "src": sf.win_path, "dst": dst}
             rows_for_move.append(row_move)
             plan_reason_map[(path_id, sf.win_path, dst)] = reason

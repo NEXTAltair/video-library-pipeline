@@ -103,6 +103,9 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
           ], backupResolved.cwd);
         }
 
+        const driveRoutesPath = cfg.driveRoutesPath
+          || path.join(getExtensionRootDir(), "rules", "drive_routes.yaml");
+
         const args = [
           "run",
           "python",
@@ -128,6 +131,9 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
           "--on-dst-exists",
           String(params.onDstExists || "error"),
         ];
+        if (driveRoutesPath && fs.existsSync(driveRoutesPath)) {
+          args.push("--drive-routes", driveRoutesPath);
+        }
 
         if (params.apply === true) args.push("--apply");
         if (Array.isArray(params.roots) && params.roots.length > 0) {

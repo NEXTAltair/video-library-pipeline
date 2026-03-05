@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, latestJsonlFile, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
@@ -85,6 +86,8 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
         }
 
         const relocateScript = resolvePythonScript("relocate_existing_files.py");
+        const driveRoutesPath = cfg.driveRoutesPath
+          || path.join(getExtensionRootDir(), "rules", "drive_routes.yaml");
         const relocateArgs = [
           "run",
           "python",
@@ -110,6 +113,9 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
           "--on-dst-exists",
           "error",
         ];
+        if (driveRoutesPath && fs.existsSync(driveRoutesPath)) {
+          relocateArgs.push("--drive-routes", driveRoutesPath);
+        }
         if (Array.isArray(params.roots) && params.roots.length > 0) {
           relocateArgs.push("--roots-json", JSON.stringify(params.roots));
         }
