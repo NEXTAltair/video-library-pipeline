@@ -94,7 +94,7 @@ class DriveRoute:
     def __init__(self, data: dict[str, Any]):
         self.genre: str = str(data.get("genre") or "")
         self.dest_root: str = str(data.get("dest_root") or "").rstrip("\\")
-        self.layout: str = str(data.get("layout") or "by_program_year_month")
+        self.layout: str = normalize_layout_name(str(data.get("layout") or "by_program_year_month"))
         self.epg_genre_match: list[str] = data.get("epg_genre_match") or []
         self.title_patterns: list[str] = data.get("title_patterns") or []
 
@@ -172,7 +172,7 @@ def load_drive_routes(yaml_path: str | Path) -> DriveRoutes:
     data = _load_yaml_file(p)
 
     default_dest = str(data.get("default_dest") or "")
-    default_layout = str(data.get("default_layout") or "by_program_year_month")
+    default_layout = normalize_layout_name(str(data.get("default_layout") or "by_program_year_month"))
     routes = [DriveRoute(r) for r in data.get("routes", []) if r.get("genre")]
 
     return DriveRoutes(default_dest=default_dest, default_layout=default_layout, routes=routes)
@@ -193,6 +193,13 @@ _SYLLABARY_RANGES = [
     ("ラ", "ラ", "ロ"),  # ラ行
     ("ワ", "ワ", "ン"),  # ワ行
 ]
+
+
+def normalize_layout_name(layout: str) -> str:
+    """Normalize layout aliases to canonical names."""
+    if layout == "by_series":
+        return "by_title"
+    return layout
 
 
 def _title_to_syllabary_folder(title: str) -> str:
@@ -258,8 +265,8 @@ def build_routed_dest_path(
         folder = _title_to_syllabary_folder(prog_title)
         dst = f"{dest_root}\\{folder}\\{filename}"
 
-    elif layout == "by_series":
-        # Use program_title as series folder name
+    elif layout == "by_title":
+        # Use program_title as title folder name (legacy alias: by_series)
         series_dir = safe_dir_name(prog_title, maxlen=80)
         dst = f"{dest_root}\\{series_dir}\\{filename}"
 
