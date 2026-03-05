@@ -5,15 +5,8 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
-from pathlib import PureWindowsPath
 
-
-def split_win(p: str) -> tuple[str | None, str | None, str | None]:
-    wp = PureWindowsPath(p)
-    drive = wp.drive[:-1] if wp.drive.endswith(":") else (wp.drive or None)
-    dir_ = str(wp.parent) if str(wp.parent) not in (".", "") else None
-    name = wp.name or None
-    return drive, dir_, name
+from pathscan_common import split_win
 
 
 def main() -> int:
@@ -39,7 +32,7 @@ def main() -> int:
 
     fixed = 0
     for path_id, path, name in rows:
-        drive, dir_, fname = split_win(path)
+        drive, dir_, fname, _ext = split_win(path)
         if not fname:
             continue
         if fname == name and (dir_ == (cur.execute("SELECT dir FROM paths WHERE path_id=?", (path_id,)).fetchone() or [None])[0]):

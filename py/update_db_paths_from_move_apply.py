@@ -7,29 +7,9 @@ import argparse
 import json
 import os
 import uuid
-from datetime import datetime, timezone
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def split_win(p: str) -> tuple[str, str, str]:
-    p = p.replace("/", "\\")
-    dir_ = "\\".join(p.split("\\")[:-1])
-    name = p.split("\\")[-1]
-    return p, dir_, name
-
-
-def iter_jsonl(path: str):
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            yield json.loads(line)
+from pathscan_common import iter_jsonl, now_iso, split_win
 
 
 def _json_obj(s: str | None) -> dict:
@@ -64,15 +44,28 @@ def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
     if dst is None:
         con.execute("UPDATE path_metadata SET path_id=? WHERE path_id=?", (dst_path_id, src_path_id))
         return "moved_src_to_dst"
+
+    src_md = _json_obj(src["data_json"])
+    dst_md = _json_obj(dst["data_json"])
+    src_hist = src_md.get("source_history") if isinstance(src_md.get("source_history"), list) else []
+    dst_hist = dst_md.get("source_history") if isinstance(dst_md.get("source_history"), list) else []
+    combined_hist = list(dst_hist) + [h for h in src_hist if h not in dst_hist]
+
     preferred = src if _metadata_rank(src) > _metadata_rank(dst) else dst
     if preferred["path_id"] == src_path_id:
+        src_md["source_history"] = combined_hist
         con.execute(
             "UPDATE path_metadata SET source=?, data_json=?, updated_at=? WHERE path_id=?",
-            (src["source"], src["data_json"], src["updated_at"], dst_path_id),
+            (src["source"], json.dumps(src_md, ensure_ascii=False), src["updated_at"], dst_path_id),
         )
         action = "src_overwrote_dst"
     else:
-        action = "kept_dst"
+        dst_md["source_history"] = combined_hist
+        con.execute(
+            "UPDATE path_metadata SET data_json=?, updated_at=? WHERE path_id=?",
+            (json.dumps(dst_md, ensure_ascii=False), dst["updated_at"], dst_path_id),
+        )
+        action = "kept_dst_with_history"
     con.execute("DELETE FROM path_metadata WHERE path_id=?", (src_path_id,))
     return action
 
@@ -205,8 +198,8 @@ def main() -> int:
         dst = rec.get("dst")
         if not pid or not dst:
             continue
-        full, dir_, name = split_win(dst)
-        move_rows.append({"path_id": pid, "src": src, "dst": full, "dir": dir_, "name": name, "ts": rec.get("ts") or now_iso()})
+        _drive, dir_, name, _ext = split_win(dst)
+        move_rows.append({"path_id": pid, "src": src, "dst": dst, "dir": dir_, "name": name, "ts": rec.get("ts") or now_iso()})
 
     if args.dry_run:
         # Detect uniqueness collisions against current DB state so callers can preview merge work.

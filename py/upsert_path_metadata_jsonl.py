@@ -21,24 +21,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timezone
 
+from franchise_resolver import resolve_franchise
+from genre_resolver import resolve_genre
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
+from pathscan_common import iter_jsonl, now_iso
+from source_history import merge_data
 
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def iter_jsonl(path: str):
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            yield json.loads(line)
 
 
 def validate_db_contract(rec: dict) -> tuple[bool, str]:
@@ -55,6 +45,7 @@ def main() -> int:
     ap.add_argument("--db", default="")
     ap.add_argument("--in", dest="inp", required=True)
     ap.add_argument("--source", default="llm")
+    ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -92,7 +83,20 @@ def main() -> int:
                 missing += 1
                 continue
 
-            data_json = json.dumps(rec, ensure_ascii=False)
+            prior = fetchone(con, "SELECT data_json FROM path_metadata WHERE path_id=?", (path_id,))
+            existing = {}
+            if prior and prior["data_json"]:
+                try:
+                    v = json.loads(str(prior["data_json"]))
+                    if isinstance(v, dict):
+                        existing = v
+                except Exception:
+                    existing = {}
+
+            merged = merge_data(existing, rec, args.source)
+            merged["genre"] = resolve_genre(merged)
+            merged["franchise"] = resolve_franchise(merged, args.franchise_rules or None)
+            data_json = json.dumps(merged, ensure_ascii=False)
             to_upsert.append((path_id, args.source, data_json, updated_at))
 
         if args.dry_run:
@@ -111,6 +115,7 @@ def main() -> int:
                   source=excluded.source,
                   data_json=excluded.data_json,
                   updated_at=excluded.updated_at
+                WHERE json_extract(path_metadata.data_json, '$.human_reviewed') IS NOT 1
                 """,
                 to_upsert,
             )
@@ -129,4 +134,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

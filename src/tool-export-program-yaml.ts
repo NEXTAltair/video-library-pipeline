@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { latestJsonlFile, toToolResult } from "./runtime";
+import { byProgramGroupFromPath, chooseSourceJsonl, looksSwallowedProgramTitle, lowerCompact, normalizeKey, toToolResult, tsCompact } from "./runtime";
 import type { AnyObj } from "./types";
 
 type ProgramStat = {
@@ -45,23 +45,8 @@ type ReviewSummary = {
 const MAX_REVIEW_CANDIDATES = 50;
 const MAX_PREVIEW_CHARS = 220;
 
-function tsCompact(d = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-
 function jsonScalar(v: unknown): string {
   return JSON.stringify(v ?? "");
-}
-
-function normalizeKey(title: string): string {
-  return String(title || "")
-    .trim()
-    .replace(/\s+/g, "_")
-    .replace(/[<>:"/\\|?*]+/g, "")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toLowerCase();
 }
 
 function asStr(v: unknown): string {
@@ -78,39 +63,6 @@ function isIsoDate(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-function splitWinPathParts(winPath: string): string[] {
-  return String(winPath || "")
-    .split(/[\\/]+/)
-    .filter(Boolean);
-}
-
-function byProgramFolderTitleFromPath(winPath: string): string | undefined {
-  const parts = splitWinPathParts(winPath);
-  const idx = parts.findIndex((p) => p.toLowerCase() === "by_program");
-  if (idx >= 0 && idx + 1 < parts.length) return parts[idx + 1];
-  return undefined;
-}
-
-function lowerCompact(s: string): string {
-  return s
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[<>:"/\\|?*]+/g, "");
-}
-
-function looksSwallowedProgramTitle(programTitle: string, folderTitle: string): boolean {
-  const p = programTitle.trim();
-  const f = folderTitle.trim();
-  if (!p || !f) return false;
-  if (p === f) return false;
-  const pNorm = lowerCompact(p);
-  const fNorm = lowerCompact(f);
-  if (!pNorm || !fNorm) return false;
-  if (!pNorm.startsWith(fNorm)) return false;
-  return pNorm.length >= fNorm.length + 8;
-}
-
 function pushCount(map: Record<string, number>, key: string) {
   map[key] = (map[key] ?? 0) + 1;
 }
@@ -120,7 +72,7 @@ function appendUnique(arr: string[], v: string) {
   if (!arr.includes(v)) arr.push(v);
 }
 
-function buildReviewDiagnostics(rows: AnyObj[]): {
+export function buildReviewDiagnostics(rows: AnyObj[]): {
   summary: ReviewSummary;
   candidates: ReviewCandidate[];
   truncated: boolean;
@@ -169,7 +121,7 @@ function buildReviewDiagnostics(rows: AnyObj[]): {
       appendUnique(reasons, needsReviewReason || "needs_review_flagged");
     }
 
-    const byProgramFolderTitle = byProgramFolderTitleFromPath(pathValue);
+    const byProgramFolderTitle = byProgramGroupFromPath(pathValue);
     if (byProgramFolderTitle && programTitle && looksSwallowedProgramTitle(programTitle, byProgramFolderTitle)) {
       appendUnique(columns, "program_title");
       appendUnique(reasons, "program_title_may_include_description");
@@ -224,7 +176,7 @@ function buildReviewDiagnostics(rows: AnyObj[]): {
   };
 }
 
-function readJsonlRows(sourceJsonlPath: string): AnyObj[] {
+export function readJsonlRows(sourceJsonlPath: string): AnyObj[] {
   const rows: AnyObj[] = [];
   const text = fs.readFileSync(sourceJsonlPath, "utf-8");
   for (const line of text.split(/\r?\n/)) {
@@ -243,18 +195,7 @@ function readJsonlRows(sourceJsonlPath: string): AnyObj[] {
   return rows;
 }
 
-function chooseSourceJsonl(llmDir: string, sourceJsonlPath: string | undefined): { ok: boolean; path?: string; error?: string } {
-  const p = String(sourceJsonlPath || "").trim();
-  if (p) {
-    if (!fs.existsSync(p)) return { ok: false, error: `sourceJsonlPath does not exist: ${p}` };
-    return { ok: true, path: p };
-  }
-  const latest = latestJsonlFile(llmDir, "llm_filename_extract_output_");
-  if (!latest) return { ok: false, error: `no extraction output jsonl found in: ${llmDir}` };
-  return { ok: true, path: latest };
-}
-
-function buildYaml(
+export function buildYaml(
   sourceJsonlPath: string,
   rowsTotal: number,
   rowsUsed: number,
@@ -413,6 +354,11 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
             yamlHandlingRule:
               "Do not derive automated corrections from YAML text. YAML is for human visual review; agent should rely on reviewCandidates/reviewSummary and user-confirmed column-level edits.",
           },
+          nextStep:
+            "Present reviewCandidates (path + columns + reasons) to the user. " +
+            "Ask the user to edit the JSONL file if corrections are needed (program_title, air_date, needs_review). " +
+            "Once the user confirms edits are done (or says no edits are needed), call video_pipeline_apply_reviewed_metadata with sourceJsonlPath set to the extraction JSONL (.jsonl file, NOT the .yaml file). " +
+            "Do NOT ask for additional permission to call video_pipeline_apply_reviewed_metadata — proceed immediately after user confirmation.",
         });
       },
     },

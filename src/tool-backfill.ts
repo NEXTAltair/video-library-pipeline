@@ -1,37 +1,24 @@
 import path from "node:path";
-import { getExtensionRootDir, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
-
-function parseJsonObject(input: unknown): AnyObj | null {
-  if (typeof input !== "string") return null;
-  const s = input.trim();
-  if (!s) return null;
-  try {
-    const parsed = JSON.parse(s);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as AnyObj;
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 export function registerToolBackfill(api: any, getCfg: (api: any) => any) {
   api.registerTool(
     {
       name: "video_pipeline_backfill_moved_files",
-      description: "Backfill already-moved files into DB with dry-run/apply and optional metadata queue generation.",
+      description: "DB sync: register existing library files into DB (paths/observations). Does NOT physically move files. Use for 'DBに登録', 'DB化', 'ライブラリを反映'. backfill_roots.yaml covers all drives — omit roots unless scanning a new location.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
-          apply: { type: "boolean", default: false },
-          roots: { type: "array", items: { type: "string" } },
-          rootsFilePath: { type: "string" },
+          apply: { type: "boolean", default: false, description: "false = dry-run (no DB changes). true = write to DB." },
+          roots: { type: "array", items: { type: "string" }, description: "Windows paths to scan. Omit to use backfill_roots.yaml (covers all library drives). Only set if scanning a new/temporary location." },
+          rootsFilePath: { type: "string", description: "Path to YAML/text file listing roots. Alternative to roots array." },
           extensions: { type: "array", items: { type: "string" }, default: [".mp4"] },
           limit: { type: "integer", minimum: 1, maximum: 100000 },
-          includeObservations: { type: "boolean", default: true },
-          queueMissingMetadata: { type: "boolean", default: false },
+          includeObservations: { type: "boolean", default: true, description: "Also upsert file observations (size, mtime). Default true." },
+          queueMissingMetadata: { type: "boolean", default: false, description: "Queue newly upserted rows that are missing metadata for reextract. Scoped to rows touched by this run only." },
           driveMap: { type: "object", additionalProperties: { type: "string" } },
           detectCorruption: { type: "boolean", default: true },
           corruptionReadBytes: { type: "integer", minimum: 1, maximum: 1048576, default: 4096 },

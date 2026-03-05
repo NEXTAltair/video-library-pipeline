@@ -1,20 +1,7 @@
 import path from "node:path";
-import { getExtensionRootDir, latestJsonlFile, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { getExtensionRootDir, latestJsonlFile, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
-
-function parseJsonObject(input: unknown): AnyObj | null {
-  if (typeof input !== "string") return null;
-  const s = input.trim();
-  if (!s) return null;
-  try {
-    const parsed = JSON.parse(s);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as AnyObj;
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 function parseLastJsonObjectLine(input: unknown): AnyObj | null {
   if (typeof input !== "string") return null;
@@ -80,6 +67,7 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
         const llmDir = path.join(hostRoot, "llm");
         const defaultRootsFile = path.join(getExtensionRootDir(), "rules", "relocate_roots.yaml");
         const hintsPath = path.join(getExtensionRootDir(), "rules", "program_aliases.yaml");
+        const franchiseRulesPath = path.join(getExtensionRootDir(), "rules", "franchise_rules.yaml");
         const scriptsProvision = ensureWindowsScripts(cfg);
         if (!scriptsProvision.ok) {
           return toToolResult({
@@ -227,6 +215,19 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
           out.followUpToolCalls = [];
           out.hasFollowUpToolCalls = false;
           out.reextractSkippedReason = "no_queue_candidates";
+          if (interpretation === "already_correct_no_relocation_needed") {
+            out.nextStep =
+              "All scanned files are already in correct locations (alreadyCorrect > 0, no metadata gaps). " +
+              "Task is complete. Stop here and report the result to the user.";
+          } else if (interpretation === "relocate_plan_ready_for_apply") {
+            out.nextStep =
+              "Relocate plan exists (plannedMoves > 0). " +
+              "Call video_pipeline_relocate_existing_files with {apply: true, planPath: <plan_path from relocate result>}.";
+          } else {
+            out.nextStep =
+              "No files require metadata preparation (queuePlanned=0). " +
+              "Task is complete. Stop here and report the result to the user.";
+          }
           return toToolResult(out);
         }
         if (!queuePath) {
@@ -266,6 +267,8 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
           hintsPath,
           "--batch-size",
           String(params.batchSize ?? 50),
+          "--franchise-rules",
+          franchiseRulesPath,
         ];
         if (typeof params.maxBatches === "number" && Number.isFinite(params.maxBatches)) {
           reextractArgs.push("--max-batches", String(Math.trunc(params.maxBatches)));

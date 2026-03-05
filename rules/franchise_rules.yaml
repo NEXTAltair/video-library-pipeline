@@ -1,0 +1,18 @@
+version: 1
+rules:
+  - franchise: "シリーズ_仮面ライダー"
+    title_patterns: ["仮面ライダー"]
+  - franchise: "シリーズ_ウルトラマン"
+    title_patterns: ["ウルトラマン", "ウルトラQ", "ウルトラセブン"]
+  - franchise: "シリーズ_ゴジラ+モンスターバース"
+    title_patterns: ["ゴジラ", "モスラ", "キングコング"]
+  - franchise: "シリーズ_スーパー戦隊"
+    title_patterns: ["戦隊", "ゴレンジャー"]
+  - franchise: "シリーズ_牙狼"
+    title_patterns: ["牙狼", "GARO"]
+  - franchise: "シリーズ_ガンダム"
+    title_patterns: ["ガンダム", "Gのレコンギスタ"]
+  - franchise: "シリーズ_ポケモン"
+    title_patterns: ["ポケモン", "ポケットモンスター"]
+  - franchise: "シリーズ_ガメラ"
+    title_patterns: ["ガメラ"]

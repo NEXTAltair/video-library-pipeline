@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getExtensionRootDir, runCmd } from "./runtime";
+import { getExtensionRootDir, parseJsonObject, runCmd } from "./runtime";
 import type { AnyObj } from "./types";
 import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
@@ -35,17 +35,6 @@ const calibreSkillGateBySession = new Map<string, CalibreSkillGateState>();
 
 function isObj(v: unknown): v is AnyObj {
   return !!v && typeof v === "object" && !Array.isArray(v);
-}
-
-function parseJsonObject(input: string): AnyObj | null {
-  const s = String(input || "").trim();
-  if (!s) return null;
-  try {
-    const parsed = JSON.parse(s);
-    return isObj(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 function parseSummaryFromStdout(stdout: unknown): AnyObj | null {
@@ -154,6 +143,19 @@ function analyzeToolEnvelope(toolEnvelope: AnyObj | null, eventError?: unknown):
   }
 
   return Array.from(new Set(alerts));
+}
+
+const VIDEO_LIBRARY_PATH_PATTERNS = [
+  /\/mnt\/[a-z]\/VideoLibrary\b/i,
+  /\/mnt\/[a-z]\/未視聴\b/,
+  /[A-Z]:\\\\?VideoLibrary\b/i,
+  /[A-Z]:\\\\?未視聴\b/,
+];
+
+function detectVideoLibraryExec(event: AnyObj): boolean {
+  const command = getExecCommand(event);
+  if (!command) return false;
+  return VIDEO_LIBRARY_PATH_PATTERNS.some((re) => re.test(command));
 }
 
 function detectMistakenExecToolName(event: AnyObj): string | null {
@@ -418,6 +420,20 @@ export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
         blockReason:
           `blocked mistaken exec call: '${mistakenToolName}' is a plugin tool name, not a shell command. ` +
           `Call the tool directly as ${mistakenToolName} with JSON params.`,
+      };
+    }
+
+    const blockedVideoLibraryExec = detectVideoLibraryExec(event);
+    if (blockedVideoLibraryExec) {
+      return {
+        block: true,
+        blockReason:
+          `blocked exec call: shell commands on VideoLibrary/未視聴 paths are not allowed. ` +
+          `These paths are on Windows drives and require plugin tools. ` +
+          `Use video_pipeline_relocate_existing_files (for reorganizing existing files), ` +
+          `video_pipeline_analyze_and_move_videos (for new recordings from sourceRoot), ` +
+          `or video_pipeline_backfill_moved_files (for DB registration). ` +
+          `Do NOT use exec/ls/find/mv on these paths.`,
       };
     }
 

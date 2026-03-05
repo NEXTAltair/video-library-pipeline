@@ -1,129 +1,136 @@
-# video-library-pipeline current spec index
+# video-library-pipeline 現行仕様インデックス
 
-This file is the **documentation entrypoint** for the current plugin behavior.
+このファイルはプラグインの現在の動作を把握するための**ドキュメントエントリポイント**。
 
-Use this document first when you need to answer:
-- "What is the plugin supposed to do right now?"
-- "Which file is the source of truth for this question?"
-- "Is this requirement doc historical or current?"
+以下の問いに答えが必要なときは最初にこのドキュメントを参照すること:
+- 「このプラグインは今何をするべきか？」
+- 「この問いに対する情報源はどのファイルか？」
+- 「この要件書は現行仕様か、それとも歴史的記録か？」
 
-## 1) read order (recommended)
+## 1) 推奨読み順
 
-1. `skills/SKILL.md`
-   - AI agent execution rules, intent mapping, tool usage guardrails
+1. `skills/video-library-pipeline/SKILL.md`
+   - AIエージェントの実行ルール、インテントマッピング、ツール使用ガードレール
 2. `FLOW_AND_OWNERSHIP.md`
-   - current execution order, layer boundaries, ownership
+   - 現在の実行順序、レイヤー境界、責務分担
 3. `DEPENDENCIES.md`
-   - runtime prerequisites, binaries, scripts, preflight
+   - ランタイム前提条件、バイナリ、スクリプト、プリフライト
 4. `src/tool-definitions.ts`
-   - current tool schemas (params/result contract at plugin layer)
-5. Python/TS implementation files (`src/*.ts`, `py/*.py`)
-   - actual behavior details and edge-case handling
+   - 現在のツールスキーマ（プラグイン層のパラメータ/結果コントラクト）
+5. Python/TS 実装ファイル（`src/*.ts`, `py/*.py`）
+   - 実際の動作詳細とエッジケース処理
 
-## 2) source of truth by question
+## 2) 問い別・情報源マッピング
 
-### "Which tool should be used for this request?"
-- Primary: `skills/SKILL.md`
-- Secondary: `src/tool-definitions.ts`
+### 「このリクエストにはどのツールを使うべきか？」
+- 第一: `skills/video-library-pipeline/SKILL.md`
+- 第二: `src/tool-definitions.ts`
 
-### "What does this tool mean / what scope does its result cover?"
-- Primary: `skills/SKILL.md` (tool scope / result semantics)
-- Secondary: `src/tool-definitions.ts`
-- Implementation details: `src/tool-*.ts`, `py/*.py`
+### 「このツールの意味・結果のスコープは？」
+- 第一: `skills/video-library-pipeline/SKILL.md`（ツールスコープ/結果セマンティクス）
+- 第二: `src/tool-definitions.ts`
+- 実装詳細: `src/tool-*.ts`, `py/*.py`
 
-### "What is the current execution flow?"
-- Primary: `FLOW_AND_OWNERSHIP.md`
-- Secondary: `skills/SKILL.md` (agent-facing winning flows)
+### 「現在の実行フローは？」
+- 第一: `FLOW_AND_OWNERSHIP.md`
+- 第二: `skills/video-library-pipeline/SKILL.md`（エージェント向けのウィニングフロー）
 
-### "What binaries/config/scripts are required?"
-- Primary: `DEPENDENCIES.md`
-- Secondary: `src/tool-validate.ts`, `src/windows-scripts-bootstrap.ts`
+### 「必要なバイナリ/設定/スクリプトは？」
+- 第一: `DEPENDENCIES.md`
+- 第二: `src/tool-validate.ts`, `src/windows-scripts-bootstrap.ts`
 
-### "What exactly happens in DB update / move reconciliation?"
-- Primary implementation:
+### 「DB更新/移動照合で具体的に何が起きるか？」
+- 主要実装:
   - `py/update_db_paths_from_move_apply.py`
   - `py/relocate_existing_files.py`
   - `py/backfill_moved_files.py`
-- Supporting docs:
+- 補足ドキュメント:
   - `FLOW_AND_OWNERSHIP.md`
   - `DEPENDENCIES.md`
 
-### "What should the AI agent ask the human to review?"
-- Primary: `skills/extract-review/SKILL.md`
-- Supporting tool result shape: `src/tool-export-program-yaml.ts`
+### 「AIエージェントはどの内容を人間にレビューさせるべきか？」
+- 第一: `skills/extract-review/SKILL.md`
+- ツール結果の形: `src/tool-export-program-yaml.ts`
 
-## 3) current operational docs (live behavior)
+## 3) 現行操作ドキュメント（稼働中の動作）
 
-- `skills/SKILL.md`
-  - top-level orchestration skill
-  - intent mapping (natural language -> tool flow)
-  - agent guardrails (tool-vs-skill confusion, shell fallback prohibition)
+- `skills/video-library-pipeline/SKILL.md`
+  - トップレベルオーケストレータスキル
+  - インテントマッピング（自然言語 → ツールフロー）
+  - エージェントガードレール（ツール/スキル混同禁止、シェルフォールバック禁止）
 - `skills/normalize-review/SKILL.md`
-  - sourceRoot pipeline stage 1 (normalization + review gate)
+  - sourceRoot パイプライン ステージ1（正規化 + レビューゲート）
 - `skills/extract-review/SKILL.md`
-  - metadata review stage
-  - YAML is human-only artifact; agent should use structured fields
+  - メタデータレビューステージ
+  - YAML は人間専用アーティファクト。エージェントは構造化フィールドを使うこと
 - `skills/move-review/SKILL.md`
-  - move/apply stage review gate
+  - 移動/apply ステージのレビューゲート
 - `FLOW_AND_OWNERSHIP.md`
-  - runtime boundaries and ordered processing flow
+  - ランタイム境界と順序付き処理フロー
 - `DEPENDENCIES.md`
-  - current runtime prerequisites, long-path assumptions, preflight
+  - 現在のランタイム前提条件、長パス前提、プリフライト
 
-## 4) historical / planning docs (not current behavior by default)
+## 4) 歴史的/計画ドキュメント（デフォルトでは現行動作ではない）
 
-These are valuable for intent and design history, but may not match current implementation.
+設計意図や経緯の把握には有用だが、現在の実装とは一致しない場合がある。
 
 - `BACKFILL_MOVED_FILES_REQUIREMENTS.md`
-  - historical requirements and design notes for backfill feature
+  - バックフィル機能の歴史的要件・設計メモ
 - `DUPLICATE_DEDUP_REQUIREMENTS.md`
-  - historical requirements and design notes for dedup feature
+  - 重複削除機能の歴史的要件・設計メモ
 
-Rule:
-- Do **not** treat these files as the current behavior spec unless verified against:
-  - `skills/SKILL.md`
+ルール:
+- 以下で検証されるまで、これらのファイルを現行動作仕様として扱わないこと:
+  - `skills/video-library-pipeline/SKILL.md`
   - `FLOW_AND_OWNERSHIP.md`
   - `DEPENDENCIES.md`
   - `src/tool-definitions.ts`
 
-## 5) code-level source of truth (when docs disagree)
+## 4b) 現行機能要件ドキュメント（稼働中の動作）
 
-If there is a mismatch between docs:
+2026年2月に実装した機能の設計・仕様書:
 
-1. `src/tool-definitions.ts` (tool params/schema)
-2. `src/tool-*.ts` (tool wrapper behavior and returned fields)
-3. `py/*.py` (core execution logic)
-4. `assets/windows-scripts/*.ps1` (Windows FS behavior)
+- `MULTIDRIVE_EPG_REQUIREMENTS.md`
+  - EPG早期取り込み（`video_pipeline_ingest_epg`）
+  - マルチドライブジャンル別ルーティング（`drive_routes.yaml`）
+  - 再放送グルーピング（`video_pipeline_detect_rebroadcasts`）
 
-For runtime incident triage, prefer:
-- tool JSON results
-- audit JSONL artifacts under `<windowsOpsRoot>/move` and `<windowsOpsRoot>/llm`
-- DB state in `<windowsOpsRoot>/db/mediaops.sqlite`
+## 5) ドキュメント間で矛盾がある場合のコードレベル情報源
 
-## 6) maintenance rule for future edits
+1. `src/tool-definitions.ts`（ツールパラメータ/スキーマ）
+2. `src/tool-*.ts`（ツールラッパーの動作と返却フィールド）
+3. `py/*.py`（コア実行ロジック）
+4. `assets/windows-scripts/*.ps1`（Windows FS 動作）
 
-When changing plugin behavior:
+ランタイムインシデントのトリアージには以下を優先:
+- ツールの JSON 結果
+- `<windowsOpsRoot>/move` および `<windowsOpsRoot>/llm` 配下の監査 JSONL アーティファクト
+- `<windowsOpsRoot>/db/mediaops.sqlite` の DB 状態
 
-- Update code first
-- Then update:
-  - `src/tool-definitions.ts` (if tool schema changed)
-  - `skills/SKILL.md` (if agent behavior or interpretation changes)
-  - `FLOW_AND_OWNERSHIP.md` / `DEPENDENCIES.md` (if flow/dependency changed)
-- If a requirement doc becomes stale, either:
-  - add/update a `Status / Source of Truth` note, or
-  - explicitly mark sections as historical
+## 6) 将来の編集に向けたメンテナンスルール
 
-## 7) quick anti-confusion checklist
+プラグインの動作を変更する際:
 
-Before assuming a doc is current, check:
+- コードを先に更新する
+- 次に以下を更新する:
+  - `src/tool-definitions.ts`（ツールスキーマが変わった場合）
+  - `skills/video-library-pipeline/SKILL.md`（エージェントの動作や解釈が変わった場合）
+  - `FLOW_AND_OWNERSHIP.md` / `DEPENDENCIES.md`（フロー/依存関係が変わった場合）
+- 要件書が古くなった場合は:
+  - `Status / Source of Truth` 注記を追加・更新するか
+  - 明示的に歴史的セクションとしてマークする
 
-- Does it describe a tool that exists in `src/tool-definitions.ts`?
-- Does it match current tool names (`video_pipeline_*`)?
-- Does it mention `prepare_relocate_metadata` / `relocate` if discussing existing-root cleanup?
-- Does it distinguish:
-  - DB sync (`backfill`)
-  - metadata prep (`prepare_relocate_metadata` / `reextract`)
-  - physical relocation (`relocate`)
-- Does it match current long-path assumptions (`pwsh7`, `LongPathsEnabled=1`)?
+## 7) ドキュメントが現行かどうかの確認チェックリスト
 
-If any answer is "no", treat the doc as historical until verified in code.
+ドキュメントを現行仕様と判断する前に確認:
+
+- `src/tool-definitions.ts` に存在するツールが記述されているか？
+- 現在のツール名（`video_pipeline_*`）と一致しているか？
+- 既存ルートのクリーンアップについて `prepare_relocate_metadata` / `relocate` が言及されているか？
+- 以下を区別しているか？:
+  - DB同期（`backfill`）
+  - メタデータ準備（`prepare_relocate_metadata` / `reextract`）
+  - 物理再配置（`relocate`）
+- 現在の長パス前提（`pwsh7`, `LongPathsEnabled=1`）と一致しているか？
+
+1つでも「いいえ」なら、コードで検証されるまで歴史的ドキュメントとして扱うこと。

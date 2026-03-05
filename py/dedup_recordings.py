@@ -13,63 +13,22 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
+from pathscan_common import (
+    as_bool,
+    canonicalize_windows_path,
+    iter_jsonl,
+    now_iso,
+    safe_json,
+    split_win,
+    ts_compact,
+    windows_to_wsl_path,
+    wsl_to_windows_path,
+)
 from windows_pwsh_bridge import run_pwsh_json
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def ts_compact(d: datetime | None = None) -> str:
-    dt_obj = d or datetime.now()
-    return dt_obj.strftime("%Y%m%d_%H%M%S")
-
-
-def safe_json(v: Any) -> str:
-    return json.dumps(v, ensure_ascii=False)
-
-
-def as_bool(v: Any, default: bool) -> bool:
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in {"1", "true", "yes", "on"}:
-            return True
-        if s in {"0", "false", "no", "off"}:
-            return False
-    return default
-
-
-def canonicalize_windows_path(s: str) -> str:
-    p = str(s or "").replace("/", "\\")
-    if len(p) >= 2 and p[1] == ":":
-        p = p[0].upper() + p[1:]
-    return p
-
-
-def wsl_to_windows_path(s: str) -> str:
-    p = str(s or "")
-    if p.startswith("/mnt/") and len(p) > 6 and p[6] == "/":
-        drive = p[5].upper()
-        rest = p.split(f"/mnt/{p[5]}/", 1)[1].replace("/", "\\")
-        return f"{drive}:\\{rest}"
-    return canonicalize_windows_path(p)
-
-
-def windows_to_wsl_path(s: str) -> str:
-    p = canonicalize_windows_path(s)
-    m = re.match(r"^([A-Za-z]):(?:[\\](.*))?$", p)
-    if not m:
-        return p
-    drive = m.group(1).lower()
-    rest = (m.group(2) or "").replace("\\", "/")
-    return f"/mnt/{drive}/{rest}" if rest else f"/mnt/{drive}"
 
 
 def normalize_subtitle(s: str) -> str:
@@ -101,15 +60,6 @@ def safe_group_key(s: str) -> str:
     x = re.sub(r"[^0-9A-Za-z._-]+", "_", s)
     x = re.sub(r"_+", "_", x).strip("._-")
     return x[:120] if x else "group"
-
-
-def split_win(p: str) -> tuple[str | None, str | None, str | None, str | None]:
-    wp = PureWindowsPath(p)
-    drive = wp.drive[:-1] if wp.drive.endswith(":") else (wp.drive or None)
-    name = wp.name or None
-    ext = wp.suffix or None
-    parent = str(wp.parent) if str(wp.parent) not in (".", "") else None
-    return drive, parent, name, ext
 
 
 def parse_simple_yaml_lists(path: Path) -> dict[str, list[str]]:
@@ -217,20 +167,6 @@ def unique_dst_path(dst: Path) -> Path:
     raise RuntimeError(f"failed to resolve unique dst path: {dst}")
 
 
-def iter_jsonl_file(path: Path):
-    with path.open("r", encoding="utf-8-sig") as f:
-        for line in f:
-            s = line.strip()
-            if not s:
-                continue
-            try:
-                rec = json.loads(s)
-            except Exception:
-                continue
-            if isinstance(rec, dict):
-                yield rec
-
-
 def build_group_key(md: dict[str, Any]) -> tuple[str | None, str | None]:
     key = str(md.get("normalized_program_key") or "").strip()
     if not key:
@@ -326,7 +262,7 @@ def main() -> int:
             SELECT pm.path_id, pm.data_json, p.path
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
-            WHERE pm.source='llm'
+            WHERE pm.source != 'edcb_epg'
             """,
             (),
         )
@@ -687,7 +623,7 @@ def main() -> int:
                             ),
                         )
 
-                        for rec in iter_jsonl_file(move_apply_file):
+                        for rec in iter_jsonl(str(move_apply_file)):
                             if rec.get("op") != "move":
                                 continue
                             pid = str(rec.get("path_id") or "")

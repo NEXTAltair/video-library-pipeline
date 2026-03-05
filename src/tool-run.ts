@@ -1,4 +1,5 @@
-import { resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import path from "node:path";
+import { getExtensionRootDir, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
@@ -61,6 +62,11 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
         ];
         if (params.apply) args.push("--apply");
         if (params.allowNeedsReview) args.push("--allow-needs-review");
+
+        // Pass drive routes for multi-destination routing
+        const driveRoutesPath = cfg.driveRoutesPath
+          || path.join(getExtensionRootDir(), "rules", "drive_routes.yaml");
+        args.push("--drive-routes", driveRoutesPath);
 
         const r = runCmd("uv", args, resolved.cwd);
         return toToolResult({

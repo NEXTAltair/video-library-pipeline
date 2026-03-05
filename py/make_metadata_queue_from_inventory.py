@@ -6,14 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import PureWindowsPath
 
+from pathscan_common import now_iso
+
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def latest_llm_row(cur: sqlite3.Cursor, path_id: str):
@@ -21,7 +18,7 @@ def latest_llm_row(cur: sqlite3.Cursor, path_id: str):
         """
         SELECT data_json
         FROM path_metadata
-        WHERE path_id=? AND source='llm'
+        WHERE path_id=?
         ORDER BY updated_at DESC
         LIMIT 1
         """,
