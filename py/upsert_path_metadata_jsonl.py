@@ -95,7 +95,9 @@ def main() -> int:
 
             merged = merge_data(existing, rec, args.source)
             merged["genre"] = resolve_genre(merged)
-            merged["franchise"] = resolve_franchise(merged, args.franchise_rules or None)
+            resolved_franchise = resolve_franchise(merged, args.franchise_rules or None)
+            if resolved_franchise is not None:
+                merged["franchise"] = resolved_franchise
             data_json = json.dumps(merged, ensure_ascii=False)
             to_upsert.append((path_id, args.source, data_json, updated_at))
 
