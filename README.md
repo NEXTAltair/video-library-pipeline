@@ -751,17 +751,17 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 | ジャンル               | 振り分け先                     | レイアウト                |
 | ---------------------- | ------------------------------ | ------------------------- |
-| 特撮                   | `N:\`                        | `by_series`             |
-| アニメ                 | `D:\Anime`                   | `by_series` [※](#5)    |
+| 特撮                   | `N:\`                        | `by_title`              |
+| アニメ                 | `D:\Anime`                   | `by_title` [※](#5)      |
 | 映画                   | `L:\`                        | `by_syllabary`          |
-| ドラマ                 | `E:\Dドラマ`                 | `by_series` [※](#5)    |
+| ドラマ                 | `E:\Dドラマ`                 | `by_title` [※](#5)      |
 | ドキュメンタリー・情報 | `E:\Dドキュメンタリー･情報` | `by_program_year_month` |
 | バラエティ             | `E:\Bバラエティ`             | `by_program_year_month` |
 | ニュース・報道         | `E:\Nニュース・報道`         | `by_program_year_month` |
 | 放送大学               | `B:\放送大学`                | `by_program_year_month` |
 | (デフォルト)           | `B:\VideoLibrary`            | `by_program_year_month` |
 
-> **※** アニメ・ドラマのレイアウト移行 → [#5](https://github.com/NEXTAltair/video-library-pipeline/issues/5)。レイアウト名のリネーム → [#2](https://github.com/NEXTAltair/video-library-pipeline/issues/2)
+> **※** アニメ・ドラマのレイアウト移行 → [#5](https://github.com/NEXTAltair/video-library-pipeline/issues/5)。`by_series` は後方互換エイリアスとして `by_title` に正規化される。
 
 ### レイアウトタイプ
 
@@ -769,10 +769,10 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | ------------------------- | ------------------------------------------------ | ----------------------------------- |
 | `by_program_year_month` | `<root>/<program_title>/<year>/<month>/<file>` | 大部分のジャンルで使用              |
 | `by_syllabary`          | `<root>/<五十音フォルダ(ア,カ,サ…)>/<file>`   | 映画                                |
-| `by_series`             | `<root>/<program_title>/<file>` (年月なし)     | 特撮 (既存シリーズフォルダにマッチ) |
+| `by_title`              | `<root>/<program_title>/<file>` (年月なし)     | 特撮 (既存シリーズフォルダにマッチ) |
 | `flat`                  | `<root>/<file>`                                | (現在未使用)                        |
 
-> `by_series` と `by_syllabary` はシンプルな実装済み。改善計画 → [#2](https://github.com/NEXTAltair/video-library-pipeline/issues/2), [#5](https://github.com/NEXTAltair/video-library-pipeline/issues/5)
+> `by_syllabary` はシンプルな実装済み。`by_series` は後方互換名として受け付けつつ内部で `by_title` に正規化する。
 
 ---
 
