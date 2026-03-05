@@ -278,16 +278,21 @@ def match_key_from_filename(filename: str) -> str | None:
 def match_key_from_epg(epg: dict[str, Any]) -> str | None:
     """Generate a match key from parsed EPG metadata.
 
-    Uses the same key format as match_key_from_filename for correlation.
+    Key format: normalized_title::broadcaster_norm::YYYY-MM-DD::HH:MM
+    Includes broadcaster to avoid collisions when the same title airs
+    on different channels at the same time (e.g. terrestrial / one-seg).
     """
     air_date = epg.get("air_date")
     start_time = epg.get("start_time")
     title = epg.get("official_title", "")
+    broadcaster = epg.get("broadcaster", "")
     if not air_date or not start_time or not title:
         return None
     key = _BAD.sub("", _nfkc(title).lower())
     key = _WS.sub("_", key).strip("_")
-    return f"{key}::{air_date}::{start_time}"
+    bc = _BAD.sub("", _nfkc(broadcaster).lower()) if broadcaster else ""
+    bc = _WS.sub("_", bc).strip("_") if bc else ""
+    return f"{key}::{bc}::{air_date}::{start_time}"
 
 
 def datetime_key_from_filename(filename: str) -> str | None:

@@ -392,11 +392,18 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict
 
 
 class _EpgCache:
-    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key."""
+    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key.
+
+    Indexes:
+    - _by_match_key: full key including broadcaster (no collision)
+    - _by_title_dt: title::date::time (old format) → list of EPG dicts
+    - _by_datetime_key: date::time → list of EPG dicts
+    """
 
     def __init__(self, con: sqlite3.Connection):
         self._by_match_key: dict[str, dict] = {}
-        self._by_datetime_key: dict[str, dict] = {}
+        self._by_title_dt: dict[str, list[dict]] = {}
+        self._by_datetime_key: dict[str, list[dict]] = {}
         try:
             rows = con.execute(
                 "SELECT data_json FROM path_metadata WHERE source='edcb_epg'",
@@ -414,15 +421,31 @@ class _EpgCache:
             dk = data.get("datetime_key")
             if mk:
                 self._by_match_key[mk] = data
+                # Build title::date::time key (strip broadcaster segment)
+                parts = mk.split("::")
+                if len(parts) == 4:
+                    title_dt = f"{parts[0]}::{parts[2]}::{parts[3]}"
+                    self._by_title_dt.setdefault(title_dt, []).append(data)
+                elif len(parts) == 3:
+                    # Legacy format without broadcaster
+                    self._by_title_dt.setdefault(mk, []).append(data)
             if dk:
-                self._by_datetime_key[dk] = data
+                self._by_datetime_key.setdefault(dk, []).append(data)
 
     def lookup(self, match_key: str | None, datetime_key: str | None) -> dict | None:
-        """Find EPG data by match_key (exact), then fallback to datetime_key."""
-        if match_key and match_key in self._by_match_key:
-            return self._by_match_key[match_key]
+        """Find EPG data by match_key, title_dt fallback, then datetime_key.
+
+        match_key from filename has no broadcaster segment (title::date::time),
+        so we try _by_match_key first (EPG-to-EPG exact), then _by_title_dt
+        (filename-to-EPG), then _by_datetime_key (date+time only).
+        """
+        if match_key:
+            if match_key in self._by_match_key:
+                return self._by_match_key[match_key]
+            if match_key in self._by_title_dt:
+                return self._by_title_dt[match_key][0]
         if datetime_key and datetime_key in self._by_datetime_key:
-            return self._by_datetime_key[datetime_key]
+            return self._by_datetime_key[datetime_key][0]
         return None
 
 

@@ -49,13 +49,80 @@ def ts_path_from_program_txt(program_txt_path: Path) -> Path | None:
     return None
 
 
+def _migrate_match_keys(db_path: str, *, dry_run: bool = False) -> int:
+    """Re-generate match_keys for existing edcb_epg records (old→new format).
+
+    New format includes broadcaster: title::broadcaster::date::time
+    """
+    con = connect_db(db_path)
+    rows = con.execute(
+        "SELECT path_id, data_json FROM path_metadata WHERE source='edcb_epg'",
+    ).fetchall()
+
+    updated = 0
+    skipped = 0
+    for path_id, data_json_str in rows:
+        try:
+            data = json.loads(data_json_str)
+        except Exception:
+            skipped += 1
+            continue
+        if not isinstance(data, dict):
+            skipped += 1
+            continue
+
+        title = data.get("official_title", "")
+        broadcaster = data.get("broadcaster", "")
+        air_date = data.get("air_date", "")
+        start_time = data.get("start_time", "")
+        if not title or not air_date or not start_time:
+            skipped += 1
+            continue
+
+        new_mk = match_key_from_epg({
+            "official_title": title,
+            "broadcaster": broadcaster,
+            "air_date": air_date,
+            "start_time": start_time,
+        })
+        old_mk = data.get("match_key")
+        if new_mk == old_mk:
+            skipped += 1
+            continue
+
+        data["match_key"] = new_mk
+        updated += 1
+
+        if not dry_run:
+            con.execute(
+                "UPDATE path_metadata SET data_json=?, updated_at=? WHERE path_id=? AND source='edcb_epg'",
+                (json.dumps(data, ensure_ascii=False), now_iso(), path_id),
+            )
+
+    if not dry_run:
+        con.commit()
+    con.close()
+
+    result = {"tool": "migrate_match_keys", "dry_run": dry_run, "total": len(rows), "updated": updated, "skipped": skipped}
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
-    ap.add_argument("--ts-root", required=True, help="WSL path to TS recording directory (e.g. /mnt/j/TVFile)")
+    ap.add_argument("--ts-root", help="WSL path to TS recording directory (e.g. /mnt/j/TVFile)")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--migrate-match-keys", action="store_true", help="Re-generate match_keys for existing edcb_epg records")
+    ap.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
     args = ap.parse_args()
+
+    if args.migrate_match_keys:
+        return _migrate_match_keys(args.db, dry_run=args.dry_run)
+
+    if not args.ts_root:
+        ap.error("--ts-root is required unless --migrate-match-keys is used")
 
     if not os.path.exists(args.db):
         raise SystemExit(f"DB not found: {args.db}")
