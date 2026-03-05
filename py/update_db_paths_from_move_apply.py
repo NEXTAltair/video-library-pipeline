@@ -64,15 +64,28 @@ def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
     if dst is None:
         con.execute("UPDATE path_metadata SET path_id=? WHERE path_id=?", (dst_path_id, src_path_id))
         return "moved_src_to_dst"
+
+    src_md = _json_obj(src["data_json"])
+    dst_md = _json_obj(dst["data_json"])
+    src_hist = src_md.get("source_history") if isinstance(src_md.get("source_history"), list) else []
+    dst_hist = dst_md.get("source_history") if isinstance(dst_md.get("source_history"), list) else []
+    combined_hist = list(dst_hist) + [h for h in src_hist if h not in dst_hist]
+
     preferred = src if _metadata_rank(src) > _metadata_rank(dst) else dst
     if preferred["path_id"] == src_path_id:
+        src_md["source_history"] = combined_hist
         con.execute(
             "UPDATE path_metadata SET source=?, data_json=?, updated_at=? WHERE path_id=?",
-            (src["source"], src["data_json"], src["updated_at"], dst_path_id),
+            (src["source"], json.dumps(src_md, ensure_ascii=False), src["updated_at"], dst_path_id),
         )
         action = "src_overwrote_dst"
     else:
-        action = "kept_dst"
+        dst_md["source_history"] = combined_hist
+        con.execute(
+            "UPDATE path_metadata SET data_json=?, updated_at=? WHERE path_id=?",
+            (json.dumps(dst_md, ensure_ascii=False), dst["updated_at"], dst_path_id),
+        )
+        action = "kept_dst_with_history"
     con.execute("DELETE FROM path_metadata WHERE path_id=?", (src_path_id,))
     return action
 

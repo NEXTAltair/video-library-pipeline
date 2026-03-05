@@ -11,6 +11,10 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from franchise_resolver import resolve_franchise
+from genre_resolver import resolve_genre
+from source_history import make_entry
+
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
 UND = re.compile(r"_+")
@@ -335,7 +339,7 @@ def _get_latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | No
             """
             SELECT data_json
             FROM path_metadata
-            WHERE path_id=? AND source='llm'
+            WHERE path_id=?
             ORDER BY updated_at DESC
             LIMIT 1
             """,
@@ -385,6 +389,8 @@ def main() -> int:
     ap.add_argument("--model", default="openai-codex/gpt-5.2")
     ap.add_argument("--extraction-version", default="prompt_v1_20260208")
     ap.add_argument("--hints", default="")
+    ap.add_argument("--drive-routes", default="")
+    ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--ignore-human-reviewed", action="store_true")
     args = ap.parse_args()
 
@@ -476,6 +482,7 @@ def main() -> int:
                 "subtitle": sub,
                 "air_date": air,
                 "genre": None,
+                "franchise": None,
                 "broadcaster": None,
                 "channel": None,
                 "confidence": round(float(conf), 2),
@@ -488,6 +495,9 @@ def main() -> int:
                 "title_extraction_path": title_res.get("title_extraction_path"),
                 "evidence": {"source_name": "filename", "raw": name},
             }
+            row["genre"] = resolve_genre(row, args.drive_routes or None)
+            row["franchise"] = resolve_franchise(row, args.franchise_rules or None)
+            row["source_history"] = [make_entry("llm", [k for k, v in row.items() if v is not None and k not in {"path_id", "path"}])]
             enforce_db_contract(row)
             rows.append(row)
 
@@ -502,6 +512,10 @@ def main() -> int:
         import sys
 
         sys.argv = ["upsert", "--db", args.db, "--in", str(epath), "--source", "llm"]
+        if args.drive_routes:
+            sys.argv += ["--drive-routes", args.drive_routes]
+        if args.franchise_rules:
+            sys.argv += ["--franchise-rules", args.franchise_rules]
         if _upsert_main() != 0:
             raise SystemExit(f"upsert failed: {epath}")
 

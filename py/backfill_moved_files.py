@@ -930,7 +930,7 @@ def main() -> int:
                     """
                     SELECT data_json
                     FROM path_metadata
-                    WHERE path_id=? AND source='llm'
+                    WHERE path_id=?
                     ORDER BY updated_at DESC
                     LIMIT 1
                     """,

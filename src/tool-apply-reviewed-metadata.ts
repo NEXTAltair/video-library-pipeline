@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { latestJsonlFile, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { getExtensionRootDir, latestJsonlFile, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 
 function tsCompact(d = new Date()): string {
@@ -206,6 +206,8 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         const hostRoot = String(cfg.windowsOpsRoot || "/tmp").replace(/\/+$/, "");
         const llmDir = path.join(hostRoot, "llm");
         const resolved = resolvePythonScript("upsert_path_metadata_jsonl.py");
+        const driveRoutesPath = path.join(getExtensionRootDir(), "rules", "drive_routes.yaml");
+        const franchiseRulesPath = path.join(getExtensionRootDir(), "rules", "franchise_rules.yaml");
         const source = chooseSourceJsonl(llmDir, typeof params.sourceJsonlPath === "string" ? params.sourceJsonlPath : undefined);
         if (!source.ok || !source.path) {
           return toToolResult({
@@ -306,6 +308,10 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           outputStampedJsonlPath,
           "--source",
           String(params.source || "llm"),
+          "--drive-routes",
+          driveRoutesPath,
+          "--franchise-rules",
+          franchiseRulesPath,
         ];
         const r = runCmd("uv", upsertArgs, resolved.cwd);
         return toToolResult({

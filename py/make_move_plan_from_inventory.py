@@ -19,7 +19,7 @@ def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
         """
         SELECT data_json
         FROM path_metadata
-        WHERE path_id=? AND source='llm'
+        WHERE path_id=?
         ORDER BY updated_at DESC
         LIMIT 1
         """,

@@ -117,3 +117,8 @@ User correction loop:
 - For long-path-sensitive filesystem access, prefer pwsh7 helpers over WSL file I/O.
 - Keep TS->Python argument names aligned exactly with runner CLI args.
 - Treat hints as optional assistive input, not as the primary extraction engine.
+
+## data_json v2
+- Added `genre`, `franchise`, `source_history` fields to metadata payloads.
+- Migration script: `python py/migrate_data_json_v2.py --db <mediaops.sqlite> --dry-run` then rerun without `--dry-run`.
+

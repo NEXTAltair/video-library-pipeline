@@ -23,7 +23,10 @@ import json
 import os
 from datetime import datetime, timezone
 
+from franchise_resolver import resolve_franchise
+from genre_resolver import resolve_genre
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
+from source_history import merge_data
 
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
@@ -55,6 +58,8 @@ def main() -> int:
     ap.add_argument("--db", default="")
     ap.add_argument("--in", dest="inp", required=True)
     ap.add_argument("--source", default="llm")
+    ap.add_argument("--drive-routes", default="")
+    ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -92,7 +97,20 @@ def main() -> int:
                 missing += 1
                 continue
 
-            data_json = json.dumps(rec, ensure_ascii=False)
+            prior = fetchone(con, "SELECT data_json FROM path_metadata WHERE path_id=?", (path_id,))
+            existing = {}
+            if prior and prior["data_json"]:
+                try:
+                    v = json.loads(str(prior["data_json"]))
+                    if isinstance(v, dict):
+                        existing = v
+                except Exception:
+                    existing = {}
+
+            merged = merge_data(existing, rec, args.source)
+            merged["genre"] = resolve_genre(merged, args.drive_routes or None)
+            merged["franchise"] = resolve_franchise(merged, args.franchise_rules or None)
+            data_json = json.dumps(merged, ensure_ascii=False)
             to_upsert.append((path_id, args.source, data_json, updated_at))
 
         if args.dry_run:
@@ -129,4 +147,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

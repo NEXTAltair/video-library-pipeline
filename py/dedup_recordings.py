@@ -326,7 +326,7 @@ def main() -> int:
             SELECT pm.path_id, pm.data_json, p.path
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
-            WHERE pm.source='llm'
+            WHERE pm.source != 'edcb_epg'
             """,
             (),
         )

@@ -37,6 +37,8 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
         const hostRoot = String(cfg.windowsOpsRoot || "/tmp").replace(/\/+$/, "");
         const outDir = `${hostRoot}/llm`;
         const hintsPath = path.join(getExtensionRootDir(), "rules", "program_aliases.yaml");
+        const driveRoutesPath = path.join(getExtensionRootDir(), "rules", "drive_routes.yaml");
+        const franchiseRulesPath = path.join(getExtensionRootDir(), "rules", "franchise_rules.yaml");
         const queueProvided = typeof params.queuePath === "string" && params.queuePath.trim().length > 0;
         const queue = String(params.queuePath || `${outDir}/queue_manual_reextract.jsonl`);
         let queueAutoCreated = false;
@@ -77,6 +79,7 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
           String(params.batchSize ?? 50),
         ];
         if (params.maxBatches) args.push("--max-batches", String(params.maxBatches));
+        args.push("--drive-routes", driveRoutesPath, "--franchise-rules", franchiseRulesPath);
         if (params.extractionVersion) args.push("--extraction-version", String(params.extractionVersion));
         if (params.preserveHumanReviewed === false) args.push("--ignore-human-reviewed");
         const r = runCmd("uv", args, resolved.cwd);
