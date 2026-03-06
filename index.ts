@@ -13,6 +13,7 @@ import { registerToolPrepareRelocateMetadata } from "./src/tool-prepare-relocate
 import { registerToolRelocate } from "./src/tool-relocate";
 import { registerToolReextract } from "./src/tool-reextract";
 import { registerToolLlmExtract } from "./src/tool-llm-extract";
+import { registerToolLlmExtractStatus } from "./src/tool-llm-extract-status";
 import { registerToolRepairDb } from "./src/tool-repair-db";
 import { registerToolRun } from "./src/tool-run";
 import { registerToolStatus } from "./src/tool-status";
@@ -46,6 +47,7 @@ export default function register(api: any) {
   registerToolRepairDb(api, getCfg);
   registerToolReextract(api, getCfg);
   registerToolLlmExtract(api, getCfg);
+  registerToolLlmExtractStatus(api, getCfg);
   registerToolExportProgramYaml(api, getCfg);
   registerToolIngestEpg(api, getCfg);
   registerToolDetectRebroadcasts(api, getCfg);

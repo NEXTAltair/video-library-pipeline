@@ -843,7 +843,7 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | # | 問題 | Issue | 状態 |
 |---|------|-------|------|
 | 1 | Stage 2→3 間のゲートが暗黙的 | — | `allowNeedsReview` デフォルトfalseで実質制御済み |
-| 2 | LLMサブエージェントのリカバリ機構がない | [#13](https://github.com/NEXTAltair/video-library-pipeline/issues/13) | open |
+| 2 | ~~LLMサブエージェントのリカバリ機構がない~~ | [#13](https://github.com/NEXTAltair/video-library-pipeline/issues/13) | 解決済み (llm_extract_status ツールでバッチ状態検出・リトライ) |
 | 3 | ~~EPG match_key 衝突リスク~~ | [#7](https://github.com/NEXTAltair/video-library-pipeline/issues/7) | 解決済み (`match_key` に broadcaster を含めて衝突回避) |
 | 4 | relocateフローの source 不整合 | [#6](https://github.com/NEXTAltair/video-library-pipeline/issues/6) | open |
 | 5 | ~~DBバックアップのローテーション~~ | — | 解決済み (`rotate_backups(keep=10)`) |

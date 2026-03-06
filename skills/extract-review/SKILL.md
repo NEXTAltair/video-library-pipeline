@@ -88,6 +88,15 @@ Use this when rule-based extraction leaves many `needs_review` entries and a hig
      3. After user confirms edits, call `video_pipeline_apply_reviewed_metadata` with `sourceJsonlPath` = path to the **edited copy**.
      4. **Do NOT** pass the `.yaml` file or the original `llm_filename_extract_output_*.jsonl` to `video_pipeline_apply_reviewed_metadata`.
 
+## Recovery (LLM subagent failure or timeout)
+
+If a sessions_spawn call fails, times out, or the subagent doesn't produce output:
+
+1. Call `video_pipeline_llm_extract_status` to check batch completion status.
+2. The tool scans for missing output JSONL files and returns `followUpToolCalls` for pending batches only.
+3. Execute the returned `followUpToolCalls` in order (same pattern as initial run).
+4. Repeat until all batches are complete.
+
 ---
 
 ## Continuing after extraction

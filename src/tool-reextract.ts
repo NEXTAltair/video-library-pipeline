@@ -15,7 +15,7 @@ function ensureDefaultQueueFile(queuePath: string): { created: boolean; error?: 
   }
 }
 
-function buildLlmExtractTask(inputJsonlPath: string, outputJsonlPath: string, hintsPath: string): string {
+export function buildLlmExtractTask(inputJsonlPath: string, outputJsonlPath: string, hintsPath: string): string {
   return [
     "# video-library-pipeline: LLM title extraction task",
     "",
