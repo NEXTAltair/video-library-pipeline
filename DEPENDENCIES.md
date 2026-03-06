@@ -43,7 +43,7 @@
 - `db/move/llm` はランナーが欠損時に自動作成する
 - `scripts` は実行時に必要だが、ディレクトリ/ファイルの欠損は `video_pipeline_validate` および `video_pipeline_analyze_and_move_videos` 実行時にプラグインテンプレートから自動プロビジョニングされる
 - `<windowsOpsRoot>/scripts` 配下のプラグイン管理スクリプトは validate/run/backfill/relocate/dedup 実行時にテンプレートから自動同期される（欠損または古いファイルは更新される）
-- ユーザーカスタムスクリプト（例: `fix_prefix_timestamp_names.ps1`, `normalize_unwatched_names.ps1`）はプラグイン管理外であり上書きされない
+- ユーザーカスタムスクリプトはプラグイン管理外であり上書きされない
 
 ## 必須バイナリ
 
@@ -62,10 +62,8 @@
 
 `<windowsOpsRoot>/scripts` 配下:
 
-- `normalize_filenames.ps1`
 - `unwatched_inventory.ps1`
 - `apply_move_plan.ps1`
-- `list_remaining_unwatched.ps1`
 
 プラグイン内部ヘルパースクリプト（自動管理）:
 

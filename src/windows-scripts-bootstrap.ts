@@ -3,10 +3,8 @@ import path from "node:path";
 import { getExtensionRootDir } from "./runtime";
 
 export const REQUIRED_WINDOWS_SCRIPTS = [
-  "normalize_filenames.ps1",
   "unwatched_inventory.ps1",
   "apply_move_plan.ps1",
-  "list_remaining_unwatched.ps1",
 ] as const;
 
 export const INTERNAL_WINDOWS_SCRIPTS = ["_long_path_utils.ps1", "enumerate_files_jsonl.ps1"] as const;

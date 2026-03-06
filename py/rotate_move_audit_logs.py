@@ -36,10 +36,6 @@ def main() -> int:
     llm_arc = llm_dir / "archive"
     llm_arc.mkdir(parents=True, exist_ok=True)
 
-    remaining = sorted(move_dir.glob("remaining_unwatched_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in remaining[1:]:
-        shutil.move(str(p), str(arc / p.name))
-
     move_logs_legacy = sorted(move_dir.glob("move_to_videolibrary_by_program_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
     move_apply_logs = sorted(move_dir.glob("move_apply_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
     move_plan_logs = sorted(move_dir.glob("move_plan_from_queue_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)

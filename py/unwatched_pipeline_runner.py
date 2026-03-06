@@ -15,7 +15,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-from windows_pwsh_bridge import canonicalize_windows_path, run_pwsh_file, run_pwsh_json
+from windows_pwsh_bridge import canonicalize_windows_path, run_pwsh_json
 
 
 def run_py(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = None) -> str:
@@ -115,11 +115,6 @@ def main() -> int:
     here = Path(__file__).resolve().parent
     hints_yaml = here.parent / "rules" / "program_aliases.yaml"
 
-    normalize_args = ["-Root", source_root_win, "-OpsRoot", ops_root_win]
-    if not args.apply:
-        normalize_args.append("-DryRun")
-    run_pwsh_file(scripts_root_win + r"\normalize_filenames.ps1", normalize_args)
-
     inv_meta = run_pwsh_json(
         scripts_root_win + r"\unwatched_inventory.ps1",
         ["-Root", source_root_win, "-OpsRoot", ops_root_win, "-IncludeHash"],
@@ -207,13 +202,6 @@ def main() -> int:
         cwd=str(here),
     )
 
-    remaining_txt = move_dir / f"remaining_unwatched_{ts}.txt"
-    out = run_pwsh_file(
-        scripts_root_win + r"\list_remaining_unwatched.ps1",
-        ["-Root", source_root_win],
-    )
-    remaining_txt.write_text(out, encoding="utf-8")
-
     run_py_uv(
         here / "rotate_move_audit_logs.py",
         [
@@ -229,7 +217,19 @@ def main() -> int:
         cwd=str(here),
     )
 
-    lines = [ln for ln in remaining_txt.read_text(encoding="utf-8", errors="ignore").splitlines() if ln.strip()]
+    inv_count = sum(1 for ln in inv.read_text(encoding="utf-8", errors="ignore").splitlines() if ln.strip())
+    applied_ok = 0
+    for ln in applied.read_text(encoding="utf-8", errors="ignore").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rec = json.loads(ln)
+            if rec.get("ok") and not rec.get("dry_run"):
+                applied_ok += 1
+        except (json.JSONDecodeError, TypeError):
+            pass
+    remaining = max(inv_count - applied_ok, 0)
     summary = {
         "inventory": str(inv),
         "queue": str(queue),
@@ -237,7 +237,7 @@ def main() -> int:
         "plan_stats": plan_out,
         "applied": str(applied),
         "apply": bool(args.apply),
-        "remaining_files": len(lines),
+        "remaining_files": remaining,
         "windows_ops_root": str(ops_root),
         "max_files_per_run": int(args.max_files_per_run),
     }
