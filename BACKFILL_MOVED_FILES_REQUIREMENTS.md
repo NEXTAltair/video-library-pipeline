@@ -110,7 +110,7 @@ flowchart TD
 - DB スキーマは既存互換（`mediaops_schema.py` 契約維持）
 - `path_id` は既存ロジック（`ingest_inventory_jsonl.py` の UUIDv5 規則）を再利用
 - パス比較は Windows 形式で正規化
-- ファイル名正則化は既存 `normalize_filenames.ps1` と同一ポリシーで解釈
+- ファイル名はメタデータ抽出側 (`edcb_program_parser.py`) が複数タイムスタンプ形式に対応済みのため物理リネーム不要
 - 単一実行前提（同時多重実行は保証しない）
 
 ## 6. 機能要件 [PARTIAL]
