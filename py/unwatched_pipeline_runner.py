@@ -15,6 +15,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
+from move_apply_stats import aggregate_move_apply
 from windows_pwsh_bridge import canonicalize_windows_path, run_pwsh_json
 
 
@@ -218,17 +219,8 @@ def main() -> int:
     )
 
     inv_count = sum(1 for ln in inv.read_text(encoding="utf-8", errors="ignore").splitlines() if ln.strip())
-    applied_ok = 0
-    for ln in applied.read_text(encoding="utf-8", errors="ignore").splitlines():
-        ln = ln.strip()
-        if not ln:
-            continue
-        try:
-            rec = json.loads(ln)
-            if rec.get("ok") and not rec.get("dry_run"):
-                applied_ok += 1
-        except (json.JSONDecodeError, TypeError):
-            pass
+    move_stats = aggregate_move_apply(str(applied))
+    applied_ok = move_stats["succeeded"]
     remaining = max(inv_count - applied_ok, 0)
     summary = {
         "inventory": str(inv),
@@ -240,6 +232,7 @@ def main() -> int:
         "remaining_files": remaining,
         "windows_ops_root": str(ops_root),
         "max_files_per_run": int(args.max_files_per_run),
+        "moveApplyStats": move_stats,
     }
 
     print(

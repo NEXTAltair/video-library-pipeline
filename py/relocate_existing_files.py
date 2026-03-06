@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
+from move_apply_stats import aggregate_move_apply
 from path_placement_rules import (
     build_expected_dest_path,
     build_routed_dest_path,
@@ -842,6 +843,8 @@ def main() -> int:
                 "Inspect relocate_apply and move_apply JSONL files for error breakdown (e.g., src_not_found, dst_exists) before retrying."
             )
 
+        move_apply_stats = aggregate_move_apply(raw_move_apply_path) if raw_move_apply_path else None
+
         summary = {
             "ok": len(errors) == 0,
             "tool": "video_pipeline_relocate_existing_files",
@@ -871,6 +874,7 @@ def main() -> int:
             "needsReviewSkipped": needs_review_skipped,
             "corruptCandidates": corrupt_candidates,
             "dstExistsErrors": dst_exists_errors,
+            "moveApplyStats": move_apply_stats,
             "metadataQueuePlannedCount": metadata_queue_planned_count,
             "requiresMetadataPreparation": bool(requires_metadata_preparation),
             "requiresHumanReview": bool(requires_human_review),

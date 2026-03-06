@@ -1,5 +1,5 @@
 import path from "node:path";
-import { getExtensionRootDir, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
@@ -69,7 +69,8 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
         args.push("--drive-routes", driveRoutesPath);
 
         const r = runCmd("uv", args, resolved.cwd);
-        return toToolResult({
+        const parsed = parseJsonObject(r.stdout);
+        const out: AnyObj = {
           ok: r.ok,
           tool: "video_pipeline_analyze_and_move_videos",
           scriptSource: resolved.source,
@@ -84,7 +85,11 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
             failed: scriptsProvision.failed,
             missingTemplates: scriptsProvision.missingTemplates,
           },
-        });
+        };
+        if (parsed) {
+          for (const [k, v] of Object.entries(parsed)) out[k] = v;
+        }
+        return toToolResult(out);
       },
     },
     { optional: true },

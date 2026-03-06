@@ -17,6 +17,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
+from move_apply_stats import aggregate_move_apply
 from pathscan_common import (
     as_bool,
     canonicalize_windows_path,
@@ -810,6 +811,8 @@ def main() -> int:
                 for row in apply_rows:
                     w.write(safe_json(row) + "\n")
 
+        move_apply_stats = aggregate_move_apply(str(move_apply_file)) if move_apply_file else None
+
         summary = {
             "ok": len(errors) == 0,
             "tool": "video_pipeline_dedup_recordings",
@@ -825,6 +828,7 @@ def main() -> int:
             "filesDropped": files_dropped,
             "filesMoved": files_moved,
             "moveBackend": move_backend,
+            "moveApplyStats": move_apply_stats,
             "hashScanPath": args.hash_scan_path or None,
             "hashRawJson": args.hash_raw_json or None,
             "files_hash_rows_upserted": files_hash_rows_upserted,
