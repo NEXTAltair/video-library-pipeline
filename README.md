@@ -848,7 +848,7 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | 4 | relocateフローの source 不整合 | [#6](https://github.com/NEXTAltair/video-library-pipeline/issues/6) | open |
 | 5 | ~~DBバックアップのローテーション~~ | — | 解決済み (`rotate_backups(keep=10)`) |
 | 6 | ~~PowerShellエラーハンドリング不透明~~ | [#12](https://github.com/NEXTAltair/video-library-pipeline/issues/12) | 解決済み (`moveApplyStats` で構造化エラー伝播) |
-| 7 | program_aliases.yaml 循環依存 | [#14](https://github.com/NEXTAltair/video-library-pipeline/issues/14) | open |
+| 7 | ~~program_aliases.yaml 循環依存~~ | [#14](https://github.com/NEXTAltair/video-library-pipeline/issues/14) | 不要 (既存アーカイブ機構で管理可能) |
 | 8 | ~~Python/TS重複コード整理~~ | — | 完了 |
 | 9 | ~~cron定期EPG取り込み~~ | [#8](https://github.com/NEXTAltair/video-library-pipeline/issues/8) | 解決済み (毎日05:00 JST cronジョブ追加) |
 | 10 | ~~normalize_filenames.ps1 欠落サブスクリプト~~ | [#9](https://github.com/NEXTAltair/video-library-pipeline/issues/9) | 解決済み (ラッパーごと削除、メタデータ抽出側で対応済み) |
