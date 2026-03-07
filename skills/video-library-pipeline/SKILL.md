@@ -30,7 +30,7 @@ Classify the user request first, then **immediately read the sub-skill SKILL.md 
 | DB sync only ("DB化", "DBに登録して", "既存ファイルをDBに入れて") | Call `video_pipeline_backfill_moved_files` directly (no `roots` param needed) |
 | Ingest EPG (program.txt capture) | Call `video_pipeline_ingest_epg` (run before deleting program.txt) |
 | Re-run metadata extraction only | Read `skills/extract-review/SKILL.md`, then follow its sequence |
-| Rebroadcast detection | Call `video_pipeline_detect_rebroadcasts` directly |
+| Rebroadcast detection | Call `video_pipeline_detect_rebroadcasts` directly (EPG `[再]` flag based: `rebroadcast` / `original` / `unknown`) |
 
 If the user asks about cleanup/reorganization for an already-existing directory tree, treat that as **relocate flow** (read `skills/relocate-review/SKILL.md`), not the `sourceRoot` pipeline flow.
 

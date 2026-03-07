@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Detect rebroadcasts and group same-episode recordings by air_date/broadcaster.
+"""Detect rebroadcast candidates and classify with EPG rebroadcast flags.
 
 This script groups recordings of the same episode (same normalized_program_key +
-episode_no/subtitle) and identifies original vs. rebroadcast entries based on
-air_date ordering. Rebroadcasts are NOT deleted — they are linked in the
-broadcast_groups / broadcast_group_members tables.
+episode_no/subtitle). Classification rule priority:
+
+1) If any member has broadcasts.data_json.is_rebroadcast_flag=true, those are
+   "rebroadcast" and non-true members become "original".
+2) If no member has true flag (EPG missing or all false/unknown), all members
+   are marked "unknown" to avoid date-only misclassification.
+
+Rebroadcast candidates are linked in broadcast_groups / broadcast_group_members.
+No files are deleted.
 """
 
 from __future__ import annotations
@@ -46,6 +52,33 @@ def _stable_group_id(episode_key: str) -> str:
     return hashlib.sha256(episode_key.encode("utf-8")).hexdigest()[:16]
 
 
+def _extract_rebroadcast_flag(data_json_raw: Any) -> bool | None:
+    if not data_json_raw:
+        return None
+    try:
+        obj = json.loads(str(data_json_raw))
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    v = obj.get("is_rebroadcast_flag")
+    if isinstance(v, bool):
+        return v
+    return None
+
+
+def _classify_group(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    has_rebroadcast = any(e.get("is_rebroadcast_flag") is True for e in entries)
+    classified: list[dict[str, Any]] = []
+    for e in entries:
+        if has_rebroadcast:
+            btype = "rebroadcast" if e.get("is_rebroadcast_flag") is True else "original"
+        else:
+            btype = "unknown"
+        classified.append({**e, "broadcast_type": btype})
+    return classified
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -58,7 +91,27 @@ def main() -> int:
 
     errors: list[str] = []
     try:
-        # Load all LLM metadata
+        # Load EPG rebroadcast flags via path_programs -> broadcasts
+        epg_rows = fetchall(
+            con,
+            """
+            SELECT pp.path_id, b.data_json
+            FROM path_programs pp
+            JOIN broadcasts b ON b.broadcast_id = pp.broadcast_id
+            WHERE pp.broadcast_id IS NOT NULL
+            """,
+            (),
+        )
+        path_rebroadcast_flag: dict[str, bool | None] = {}
+        for r in epg_rows:
+            pid = str(r["path_id"])
+            flag = _extract_rebroadcast_flag(r["data_json"])
+            if flag is True:
+                path_rebroadcast_flag[pid] = True
+            elif pid not in path_rebroadcast_flag:
+                path_rebroadcast_flag[pid] = flag
+
+        # Load all non-EPG metadata for grouping keys
         md_rows = fetchall(
             con,
             """
@@ -94,6 +147,7 @@ def main() -> int:
                 "broadcaster": md.get("broadcaster") or md.get("channel") or None,
                 "episode_key": ep_key,
                 "metadata": md,
+                "is_rebroadcast_flag": path_rebroadcast_flag.get(path_id),
             }
             grouped.setdefault(ep_key, []).append(entry)
 
@@ -119,23 +173,23 @@ def main() -> int:
 
         for ep_key in group_keys:
             entries = rebroadcast_groups[ep_key]
-            # Sort by air_date ascending — earliest is "original"
-            entries_sorted = sorted(entries, key=lambda e: e["air_date"] or "9999")
+            entries_sorted = sorted(entries, key=lambda e: (e["air_date"] or "9999", e["path_id"]))
+            entries_classified = _classify_group(entries_sorted)
             group_id = _stable_group_id(ep_key)
             program_title = entries_sorted[0]["program_title"]
 
             group_plan: list[dict[str, Any]] = []
-            for i, entry in enumerate(entries_sorted):
-                btype = "original" if i == 0 else "rebroadcast"
+            for entry in entries_classified:
                 member = {
                     "group_id": group_id,
                     "path_id": entry["path_id"],
                     "path": entry["path"],
-                    "broadcast_type": btype,
+                    "broadcast_type": entry["broadcast_type"],
                     "air_date": entry["air_date"] or None,
                     "broadcaster": entry["broadcaster"],
                     "program_title": program_title,
                     "episode_key": ep_key,
+                    "is_rebroadcast_flag": entry["is_rebroadcast_flag"],
                 }
                 group_plan.append(member)
                 members_total += 1
@@ -150,7 +204,8 @@ def main() -> int:
                 begin_immediate(con)
                 for ep_key in group_keys:
                     entries = rebroadcast_groups[ep_key]
-                    entries_sorted = sorted(entries, key=lambda e: e["air_date"] or "9999")
+                    entries_sorted = sorted(entries, key=lambda e: (e["air_date"] or "9999", e["path_id"]))
+                    entries_classified = _classify_group(entries_sorted)
                     group_id = _stable_group_id(ep_key)
                     program_title = entries_sorted[0]["program_title"]
 
@@ -167,8 +222,7 @@ def main() -> int:
                     )
                     db_inserted_groups += 1
 
-                    for i, entry in enumerate(entries_sorted):
-                        btype = "original" if i == 0 else "rebroadcast"
+                    for entry in entries_classified:
                         con.execute(
                             """
                             INSERT INTO broadcast_group_members
@@ -180,7 +234,14 @@ def main() -> int:
                               broadcaster = excluded.broadcaster,
                               added_at = excluded.added_at
                             """,
-                            (group_id, entry["path_id"], btype, entry["air_date"] or None, entry["broadcaster"], now_iso()),
+                            (
+                                group_id,
+                                entry["path_id"],
+                                entry["broadcast_type"],
+                                entry["air_date"] or None,
+                                entry["broadcaster"],
+                                now_iso(),
+                            ),
                         )
                         db_inserted_members += 1
                 con.commit()

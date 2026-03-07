@@ -439,7 +439,7 @@ video-library-pipeline (本プラグイン)
 | `video_pipeline_status`                     | パイプラインの最新状態サマリ (各ステージの最新JSONL等)   | `includeRawPaths`                  |
 | `video_pipeline_export_program_yaml`        | 抽出結果からヒントYAML生成                               | `sourceJsonlPath`                  |
 | `video_pipeline_ingest_epg`                 | EDCB `.program.txt` からEPG番組情報を取り込み          | —                                   |
-| `video_pipeline_detect_rebroadcasts`        | 再放送グルーピング (broadcast_groups テーブル)           | —                                   |
+| `video_pipeline_detect_rebroadcasts`        | 再放送グルーピング (EPG `[再]` フラグ優先、未確定は `unknown`) | —                                   |
 | `video_pipeline_db_backup` / `db_restore` | DBスナップショットの作成・復元                           | `action`, `descriptor`, `keep` |
 | `video_pipeline_repair_db`                  | paths テーブルの drive/dir/name 分解値を path から再生成 | —                                   |
 | `video_pipeline_logs`                       | 監査ログ (events テーブル) の参照                        | —                                   |
@@ -741,7 +741,17 @@ erDiagram
 | `programs` / `broadcasts`                      | ファイル非依存の番組シリーズ・放送履歴 (EPG由来の正規テーブル)      |
 | `path_programs`                                | ファイルと番組シリーズの紐付け (reextract等で更新)                 |
 | `tags` / `path_tags`                           | Tablacus連携用タグ                                                 |
-| `broadcast_groups` / `broadcast_group_members` | 再放送グルーピング (original/rebroadcast 分類)                     |
+| `broadcast_groups` / `broadcast_group_members` | 再放送グルーピング (EPGフラグ基準で original/rebroadcast/unknown 分類) |
+
+
+### 再放送判定ルール (`video_pipeline_detect_rebroadcasts`)
+
+`broadcasts.data_json.is_rebroadcast_flag` を唯一の信頼ソースとして次の優先順で判定する。
+
+1. グループ内に `is_rebroadcast_flag=true` が1件でもあれば、その行を `rebroadcast`、それ以外を `original` とする。
+2. `true` が1件も無い場合（EPG未取得・全件false/不明）は、全件 `unknown` とする。
+
+このため、EPGフラグが無いケースでは `air_date` の前後だけで original/rebroadcast を決めない。
 
 ### path_id 生成
 
