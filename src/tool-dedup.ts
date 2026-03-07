@@ -163,7 +163,6 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         }
         return toToolResult(out);
       },
-    },
-    { optional: true },
+    }
   );
 }

@@ -31,7 +31,6 @@ export function registerToolRepairDb(api: any, getCfg: (api: any) => any) {
           stderr: r.stderr,
         });
       },
-    },
-    { optional: true },
+    }
   );
 }

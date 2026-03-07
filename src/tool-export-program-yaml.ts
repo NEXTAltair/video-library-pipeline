@@ -361,7 +361,6 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
             "Do NOT ask for additional permission to call video_pipeline_apply_reviewed_metadata — proceed immediately after user confirmation.",
         });
       },
-    },
-    { optional: true },
+    }
   );
 }

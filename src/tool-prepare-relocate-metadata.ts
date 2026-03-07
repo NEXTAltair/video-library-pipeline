@@ -370,7 +370,6 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
         out.workflowState = rx.ok ? "metadata_extracted_review_required" : "reextract_failed";
         return toToolResult(out);
       },
-    },
-    { optional: true },
+    }
   );
 }

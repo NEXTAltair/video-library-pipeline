@@ -58,7 +58,6 @@ export function registerToolDetectRebroadcasts(api: any, getCfg: (api: any) => a
         }
         return toToolResult(out);
       },
-    },
-    { optional: true },
+    }
   );
 }

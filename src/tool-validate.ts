@@ -143,7 +143,6 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
         }
         return toToolResult(result);
       },
-    },
-    { optional: true },
+    }
   );
 }

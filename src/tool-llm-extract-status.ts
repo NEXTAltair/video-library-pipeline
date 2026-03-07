@@ -163,7 +163,6 @@ export function registerToolLlmExtractStatus(api: any, getCfg: (api: any) => any
           nextStep,
         });
       },
-    },
-    { optional: true },
+    }
   );
 }

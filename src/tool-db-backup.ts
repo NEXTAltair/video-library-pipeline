@@ -62,8 +62,7 @@ export function registerToolDbBackup(api: any, getCfg: (api: any) => any) {
         }
         return toToolResult(out);
       },
-    },
-    { optional: true },
+    }
   );
 }
 
@@ -118,7 +117,6 @@ export function registerToolDbRestore(api: any, getCfg: (api: any) => any) {
         }
         return toToolResult(out);
       },
-    },
-    { optional: true },
+    }
   );
 }

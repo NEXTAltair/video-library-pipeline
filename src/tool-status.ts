@@ -71,7 +71,6 @@ export function registerToolStatus(api: any, getCfg: (api: any) => any) {
         }
         return toToolResult(out);
       },
-    },
-    { optional: true },
+    }
   );
 }

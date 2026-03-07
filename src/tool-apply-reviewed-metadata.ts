@@ -352,7 +352,6 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           archivedYamls,
         });
       },
-    },
-    { optional: true },
+    }
   );
 }

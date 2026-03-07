@@ -255,7 +255,6 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
           hasFollowUpToolCalls: followUpToolCalls.length > 0,
         });
       },
-    },
-    { optional: true },
+    }
   );
 }
