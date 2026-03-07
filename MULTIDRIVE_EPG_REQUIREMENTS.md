@@ -65,7 +65,7 @@ OriginalNetworkID : 4
 ### DBへの保存形式
 
 テーブル: `path_metadata`
-`source = 'edcb_epg'`
+EPGデータは `programs` / `broadcasts` テーブルに保存（`path_metadata` には書き込まない）
 
 ```json
 {

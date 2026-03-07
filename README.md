@@ -115,7 +115,7 @@ flowchart TD
     %% ── 前処理: EPG ──
     EPG_START(["EDCB .program.txt"])
     EPG_INGEST["video_pipeline_ingest_epg<br/>py/ingest_program_txt.py<br/>py/edcb_program_parser.py"]
-    EPG_DB[("path_metadata<br/>source='edcb_epg'")]
+    EPG_DB[("programs / broadcasts")]
     EPG_START --> EPG_INGEST --> EPG_DB
 
     %% ── Stage 1: Normalize ──

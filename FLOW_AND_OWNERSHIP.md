@@ -80,7 +80,7 @@
 2. **EPG取り込みステージ**（推奨: program.txt 削除前）:
    - `video_pipeline_ingest_epg`（dry-run/apply）を実行
    - `tsRoot` 配下の `.program.txt` をスキャン・パースし、放送局/ジャンル/説明を取得
-   - `path_metadata`（`source='edcb_epg'`）に `match_key` / `datetime_key` キーで保存
+   - `programs` / `broadcasts` テーブルに `match_key` / `datetime_key` キーで保存
    - 取り込まれた EPG データは後続のメタデータ抽出で自動的に活用される
 3. **バックフィルステージ**（任意）:
    - `video_pipeline_backfill_moved_files`（dry-run/apply）を実行
