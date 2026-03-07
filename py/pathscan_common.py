@@ -380,7 +380,9 @@ def scan_files(
                 seen.add(key)
                 files.append(row)
                 fallback_stats["windowsFallbackFiles"] = int(fallback_stats["windowsFallbackFiles"]) + 1
-            continue
+            if fallback_files:
+                continue
+            warnings.append(f"windows fallback produced no files; falling back to os.walk: root={root_raw}")
 
         def _on_walk_error(e: OSError) -> None:
             failed_path = str(getattr(e, "filename", "") or "")
