@@ -741,7 +741,21 @@ erDiagram
 | `programs` / `broadcasts`                      | ファイル非依存の番組シリーズ・放送履歴 (EPG由来の正規テーブル)      |
 | `path_programs`                                | ファイルと番組シリーズの紐付け (reextract等で更新)                 |
 | `tags` / `path_tags`                           | Tablacus連携用タグ                                                 |
-| `broadcast_groups` / `broadcast_group_members` | 再放送グルーピング (original/rebroadcast 分類)                     |
+| `broadcast_groups` / `broadcast_group_members` | 再放送グルーピング (EPGフラグに基づく original/rebroadcast/unknown 分類) |
+
+### 再放送フラグのデータソース (EPG)
+
+再放送判定で信頼する一次情報は `broadcasts.data_json.is_rebroadcast_flag` のみ。
+
+```
+.program.txt
+  -> edcb_program_parser.py (_parse_title_line)
+     -> annotations に [再] があれば is_rebroadcast_flag=true
+  -> ingest_program_txt.py
+     -> broadcasts.data_json.is_rebroadcast_flag に保存
+```
+
+`detect_rebroadcasts.py` はこのフラグを優先して判定する。グループ内に `true` が存在すれば `true` 側を `rebroadcast`、それ以外を `original` とする。フラグ情報がないグループは日付順で推測せず全件 `unknown` にする。
 
 ### path_id 生成
 

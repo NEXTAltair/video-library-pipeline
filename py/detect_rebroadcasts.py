@@ -2,8 +2,18 @@
 """Detect rebroadcasts and group same-episode recordings by air_date/broadcaster.
 
 This script groups recordings of the same episode (same normalized_program_key +
-episode_no/subtitle) and identifies original vs. rebroadcast entries based on
-air_date ordering. Rebroadcasts are NOT deleted — they are linked in the
+episode_no/subtitle) and identifies original vs. rebroadcast entries with EPG
+`is_rebroadcast_flag` as the highest-priority source.
+
+Classification rules:
+- if any group member has `is_rebroadcast_flag=true`, that member is
+  `rebroadcast` and members without `true` are `original`;
+- if no `true` exists but at least one explicit `false` exists, all members are
+  `original`;
+- if no EPG rebroadcast flags are available for the group, all members are
+  `unknown` (no date-based guessing).
+
+Rebroadcasts are NOT deleted — they are linked in the
 broadcast_groups / broadcast_group_members tables.
 """
 
@@ -12,7 +22,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import uuid
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
@@ -46,6 +55,36 @@ def _stable_group_id(episode_key: str) -> str:
     return hashlib.sha256(episode_key.encode("utf-8")).hexdigest()[:16]
 
 
+def _coerce_rebroadcast_flag(raw: Any) -> bool | None:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    return None
+
+
+def _classify_group(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    has_true = any(e.get("is_rebroadcast_flag") is True for e in entries)
+    has_false = any(e.get("is_rebroadcast_flag") is False for e in entries)
+
+    classified: list[dict[str, Any]] = []
+    for entry in entries:
+        flag = entry.get("is_rebroadcast_flag")
+        if has_true:
+            broadcast_type = "rebroadcast" if flag is True else "original"
+        elif has_false:
+            broadcast_type = "original"
+        else:
+            broadcast_type = "unknown"
+
+        classified.append({**entry, "broadcast_type": broadcast_type})
+    return classified
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -69,6 +108,43 @@ def main() -> int:
             """,
             (),
         )
+
+        # Load EPG rebroadcast flags linked via path_programs -> broadcasts
+        broadcast_rows = fetchall(
+            con,
+            """
+            SELECT pp.path_id, b.data_json
+            FROM path_programs pp
+            JOIN broadcasts b ON b.broadcast_id = pp.broadcast_id
+            WHERE pp.broadcast_id IS NOT NULL
+            """,
+            (),
+        )
+        path_rebroadcast_flag: dict[str, bool | None] = {}
+        for r in broadcast_rows:
+            path_id = str(r["path_id"])
+            data_json = r["data_json"]
+            if data_json is None:
+                continue
+            try:
+                payload = json.loads(str(data_json))
+            except Exception:
+                errors.append(f"invalid broadcasts.data_json: path_id={path_id}")
+                continue
+            if not isinstance(payload, dict) or "is_rebroadcast_flag" not in payload:
+                continue
+
+            flag = _coerce_rebroadcast_flag(payload.get("is_rebroadcast_flag"))
+            prev = path_rebroadcast_flag.get(path_id)
+            if prev is True:
+                continue
+            if flag is True:
+                path_rebroadcast_flag[path_id] = True
+                continue
+            if prev is False:
+                continue
+            if flag is False:
+                path_rebroadcast_flag[path_id] = False
 
         # Group by episode key
         grouped: dict[str, list[dict[str, Any]]] = {}
@@ -94,6 +170,7 @@ def main() -> int:
                 "broadcaster": md.get("broadcaster") or md.get("channel") or None,
                 "episode_key": ep_key,
                 "metadata": md,
+                "is_rebroadcast_flag": path_rebroadcast_flag.get(path_id),
             }
             grouped.setdefault(ep_key, []).append(entry)
 
@@ -119,14 +196,14 @@ def main() -> int:
 
         for ep_key in group_keys:
             entries = rebroadcast_groups[ep_key]
-            # Sort by air_date ascending — earliest is "original"
             entries_sorted = sorted(entries, key=lambda e: e["air_date"] or "9999")
+            classified = _classify_group(entries_sorted)
             group_id = _stable_group_id(ep_key)
             program_title = entries_sorted[0]["program_title"]
 
             group_plan: list[dict[str, Any]] = []
-            for i, entry in enumerate(entries_sorted):
-                btype = "original" if i == 0 else "rebroadcast"
+            for entry in classified:
+                btype = str(entry["broadcast_type"])
                 member = {
                     "group_id": group_id,
                     "path_id": entry["path_id"],
@@ -136,6 +213,7 @@ def main() -> int:
                     "broadcaster": entry["broadcaster"],
                     "program_title": program_title,
                     "episode_key": ep_key,
+                    "is_rebroadcast_flag": entry.get("is_rebroadcast_flag"),
                 }
                 group_plan.append(member)
                 members_total += 1
@@ -151,6 +229,7 @@ def main() -> int:
                 for ep_key in group_keys:
                     entries = rebroadcast_groups[ep_key]
                     entries_sorted = sorted(entries, key=lambda e: e["air_date"] or "9999")
+                    classified = _classify_group(entries_sorted)
                     group_id = _stable_group_id(ep_key)
                     program_title = entries_sorted[0]["program_title"]
 
@@ -167,8 +246,8 @@ def main() -> int:
                     )
                     db_inserted_groups += 1
 
-                    for i, entry in enumerate(entries_sorted):
-                        btype = "original" if i == 0 else "rebroadcast"
+                    for entry in classified:
+                        btype = str(entry["broadcast_type"])
                         con.execute(
                             """
                             INSERT INTO broadcast_group_members
