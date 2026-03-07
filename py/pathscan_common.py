@@ -347,76 +347,79 @@ def scan_files(
             errors.append(f"root is not a directory: {root_raw}")
             continue
 
-        failed_dirs: set[str] = set()
-
-        def _collect_file(path: Path) -> None:
-            row = collect_scanned_file(path, exts, detect_corruption, read_bytes, warnings)
-            if row is None:
-                return
-            key = normalize_win_for_id(row.win_path)
-            if key in seen:
-                return
-            seen.add(key)
-            files.append(row)
-
-        def _on_walk_error(e: OSError) -> None:
-            failed_path = str(getattr(e, "filename", "") or "")
-            if failed_path:
-                failed_dirs.add(failed_path)
-            warnings.append(f"walk failed: root={root_raw} path={failed_path or '?'} :: {e}")
-
-        for dirpath, _dirnames, filenames in os.walk(str(root), onerror=_on_walk_error):
-            for fname in filenames:
-                _collect_file(Path(dirpath) / fname)
-
-        unresolved = set(failed_dirs)
-        retries = max(0, int(scan_retry_count))
-        for attempt in range(1, retries + 1):
-            if not unresolved:
-                break
-            attempt_failed: set[str] = set()
-            attempt_targets = sorted(unresolved)
-            unresolved = set()
-            for target in attempt_targets:
-                target_path = Path(target)
-                if not target_path.exists() or not target_path.is_dir():
-                    warnings.append(f"walk retry skipped: root={root_raw} path={target} reason=not_directory")
+        if windows_ops_root:
+            # Windows-first: PowerShell で直接スキャン (9P バイパス)
+            ps_files, ps_warnings, ps_error_count = scan_files_with_windows_fallback(
+                unresolved_dirs_wsl=[str(root)],
+                exts=exts,
+                detect_corruption=detect_corruption,
+                read_bytes=read_bytes,
+                windows_ops_root=windows_ops_root,
+            )
+            warnings.extend(ps_warnings)
+            fallback_stats["windowsFallbackUsed"] = True
+            fallback_stats["windowsFallbackDirs"] = int(fallback_stats["windowsFallbackDirs"]) + 1
+            fallback_stats["windowsFallbackErrorCount"] = (
+                int(fallback_stats["windowsFallbackErrorCount"]) + int(ps_error_count)
+            )
+            for row in ps_files:
+                key = normalize_win_for_id(row.win_path)
+                if key in seen:
                     continue
+                seen.add(key)
+                files.append(row)
+                fallback_stats["windowsFallbackFiles"] = int(fallback_stats["windowsFallbackFiles"]) + 1
+        else:
+            # os.walk (windows_ops_root 未提供時のみ)
+            failed_dirs: set[str] = set()
 
-                def _on_retry_error(e: OSError) -> None:
-                    retry_failed_path = str(getattr(e, "filename", "") or target)
-                    attempt_failed.add(retry_failed_path)
-                    warnings.append(
-                        f"walk retry failed: root={root_raw} path={retry_failed_path} attempt={attempt}/{retries} :: {e}"
-                    )
+            def _collect_file(path: Path) -> None:
+                row = collect_scanned_file(path, exts, detect_corruption, read_bytes, warnings)
+                if row is None:
+                    return
+                key = normalize_win_for_id(row.win_path)
+                if key in seen:
+                    return
+                seen.add(key)
+                files.append(row)
 
-                for dirpath, _dirnames, filenames in os.walk(str(target_path), onerror=_on_retry_error):
-                    for fname in filenames:
-                        _collect_file(Path(dirpath) / fname)
-            unresolved = attempt_failed
+            def _on_walk_error(e: OSError) -> None:
+                failed_path = str(getattr(e, "filename", "") or "")
+                if failed_path:
+                    failed_dirs.add(failed_path)
+                warnings.append(f"walk failed: root={root_raw} path={failed_path or '?'} :: {e}")
 
-        if unresolved:
-            warnings.append(f"walk unresolved: root={root_raw} dirs={len(unresolved)}")
-            if windows_ops_root:
-                fallback_stats["windowsFallbackUsed"] = True
-                fallback_stats["windowsFallbackDirs"] = int(fallback_stats["windowsFallbackDirs"]) + len(unresolved)
-                fallback_files, fallback_warnings, fallback_error_count = scan_files_with_windows_fallback(
-                    unresolved_dirs_wsl=sorted(unresolved),
-                    exts=exts,
-                    detect_corruption=detect_corruption,
-                    read_bytes=read_bytes,
-                    windows_ops_root=windows_ops_root,
-                )
-                warnings.extend(fallback_warnings)
-                fallback_stats["windowsFallbackErrorCount"] = (
-                    int(fallback_stats["windowsFallbackErrorCount"]) + int(fallback_error_count)
-                )
-                for row in fallback_files:
-                    key = normalize_win_for_id(row.win_path)
-                    if key in seen:
+            for dirpath, _dirnames, filenames in os.walk(str(root), onerror=_on_walk_error):
+                for fname in filenames:
+                    _collect_file(Path(dirpath) / fname)
+
+            unresolved = set(failed_dirs)
+            retries = max(0, int(scan_retry_count))
+            for attempt in range(1, retries + 1):
+                if not unresolved:
+                    break
+                attempt_failed: set[str] = set()
+                attempt_targets = sorted(unresolved)
+                unresolved = set()
+                for target in attempt_targets:
+                    target_path = Path(target)
+                    if not target_path.exists() or not target_path.is_dir():
+                        warnings.append(f"walk retry skipped: root={root_raw} path={target} reason=not_directory")
                         continue
-                    seen.add(key)
-                    files.append(row)
-                    fallback_stats["windowsFallbackFiles"] = int(fallback_stats["windowsFallbackFiles"]) + 1
+
+                    def _on_retry_error(e: OSError) -> None:
+                        retry_failed_path = str(getattr(e, "filename", "") or target)
+                        attempt_failed.add(retry_failed_path)
+                        warnings.append(
+                            f"walk retry failed: root={root_raw} path={retry_failed_path} attempt={attempt}/{retries} :: {e}"
+                        )
+
+                    for dirpath, _dirnames, filenames in os.walk(str(target_path), onerror=_on_retry_error):
+                        for fname in filenames:
+                            _collect_file(Path(dirpath) / fname)
+                unresolved = attempt_failed
+
+            if unresolved:
+                warnings.append(f"walk unresolved: root={root_raw} dirs={len(unresolved)}")
 
     return files, warnings, errors, fallback_stats
