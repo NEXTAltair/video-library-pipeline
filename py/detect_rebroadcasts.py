@@ -2,9 +2,10 @@
 """Detect rebroadcasts and group same-episode recordings by air_date/broadcaster.
 
 This script groups recordings of the same episode (same normalized_program_key +
-episode_no/subtitle) and identifies original vs. rebroadcast entries based on
-air_date ordering. Rebroadcasts are NOT deleted — they are linked in the
-broadcast_groups / broadcast_group_members tables.
+episode_no/subtitle) and identifies original/rebroadcast/unknown entries based
+on EPG rebroadcast flags from broadcasts.data_json. Rebroadcasts are NOT
+deleted — they are linked in the broadcast_groups / broadcast_group_members
+tables.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import uuid
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
@@ -46,6 +46,52 @@ def _stable_group_id(episode_key: str) -> str:
     return hashlib.sha256(episode_key.encode("utf-8")).hexdigest()[:16]
 
 
+def _parse_rebroadcast_flag(data_json: Any) -> bool | None:
+    """Extract is_rebroadcast_flag from broadcasts.data_json if available."""
+    if data_json is None:
+        return None
+    try:
+        payload = json.loads(str(data_json))
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or "is_rebroadcast_flag" not in payload:
+        return None
+    flag = payload.get("is_rebroadcast_flag")
+    if isinstance(flag, bool):
+        return flag
+    if isinstance(flag, (int, float)):
+        return bool(flag)
+    if isinstance(flag, str):
+        normalized = flag.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
+def _decide_broadcast_types(entries: list[dict[str, Any]]) -> dict[str, str]:
+    """Decide broadcast_type per path_id with EPG-first 3-stage rules.
+
+    Rule priority:
+    1) Any is_rebroadcast_flag=true -> that member is rebroadcast.
+    2) If EPG flags exist but none true -> all members original.
+    3) If no EPG flags are available -> all members unknown.
+    """
+    flags = [e.get("is_rebroadcast_flag") for e in entries]
+    has_true = any(flag is True for flag in flags)
+    has_known = any(flag is not None for flag in flags)
+
+    if has_true:
+        return {
+            str(e["path_id"]): ("rebroadcast" if e.get("is_rebroadcast_flag") is True else "original")
+            for e in entries
+        }
+    if has_known:
+        return {str(e["path_id"]): "original" for e in entries}
+    return {str(e["path_id"]): "unknown" for e in entries}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -70,6 +116,28 @@ def main() -> int:
             (),
         )
 
+        # Load path_id -> EPG rebroadcast flag (if any) via path_programs/broadcasts.
+        epg_flag_by_path: dict[str, bool | None] = {}
+        epg_rows = fetchall(
+            con,
+            """
+            SELECT pp.path_id, b.data_json, pp.updated_at
+            FROM path_programs pp
+            LEFT JOIN broadcasts b ON b.broadcast_id = pp.broadcast_id
+            ORDER BY pp.path_id ASC, pp.updated_at DESC
+            """,
+            (),
+        )
+        for r in epg_rows:
+            path_id = str(r["path_id"])
+            parsed_flag = _parse_rebroadcast_flag(r["data_json"])
+            if path_id not in epg_flag_by_path:
+                epg_flag_by_path[path_id] = parsed_flag
+                continue
+            # Prefer known values over unknown when multiple path_program rows exist.
+            if epg_flag_by_path[path_id] is None and parsed_flag is not None:
+                epg_flag_by_path[path_id] = parsed_flag
+
         # Group by episode key
         grouped: dict[str, list[dict[str, Any]]] = {}
         skipped_no_key = 0
@@ -93,6 +161,7 @@ def main() -> int:
                 "air_date": str(md.get("air_date") or ""),
                 "broadcaster": md.get("broadcaster") or md.get("channel") or None,
                 "episode_key": ep_key,
+                "is_rebroadcast_flag": epg_flag_by_path.get(path_id),
                 "metadata": md,
             }
             grouped.setdefault(ep_key, []).append(entry)
@@ -119,14 +188,14 @@ def main() -> int:
 
         for ep_key in group_keys:
             entries = rebroadcast_groups[ep_key]
-            # Sort by air_date ascending — earliest is "original"
             entries_sorted = sorted(entries, key=lambda e: e["air_date"] or "9999")
+            type_by_path = _decide_broadcast_types(entries_sorted)
             group_id = _stable_group_id(ep_key)
             program_title = entries_sorted[0]["program_title"]
 
             group_plan: list[dict[str, Any]] = []
-            for i, entry in enumerate(entries_sorted):
-                btype = "original" if i == 0 else "rebroadcast"
+            for entry in entries_sorted:
+                btype = type_by_path.get(str(entry["path_id"]), "unknown")
                 member = {
                     "group_id": group_id,
                     "path_id": entry["path_id"],
@@ -151,6 +220,7 @@ def main() -> int:
                 for ep_key in group_keys:
                     entries = rebroadcast_groups[ep_key]
                     entries_sorted = sorted(entries, key=lambda e: e["air_date"] or "9999")
+                    type_by_path = _decide_broadcast_types(entries_sorted)
                     group_id = _stable_group_id(ep_key)
                     program_title = entries_sorted[0]["program_title"]
 
@@ -167,8 +237,8 @@ def main() -> int:
                     )
                     db_inserted_groups += 1
 
-                    for i, entry in enumerate(entries_sorted):
-                        btype = "original" if i == 0 else "rebroadcast"
+                    for entry in entries_sorted:
+                        btype = type_by_path.get(str(entry["path_id"]), "unknown")
                         con.execute(
                             """
                             INSERT INTO broadcast_group_members

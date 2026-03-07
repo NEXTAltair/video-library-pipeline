@@ -6,8 +6,8 @@ export function registerToolDetectRebroadcasts(api: any, getCfg: (api: any) => a
     {
       name: "video_pipeline_detect_rebroadcasts",
       description:
-        "Detect rebroadcasts by grouping same-episode recordings with different air_date or broadcaster. " +
-        "Rebroadcasts are linked in DB (not deleted). Use apply=false for dry-run.",
+        "Detect rebroadcast groups and classify members using EPG is_rebroadcast_flag (broadcasts.data_json). " +
+        "Classification is original/rebroadcast/unknown (unknown when EPG flag is unavailable). Use apply=false for dry-run.",
       parameters: {
         type: "object",
         additionalProperties: false,
