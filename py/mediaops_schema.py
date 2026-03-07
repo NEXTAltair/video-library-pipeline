@@ -130,6 +130,45 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS programs (
+      program_id TEXT PRIMARY KEY,
+      program_key TEXT NOT NULL UNIQUE,
+      canonical_title TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS broadcasts (
+      broadcast_id TEXT PRIMARY KEY,
+      program_id TEXT NOT NULL,
+      air_date TEXT,
+      start_time TEXT,
+      end_time TEXT,
+      broadcaster TEXT,
+      match_key TEXT UNIQUE,
+      data_json TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (program_id) REFERENCES programs(program_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_broadcasts_program ON broadcasts(program_id)",
+    "CREATE INDEX IF NOT EXISTS idx_broadcasts_air_date ON broadcasts(air_date)",
+    """
+    CREATE TABLE IF NOT EXISTS path_programs (
+      path_id TEXT NOT NULL,
+      program_id TEXT NOT NULL,
+      broadcast_id TEXT,
+      source TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (path_id, program_id),
+      FOREIGN KEY (path_id) REFERENCES paths(path_id),
+      FOREIGN KEY (program_id) REFERENCES programs(program_id),
+      FOREIGN KEY (broadcast_id) REFERENCES broadcasts(broadcast_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_path_programs_program ON path_programs(program_id)",
+    "CREATE INDEX IF NOT EXISTS idx_path_programs_broadcast ON path_programs(broadcast_id)",
+    """
     CREATE TABLE IF NOT EXISTS broadcast_groups (
       group_id TEXT PRIMARY KEY,
       program_title TEXT NOT NULL,

@@ -15,6 +15,7 @@ from edcb_program_parser import match_key_from_filename, datetime_key_from_filen
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
 from source_history import make_entry
+from pathscan_common import now_iso
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -392,13 +393,7 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict
 
 
 class _EpgCache:
-    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key.
-
-    Indexes:
-    - _by_match_key: full key including broadcaster (no collision)
-    - _by_title_dt: title::date::time (old format) → list of EPG dicts
-    - _by_datetime_key: date::time → list of EPG dicts
-    """
+    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key."""
 
     def __init__(self, con: sqlite3.Connection):
         self._by_match_key: dict[str, dict] = {}
@@ -406,39 +401,36 @@ class _EpgCache:
         self._by_datetime_key: dict[str, list[dict]] = {}
         try:
             rows = con.execute(
-                "SELECT data_json FROM path_metadata WHERE source='edcb_epg'",
+                """
+                SELECT b.broadcast_id, b.program_id, b.match_key, b.data_json
+                FROM broadcasts b
+                """,
             ).fetchall()
         except sqlite3.Error:
             return
         for row in rows:
             try:
-                data = json.loads(row[0])
+                data = json.loads(row[3] or "{}")
             except Exception:
                 continue
             if not isinstance(data, dict):
                 continue
-            mk = data.get("match_key")
+            data["broadcast_id"] = row[0]
+            data["program_id"] = row[1]
+            mk = row[2] or data.get("match_key")
             dk = data.get("datetime_key")
             if mk:
                 self._by_match_key[mk] = data
-                # Build title::date::time key (strip broadcaster segment)
-                parts = mk.split("::")
+                parts = str(mk).split("::")
                 if len(parts) == 4:
                     title_dt = f"{parts[0]}::{parts[2]}::{parts[3]}"
                     self._by_title_dt.setdefault(title_dt, []).append(data)
                 elif len(parts) == 3:
-                    # Legacy format without broadcaster
-                    self._by_title_dt.setdefault(mk, []).append(data)
+                    self._by_title_dt.setdefault(str(mk), []).append(data)
             if dk:
-                self._by_datetime_key.setdefault(dk, []).append(data)
+                self._by_datetime_key.setdefault(str(dk), []).append(data)
 
     def lookup(self, match_key: str | None, datetime_key: str | None) -> dict | None:
-        """Find EPG data by match_key, title_dt fallback, then datetime_key.
-
-        match_key from filename has no broadcaster segment (title::date::time),
-        so we try _by_match_key first (EPG-to-EPG exact), then _by_title_dt
-        (filename-to-EPG), then _by_datetime_key (date+time only).
-        """
         if match_key:
             if match_key in self._by_match_key:
                 return self._by_match_key[match_key]
@@ -589,6 +581,7 @@ def main() -> int:
         write_jsonl(bpath, batch)
 
         rows = []
+        path_program_links: list[tuple[str, str, str | None, str, str]] = []
         for rec in batch:
             pid = rec.get("path_id")
             if pid and not args.ignore_human_reviewed:
@@ -673,6 +666,14 @@ def main() -> int:
             dk = datetime_key_from_filename(name)
             epg = epg_cache.lookup(mk, dk)
             _enrich_with_epg(row, epg)
+            if epg and rec.get("path_id") and epg.get("program_id"):
+                path_program_links.append((
+                    str(rec["path_id"]),
+                    str(epg["program_id"]),
+                    str(epg.get("broadcast_id")) if epg.get("broadcast_id") else None,
+                    "reextract",
+                    now_iso(),
+                ))
 
             row["genre"] = resolve_genre(row)
             row["franchise"] = resolve_franchise(row, args.franchise_rules or None)
@@ -696,6 +697,20 @@ def main() -> int:
             sys.argv += ["--franchise-rules", args.franchise_rules]
         if _upsert_main() != 0:
             raise SystemExit(f"upsert failed: {epath}")
+
+        if path_program_links:
+            db_con.executemany(
+                """
+                INSERT INTO path_programs (path_id, program_id, broadcast_id, source, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(path_id, program_id) DO UPDATE SET
+                  broadcast_id=excluded.broadcast_id,
+                  source=excluded.source,
+                  updated_at=excluded.updated_at
+                """,
+                path_program_links,
+            )
+            db_con.commit()
 
         generated_input_jsonl_paths.append(str(bpath))
         generated_output_jsonl_paths.append(str(epath))
