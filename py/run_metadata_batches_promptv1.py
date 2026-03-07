@@ -15,6 +15,7 @@ from edcb_program_parser import match_key_from_filename, datetime_key_from_filen
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
 from source_history import make_entry
+from pathscan_common import now_iso
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -394,6 +395,7 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict
 class _EpgCache:
     """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key.
 
+    Source: broadcasts table (file-independent EPG store).
     Indexes:
     - _by_match_key: full key including broadcaster (no collision)
     - _by_title_dt: title::date::time (old format) → list of EPG dicts
@@ -406,31 +408,38 @@ class _EpgCache:
         self._by_datetime_key: dict[str, list[dict]] = {}
         try:
             rows = con.execute(
-                "SELECT data_json FROM path_metadata WHERE source='edcb_epg'",
+                "SELECT broadcast_id, program_id, match_key, air_date, start_time, data_json FROM broadcasts",
             ).fetchall()
         except sqlite3.Error:
             return
         for row in rows:
             try:
-                data = json.loads(row[0])
+                data = json.loads(row[5]) if row[5] else {}
             except Exception:
-                continue
+                data = {}
             if not isinstance(data, dict):
-                continue
+                data = {}
+            data.setdefault("broadcast_id", row[0])
+            data.setdefault("program_id", row[1])
+            if row[2]:
+                data.setdefault("match_key", row[2])
+            if row[3] and row[4]:
+                data.setdefault("datetime_key", f"{row[3]}::{row[4]}")
+
             mk = data.get("match_key")
             dk = data.get("datetime_key")
             if mk:
                 self._by_match_key[mk] = data
                 # Build title::date::time key (strip broadcaster segment)
-                parts = mk.split("::")
+                parts = str(mk).split("::")
                 if len(parts) == 4:
                     title_dt = f"{parts[0]}::{parts[2]}::{parts[3]}"
                     self._by_title_dt.setdefault(title_dt, []).append(data)
                 elif len(parts) == 3:
                     # Legacy format without broadcaster
-                    self._by_title_dt.setdefault(mk, []).append(data)
+                    self._by_title_dt.setdefault(str(mk), []).append(data)
             if dk:
-                self._by_datetime_key.setdefault(dk, []).append(data)
+                self._by_datetime_key.setdefault(str(dk), []).append(data)
 
     def lookup(self, match_key: str | None, datetime_key: str | None) -> dict | None:
         """Find EPG data by match_key, title_dt fallback, then datetime_key.
@@ -453,6 +462,10 @@ def _enrich_with_epg(row: dict, epg: dict | None) -> None:
     """Add EPG-sourced fields to a metadata row (in-place)."""
     if not epg:
         return
+    if epg.get("program_id"):
+        row["program_id"] = epg.get("program_id")
+    if epg.get("broadcast_id"):
+        row["broadcast_id"] = epg.get("broadcast_id")
     row["broadcaster"] = epg.get("broadcaster")
     row["epg_genre"] = None
     genres = epg.get("epg_genres")
@@ -696,6 +709,35 @@ def main() -> int:
             sys.argv += ["--franchise-rules", args.franchise_rules]
         if _upsert_main() != 0:
             raise SystemExit(f"upsert failed: {epath}")
+
+        # Link extracted file metadata to file-independent EPG program/broadcast entities.
+        links: dict[tuple[str, str], tuple[str | None, str]] = {}
+        for linked in rows:
+            path_id = linked.get("path_id")
+            program_id = linked.get("program_id")
+            if not path_id or not program_id:
+                continue
+            links[(str(path_id), str(program_id))] = (
+                str(linked.get("broadcast_id")) if linked.get("broadcast_id") else None,
+                now_iso(),
+            )
+        if links:
+            try:
+                db_con.executemany(
+                    """
+                    INSERT INTO path_programs (path_id, program_id, broadcast_id, source, updated_at)
+                    VALUES (?, ?, ?, 'reextract', ?)
+                    ON CONFLICT(path_id, program_id) DO UPDATE SET
+                      broadcast_id=excluded.broadcast_id,
+                      source=excluded.source,
+                      updated_at=excluded.updated_at
+                    """,
+                    [(pid, pgid, bid, ts) for (pid, pgid), (bid, ts) in links.items()],
+                )
+                db_con.commit()
+            except sqlite3.Error:
+                # path_programs may not exist before schema migration is applied.
+                pass
 
         generated_input_jsonl_paths.append(str(bpath))
         generated_output_jsonl_paths.append(str(epath))

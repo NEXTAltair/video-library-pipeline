@@ -115,7 +115,7 @@ flowchart TD
     %% ── 前処理: EPG ──
     EPG_START(["EDCB .program.txt"])
     EPG_INGEST["video_pipeline_ingest_epg<br/>py/ingest_program_txt.py<br/>py/edcb_program_parser.py"]
-    EPG_DB[("path_metadata<br/>source='edcb_epg'")]
+    EPG_DB[("programs + broadcasts")]
     EPG_START --> EPG_INGEST --> EPG_DB
 
     %% ── Stage 1: Normalize ──
@@ -653,6 +653,33 @@ erDiagram
         TEXT updated_at
     }
 
+    programs {
+        TEXT program_id PK
+        TEXT program_key UNIQUE
+        TEXT canonical_title
+        TEXT created_at
+    }
+
+    broadcasts {
+        TEXT broadcast_id PK
+        TEXT program_id FK
+        TEXT air_date
+        TEXT start_time
+        TEXT end_time
+        TEXT broadcaster
+        TEXT match_key UNIQUE
+        TEXT data_json
+        TEXT created_at
+    }
+
+    path_programs {
+        TEXT path_id FK
+        TEXT program_id FK
+        TEXT broadcast_id FK
+        TEXT source
+        TEXT updated_at
+    }
+
     tags {
         INTEGER tag_id PK
         TEXT name
@@ -690,6 +717,10 @@ erDiagram
     runs ||--o{ events : "triggered"
     paths ||--o{ events : "src/dst"
     paths ||--|| path_metadata : "has metadata"
+    programs ||--o{ broadcasts : "has airings"
+    paths ||--o{ path_programs : "linked"
+    programs ||--o{ path_programs : "linked"
+    broadcasts ||--o{ path_programs : "matched"
     paths ||--o{ path_tags : "tagged"
     tags ||--o{ path_tags : "applied to"
     broadcast_groups ||--o{ broadcast_group_members : "contains"
@@ -707,6 +738,9 @@ erDiagram
 | `observations`                                   | 実行時のファイル状態スナップショット (size/mtime)                  |
 | `events`                                         | 移動・リロケート等のアクション記録 (成否追跡)                      |
 | `path_metadata`                                  | 抽出メタデータ (source + data_json にJSONで格納)                   |
+| `programs`                                       | 番組シリーズの正規化キー管理 (`program_key`)                        |
+| `broadcasts`                                     | EPG放送履歴 (air_date/start_time/broadcaster + data_json)           |
+| `path_programs`                                  | ファイルと番組/放送履歴の紐付け (`reextract` 等で更新)              |
 | `tags` / `path_tags`                           | Tablacus連携用タグ                                                 |
 | `broadcast_groups` / `broadcast_group_members` | 再放送グルーピング (original/rebroadcast 分類)                     |
 
@@ -734,9 +768,10 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | ---------------- | ----------------------- | ------------------------------------ |
 | `rule_based`   | ルールベース抽出        | `run_metadata_batches_promptv1.py` |
 | `llm_subagent` | LLMサブエージェント抽出 | `apply_llm_extract_output.py`      |
-| `edcb_epg`     | EPG取り込み             | `ingest_program_txt.py`            |
 
 > `source='rule_based'` はルールベース抽出の結果を示す。旧値 `llm` は移行スクリプトで `rule_based` に統一可能。
+
+> EPG取り込みは `path_metadata` ではなく `programs` / `broadcasts` に保存される。
 
 ### is_current 運用
 
