@@ -898,5 +898,6 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | 11 | ~~normalize_filenames.ps1 欠落サブスクリプト~~ | [#9](https://github.com/NEXTAltair/video-library-pipeline/issues/9) | 解決済み (ラッパーごと削除、メタデータ抽出側で対応済み) |
 | 12 | ~~list_remaining_unwatched.ps1 再検討~~ | [#10](https://github.com/NEXTAltair/video-library-pipeline/issues/10) | 解決済み (計算ロジックで置換、PS1削除) |
 | 13 | ~~PS1スクリプト統合検討~~ | [#11](https://github.com/NEXTAltair/video-library-pipeline/issues/11) | 統合見送り (共通部分は `_long_path_utils.ps1` に集約済み) |
+| 14 | WSL2 ERRNO5 (EIO) スキャン不安定性 (`os.walk` on `/mnt/*`) | [#32](https://github.com/NEXTAltair/video-library-pipeline/issues/32) | 対応中 (windows_ops_root 指定時は PowerShell primary scan に切替) |
 
 その他のIssue: [#1](https://github.com/NEXTAltair/video-library-pipeline/issues/1) data_json拡張 / [#2](https://github.com/NEXTAltair/video-library-pipeline/issues/2) by_seriesリネーム / [#3](https://github.com/NEXTAltair/video-library-pipeline/issues/3) sourceリネーム / [#4](https://github.com/NEXTAltair/video-library-pipeline/issues/4) filesテーブルにハッシュ+メタデータ / [#5](https://github.com/NEXTAltair/video-library-pipeline/issues/5) アニメ・ドラマレイアウト移行

@@ -359,6 +359,29 @@ def scan_files(
             seen.add(key)
             files.append(row)
 
+        if windows_ops_root:
+            fallback_files, fallback_warnings, fallback_error_count = scan_files_with_windows_fallback(
+                unresolved_dirs_wsl=[str(root)],
+                exts=exts,
+                detect_corruption=detect_corruption,
+                read_bytes=read_bytes,
+                windows_ops_root=windows_ops_root,
+            )
+            warnings.extend(fallback_warnings)
+            fallback_stats["windowsFallbackUsed"] = True
+            fallback_stats["windowsFallbackDirs"] = int(fallback_stats["windowsFallbackDirs"]) + 1
+            fallback_stats["windowsFallbackErrorCount"] = (
+                int(fallback_stats["windowsFallbackErrorCount"]) + int(fallback_error_count)
+            )
+            for row in fallback_files:
+                key = normalize_win_for_id(row.win_path)
+                if key in seen:
+                    continue
+                seen.add(key)
+                files.append(row)
+                fallback_stats["windowsFallbackFiles"] = int(fallback_stats["windowsFallbackFiles"]) + 1
+            continue
+
         def _on_walk_error(e: OSError) -> None:
             failed_path = str(getattr(e, "filename", "") or "")
             if failed_path:
