@@ -318,6 +318,7 @@ sourceRoot (未視聴フォルダ) のファイルを正規化・棚卸し、メ
 | `planPath`                   | string                       | apply時必須。dry-runが返す計画ファイルパス                         |
 | `roots`                      | string[]                     | スキャン対象。省略時は `relocate_roots.yaml`                     |
 | `allowNeedsReview`           | boolean                      | `needs_review=true`のファイルも移動対象に含める (default: false) |
+| `allowUnreviewedMetadata`    | boolean                      | `source=human_reviewed` 以外のメタデータでの計画生成を許可 (default: false) |
 | `queueMissingMetadata`       | boolean                      | メタデータ不足ファイルをキューに収集                               |
 | `writeMetadataQueueOnDryRun` | boolean                      | dry-run時もキューファイルを書き出す                                |
 | `onDstExists`                | `error`\|`rename_suffix` | 移動先に同名ファイルが存在する場合の挙動                           |
@@ -861,6 +862,10 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 ### allowNeedsReview のデフォルト
 
 `allowNeedsReview` は `relocate_existing_files` と `analyze_and_move_videos` の両方で **デフォルトfalse**。`needs_review=true` のファイルはレビュー完了まで移動計画から除外される。
+
+### allowUnreviewedMetadata のデフォルト
+
+`relocate_existing_files` は **デフォルトで `source=human_reviewed` のメタデータのみ** 移動計画に使用する。`source=llm` など未レビュー行は `unreviewedMetadataSkipped` として除外され、レビュー適用後に再実行する前提。
 
 ---
 
