@@ -133,6 +133,31 @@ def looks_like_swallowed_program_title(src_path_win: str, md: dict[str, Any] | N
     return False
 
 
+def looks_like_shortened_program_title(src_path_win: str, md: dict[str, Any] | None) -> bool:
+    """現在フォルダ名より program_title が不自然に短い場合を検出。
+
+    例: folder=RNC_news_every, program_title=RNC
+    """
+    if not isinstance(md, dict):
+        return False
+    group = _folder_title_from_path(src_path_win)
+    title = md.get("program_title")
+    if not group or not isinstance(title, str):
+        return False
+    title = title.strip()
+    if not title:
+        return False
+    g = _normalize_title_compare(group)
+    t = _normalize_title_compare(title)
+    if not g or not t or t == g:
+        return False
+    # Reverse failure mode: LLM extracts only a short prefix of current folder title.
+    # Require a meaningful gap to avoid flagging tiny spelling differences.
+    if g.startswith(t) and len(g) >= len(t) + 3:
+        return True
+    return False
+
+
 def parse_last_json_object(stdout: str) -> dict[str, Any] | None:
     for line in reversed((stdout or "").splitlines()):
         s = line.strip()
@@ -183,7 +208,7 @@ def main() -> int:
     ap.add_argument(
         "--skip-suspicious-title-check",
         default="false",
-        help="Skip suspicious program_title checks (swallowed title / subtitle separator)",
+        help="Skip suspicious program_title checks (swallowed/shortened title, subtitle separator)",
     )
     args = ap.parse_args()
 
@@ -395,6 +420,26 @@ def main() -> int:
                         "metadata_source": md_source,
                         "program_title": md.get("program_title"),
                         "byProgramGroup": by_program_group_name(sf.win_path),
+                        "ts": ts_row,
+                    }
+                )
+                if queue_missing_metadata:
+                    queue_candidates.append(
+                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
+                    )
+                continue
+
+            if run_suspicious_title_check and looks_like_shortened_program_title(sf.win_path, md):
+                suspicious_program_title_skipped += 1
+                rows_for_plan.append(
+                    {
+                        "path_id": path_id,
+                        "src": sf.win_path,
+                        "status": "skipped",
+                        "reason": "suspicious_program_title_shortened",
+                        "metadata_source": md_source,
+                        "program_title": md.get("program_title"),
+                        "folderTitle": _folder_title_from_path(sf.win_path),
                         "ts": ts_row,
                     }
                 )
@@ -840,7 +885,7 @@ def main() -> int:
             )
         if suspicious_program_title_skipped > 0:
             next_actions.append(
-                "Some machine-extracted program titles look like swallowed episode titles under by_program; regenerate/review metadata before relocate apply."
+                "Some machine-extracted program titles look suspicious (swallowed or shortened vs folder title, or subtitle separator); regenerate/review metadata before relocate apply."
             )
         if (not args.apply) and unregistered_skipped > 0:
             next_actions.append(
