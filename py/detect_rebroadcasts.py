@@ -6,8 +6,10 @@ episode_no/subtitle). Classification rule priority:
 
 1) If any member has broadcasts.data_json.is_rebroadcast_flag=true, those are
    "rebroadcast" and non-true members become "original".
-2) If no member has true flag (EPG missing or all false/unknown), all members
-   are marked "unknown" to avoid date-only misclassification.
+2) If no true flag exists but at least one explicit false exists (EPG confirms
+   not a rebroadcast), all members are "original".
+3) If no EPG flags are available at all, all members are "unknown" to avoid
+   date-only misclassification.
 
 Rebroadcast candidates are linked in broadcast_groups / broadcast_group_members.
 No files are deleted.
@@ -18,7 +20,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import uuid
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
@@ -64,15 +65,28 @@ def _extract_rebroadcast_flag(data_json_raw: Any) -> bool | None:
     v = obj.get("is_rebroadcast_flag")
     if isinstance(v, bool):
         return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in {"true", "1", "yes"}:
+            return True
+        if s in {"false", "0", "no"}:
+            return False
     return None
 
 
 def _classify_group(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    has_rebroadcast = any(e.get("is_rebroadcast_flag") is True for e in entries)
+    flags = [e.get("is_rebroadcast_flag") for e in entries]
+    has_true = any(f is True for f in flags)
+    has_known = any(f is not None for f in flags)
+
     classified: list[dict[str, Any]] = []
     for e in entries:
-        if has_rebroadcast:
+        if has_true:
             btype = "rebroadcast" if e.get("is_rebroadcast_flag") is True else "original"
+        elif has_known:
+            btype = "original"
         else:
             btype = "unknown"
         classified.append({**e, "broadcast_type": btype})

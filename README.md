@@ -888,13 +888,14 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | 2 | ~~LLMサブエージェントのリカバリ機構がない~~ | [#13](https://github.com/NEXTAltair/video-library-pipeline/issues/13) | 解決済み (llm_extract_status ツールでバッチ状態検出・リトライ) |
 | 3 | ~~EPG match_key 衝突リスク~~ | [#7](https://github.com/NEXTAltair/video-library-pipeline/issues/7) | 解決済み (`match_key` に broadcaster を含めて衝突回避) |
 | 4 | relocateフローの source 不整合 | [#6](https://github.com/NEXTAltair/video-library-pipeline/issues/6) | open |
-| 5 | ~~DBバックアップのローテーション~~ | — | 解決済み (`rotate_backups(keep=10)`) |
-| 6 | ~~PowerShellエラーハンドリング不透明~~ | [#12](https://github.com/NEXTAltair/video-library-pipeline/issues/12) | 解決済み (`moveApplyStats` で構造化エラー伝播) |
-| 7 | ~~program_aliases.yaml 循環依存~~ | [#14](https://github.com/NEXTAltair/video-library-pipeline/issues/14) | 不要 (既存アーカイブ機構で管理可能) |
-| 8 | ~~Python/TS重複コード整理~~ | — | 完了 |
-| 9 | ~~cron定期EPG取り込み~~ | [#8](https://github.com/NEXTAltair/video-library-pipeline/issues/8) | 解決済み (毎日05:00 JST cronジョブ追加) |
-| 10 | ~~normalize_filenames.ps1 欠落サブスクリプト~~ | [#9](https://github.com/NEXTAltair/video-library-pipeline/issues/9) | 解決済み (ラッパーごと削除、メタデータ抽出側で対応済み) |
-| 11 | ~~list_remaining_unwatched.ps1 再検討~~ | [#10](https://github.com/NEXTAltair/video-library-pipeline/issues/10) | 解決済み (計算ロジックで置換、PS1削除) |
-| 12 | ~~PS1スクリプト統合検討~~ | [#11](https://github.com/NEXTAltair/video-library-pipeline/issues/11) | 統合見送り (共通部分は `_long_path_utils.ps1` に集約済み) |
+| 5 | ~~再放送判定のair_date依存による誤分類~~ | [#25](https://github.com/NEXTAltair/video-library-pipeline/issues/25) | 解決済み (EPG `is_rebroadcast_flag` 優先、未取得は `unknown`) |
+| 6 | ~~DBバックアップのローテーション~~ | — | 解決済み (`rotate_backups(keep=10)`) |
+| 7 | ~~PowerShellエラーハンドリング不透明~~ | [#12](https://github.com/NEXTAltair/video-library-pipeline/issues/12) | 解決済み (`moveApplyStats` で構造化エラー伝播) |
+| 8 | ~~program_aliases.yaml 循環依存~~ | [#14](https://github.com/NEXTAltair/video-library-pipeline/issues/14) | 不要 (既存アーカイブ機構で管理可能) |
+| 9 | ~~Python/TS重複コード整理~~ | — | 完了 |
+| 10 | ~~cron定期EPG取り込み~~ | [#8](https://github.com/NEXTAltair/video-library-pipeline/issues/8) | 解決済み (毎日05:00 JST cronジョブ追加) |
+| 11 | ~~normalize_filenames.ps1 欠落サブスクリプト~~ | [#9](https://github.com/NEXTAltair/video-library-pipeline/issues/9) | 解決済み (ラッパーごと削除、メタデータ抽出側で対応済み) |
+| 12 | ~~list_remaining_unwatched.ps1 再検討~~ | [#10](https://github.com/NEXTAltair/video-library-pipeline/issues/10) | 解決済み (計算ロジックで置換、PS1削除) |
+| 13 | ~~PS1スクリプト統合検討~~ | [#11](https://github.com/NEXTAltair/video-library-pipeline/issues/11) | 統合見送り (共通部分は `_long_path_utils.ps1` に集約済み) |
 
 その他のIssue: [#1](https://github.com/NEXTAltair/video-library-pipeline/issues/1) data_json拡張 / [#2](https://github.com/NEXTAltair/video-library-pipeline/issues/2) by_seriesリネーム / [#3](https://github.com/NEXTAltair/video-library-pipeline/issues/3) sourceリネーム / [#4](https://github.com/NEXTAltair/video-library-pipeline/issues/4) filesテーブルにハッシュ+メタデータ / [#5](https://github.com/NEXTAltair/video-library-pipeline/issues/5) アニメ・ドラマレイアウト移行
