@@ -173,6 +173,11 @@ def main() -> int:
     ap.add_argument("--extensions-json", default="")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--allow-needs-review", default="false")
+    ap.add_argument(
+        "--allow-unreviewed-metadata",
+        default="false",
+        help="Allow non-human_reviewed metadata (e.g. source=llm) to generate relocation plans",
+    )
     ap.add_argument("--queue-missing-metadata", default="false")
     ap.add_argument("--write-metadata-queue-on-dry-run", default="false")
     ap.add_argument("--scan-error-policy", choices=["warn", "fail", "threshold"], default="warn")
@@ -231,6 +236,7 @@ def main() -> int:
     extensions = ensure_exts(exts_raw if isinstance(exts_raw, list) else DEFAULT_EXTENSIONS)
     limit = max(0, int(args.limit or 0))
     allow_needs_review = as_bool(args.allow_needs_review, False)
+    allow_unreviewed_metadata = as_bool(args.allow_unreviewed_metadata, False)
     queue_missing_metadata = as_bool(args.queue_missing_metadata, False)
     write_metadata_queue_on_dry_run = as_bool(args.write_metadata_queue_on_dry_run, False)
     scan_retry_count = max(0, int(args.scan_retry_count or DEFAULT_SCAN_RETRY_COUNT))
@@ -274,6 +280,7 @@ def main() -> int:
     invalid_contract_skipped = 0
     suspicious_program_title_skipped = 0
     needs_review_skipped = 0
+    unreviewed_metadata_skipped = 0
     corrupt_candidates = 0
     dst_exists_errors = 0
     auto_registered_paths = 0
@@ -382,6 +389,24 @@ def main() -> int:
                 continue
 
             is_human_reviewed = str(md_source or "").strip().lower() == "human_reviewed"
+            if not allow_unreviewed_metadata and not is_human_reviewed:
+                unreviewed_metadata_skipped += 1
+                rows_for_plan.append(
+                    {
+                        "path_id": path_id,
+                        "src": sf.win_path,
+                        "status": "skipped",
+                        "reason": "unreviewed_metadata",
+                        "metadata_source": md_source,
+                        "ts": ts_row,
+                    }
+                )
+                if queue_missing_metadata:
+                    queue_candidates.append(
+                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
+                    )
+                continue
+
             run_suspicious_title_check = not skip_suspicious_title_check and not is_human_reviewed
 
             if run_suspicious_title_check and looks_like_swallowed_program_title(sf.win_path, md):
@@ -495,6 +520,7 @@ def main() -> int:
                             "roots": roots_win,
                             "apply": bool(args.apply),
                             "allow_needs_review": allow_needs_review,
+                            "allow_unreviewed_metadata": allow_unreviewed_metadata,
                             "queue_missing_metadata": queue_missing_metadata,
                             "skip_suspicious_title_check": skip_suspicious_title_check,
                             "extensions": extensions,
@@ -798,13 +824,16 @@ def main() -> int:
             auto_registered_files_truncated = True
 
         requires_metadata_preparation = metadata_queue_planned_count > 0 or suspicious_program_title_skipped > 0
-        requires_human_review = bool(requires_metadata_preparation or needs_review_skipped > 0)
+        requires_human_review = bool(
+            requires_metadata_preparation or needs_review_skipped > 0 or unreviewed_metadata_skipped > 0
+        )
         can_proceed_to_relocate_apply = bool(
             (not args.apply)
             and planned_moves > 0
             and metadata_queue_planned_count == 0
             and suspicious_program_title_skipped == 0
             and needs_review_skipped == 0
+            and unreviewed_metadata_skipped == 0
             and len(errors) == 0
         )
 
@@ -841,6 +870,10 @@ def main() -> int:
         if suspicious_program_title_skipped > 0:
             next_actions.append(
                 "Some machine-extracted program titles look like swallowed episode titles under by_program; regenerate/review metadata before relocate apply."
+            )
+        if unreviewed_metadata_skipped > 0:
+            next_actions.append(
+                "Some files were skipped because latest metadata is not human_reviewed; review/apply metadata, or rerun with allowUnreviewedMetadata=true only when intentionally accepting machine-only metadata."
             )
         if (not args.apply) and unregistered_skipped > 0:
             next_actions.append(
@@ -882,6 +915,7 @@ def main() -> int:
             "invalidContractSkipped": invalid_contract_skipped,
             "suspiciousProgramTitleSkipped": suspicious_program_title_skipped,
             "needsReviewSkipped": needs_review_skipped,
+            "unreviewedMetadataSkipped": unreviewed_metadata_skipped,
             "corruptCandidates": corrupt_candidates,
             "dstExistsErrors": dst_exists_errors,
             "moveApplyStats": move_apply_stats,
