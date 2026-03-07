@@ -439,7 +439,7 @@ video-library-pipeline (本プラグイン)
 | `video_pipeline_status`                     | パイプラインの最新状態サマリ (各ステージの最新JSONL等)   | `includeRawPaths`                  |
 | `video_pipeline_export_program_yaml`        | 抽出結果からヒントYAML生成                               | `sourceJsonlPath`                  |
 | `video_pipeline_ingest_epg`                 | EDCB `.program.txt` からEPG番組情報を取り込み          | —                                   |
-| `video_pipeline_detect_rebroadcasts`        | 再放送グルーピング (broadcast_groups テーブル)           | —                                   |
+| `video_pipeline_detect_rebroadcasts`        | EPG `[再]` フラグ起点で再放送を分類し、根拠不足は `unknown` にする | —                                   |
 | `video_pipeline_db_backup` / `db_restore` | DBスナップショットの作成・復元                           | `action`, `descriptor`, `keep` |
 | `video_pipeline_repair_db`                  | paths テーブルの drive/dir/name 分解値を path から再生成 | —                                   |
 | `video_pipeline_logs`                       | 監査ログ (events テーブル) の参照                        | —                                   |
@@ -741,7 +741,7 @@ erDiagram
 | `programs` / `broadcasts`                      | ファイル非依存の番組シリーズ・放送履歴 (EPG由来の正規テーブル)      |
 | `path_programs`                                | ファイルと番組シリーズの紐付け (reextract等で更新)                 |
 | `tags` / `path_tags`                           | Tablacus連携用タグ                                                 |
-| `broadcast_groups` / `broadcast_group_members` | 再放送グルーピング (original/rebroadcast 分類)                     |
+| `broadcast_groups` / `broadcast_group_members` | 再放送グルーピング (original/rebroadcast/unknown 分類)             |
 
 ### path_id 生成
 
@@ -773,6 +773,23 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 ### is_current 運用
 
 `file_paths.is_current` はファイル移動時に旧パス=`0`、新パス=`1` に更新される。これにより複数パスで同一ファイルの移動履歴を追跡できる。`is_current=1` のレコードが現在のファイル位置を示す。
+
+---
+
+### 再放送判定ルール (Issue #25対応)
+
+`video_pipeline_detect_rebroadcasts` は `broadcasts.data_json.is_rebroadcast_flag` を唯一の信頼ソースとして扱う。
+
+1. `is_rebroadcast_flag=true` がある行は `rebroadcast`
+2. 同一グループ内に `rebroadcast` が1件でもある場合、その他の行は `original`
+3. EPG照合がなくフラグ根拠がないグループは全件 `unknown`
+
+このため、`air_date` の前後関係だけで `original/rebroadcast` を決めない。EPGがないケースは誤判定防止のため `unknown` のまま保持する。
+
+`is_rebroadcast_flag` の生成元は以下の流れ:
+
+- `.program.txt` → `edcb_program_parser.py` (`[再]` を検出)
+- `ingest_program_txt.py` → `broadcasts.data_json` に格納
 
 ---
 
