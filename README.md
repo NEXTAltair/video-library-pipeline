@@ -653,6 +653,33 @@ erDiagram
         TEXT updated_at
     }
 
+    programs {
+        TEXT program_id PK
+        TEXT program_key UNIQUE
+        TEXT canonical_title
+        TEXT created_at
+    }
+
+    broadcasts {
+        TEXT broadcast_id PK
+        TEXT program_id FK
+        TEXT air_date
+        TEXT start_time
+        TEXT end_time
+        TEXT broadcaster
+        TEXT match_key UNIQUE
+        TEXT data_json
+        TEXT created_at
+    }
+
+    path_programs {
+        TEXT path_id FK
+        TEXT program_id FK
+        TEXT broadcast_id FK
+        TEXT source
+        TEXT updated_at
+    }
+
     tags {
         INTEGER tag_id PK
         TEXT name
@@ -690,6 +717,10 @@ erDiagram
     runs ||--o{ events : "triggered"
     paths ||--o{ events : "src/dst"
     paths ||--|| path_metadata : "has metadata"
+    programs ||--o{ broadcasts : "has airings"
+    paths ||--o{ path_programs : "linked programs"
+    programs ||--o{ path_programs : "linked to paths"
+    broadcasts ||--o{ path_programs : "optional matched airing"
     paths ||--o{ path_tags : "tagged"
     tags ||--o{ path_tags : "applied to"
     broadcast_groups ||--o{ broadcast_group_members : "contains"
@@ -707,6 +738,8 @@ erDiagram
 | `observations`                                   | 実行時のファイル状態スナップショット (size/mtime)                  |
 | `events`                                         | 移動・リロケート等のアクション記録 (成否追跡)                      |
 | `path_metadata`                                  | 抽出メタデータ (source + data_json にJSONで格納)                   |
+| `programs` / `broadcasts`                       | EPG由来の番組マスタ/放送履歴（ファイル非依存）                    |
+| `path_programs`                                 | ファイルと番組の紐付け（主に reextract 時に更新）                 |
 | `tags` / `path_tags`                           | Tablacus連携用タグ                                                 |
 | `broadcast_groups` / `broadcast_group_members` | 再放送グルーピング (original/rebroadcast 分類)                     |
 
@@ -734,7 +767,7 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | ---------------- | ----------------------- | ------------------------------------ |
 | `rule_based`   | ルールベース抽出        | `run_metadata_batches_promptv1.py` |
 | `llm_subagent` | LLMサブエージェント抽出 | `apply_llm_extract_output.py`      |
-| `edcb_epg`     | EPG取り込み             | `ingest_program_txt.py`            |
+| `reextract`    | ファイルと番組の紐付け   | `run_metadata_batches_promptv1.py` |
 
 > `source='rule_based'` はルールベース抽出の結果を示す。旧値 `llm` は移行スクリプトで `rule_based` に統一可能。
 

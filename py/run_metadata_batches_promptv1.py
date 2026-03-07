@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 import os
 import re
 import sqlite3
@@ -15,6 +16,7 @@ from edcb_program_parser import match_key_from_filename, datetime_key_from_filen
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
 from source_history import make_entry
+from mediaops_schema import create_schema_if_needed
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -406,19 +408,46 @@ class _EpgCache:
         self._by_datetime_key: dict[str, list[dict]] = {}
         try:
             rows = con.execute(
-                "SELECT data_json FROM path_metadata WHERE source='edcb_epg'",
+                """
+                SELECT
+                  b.broadcast_id,
+                  b.program_id,
+                  p.canonical_title,
+                  b.air_date,
+                  b.start_time,
+                  b.end_time,
+                  b.broadcaster,
+                  b.match_key,
+                  b.data_json
+                FROM broadcasts b
+                JOIN programs p ON p.program_id = b.program_id
+                """,
             ).fetchall()
         except sqlite3.Error:
             return
         for row in rows:
             try:
-                data = json.loads(row[0])
+                payload = json.loads(row["data_json"] or "{}")
             except Exception:
-                continue
-            if not isinstance(data, dict):
-                continue
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            data = dict(payload)
+            data.setdefault("broadcast_id", row["broadcast_id"])
+            data.setdefault("program_id", row["program_id"])
+            data.setdefault("official_title", row["canonical_title"])
+            data.setdefault("air_date", row["air_date"])
+            data.setdefault("start_time", row["start_time"])
+            data.setdefault("end_time", row["end_time"])
+            data.setdefault("broadcaster", row["broadcaster"])
+            data.setdefault("match_key", row["match_key"])
             mk = data.get("match_key")
-            dk = data.get("datetime_key")
+            dk = data.get("datetime_key") or (
+                f"{data.get('air_date')}::{data.get('start_time')}"
+                if data.get("air_date") and data.get("start_time")
+                else None
+            )
             if mk:
                 self._by_match_key[mk] = data
                 # Build title::date::time key (strip broadcaster segment)
@@ -575,6 +604,8 @@ def main() -> int:
     generated_input_jsonl_paths: list[str] = []
     generated_output_jsonl_paths: list[str] = []
     db_con = sqlite3.connect(args.db)
+    db_con.row_factory = sqlite3.Row
+    create_schema_if_needed(db_con)
     epg_cache = _EpgCache(db_con)
 
     def flush():
@@ -589,6 +620,7 @@ def main() -> int:
         write_jsonl(bpath, batch)
 
         rows = []
+        path_program_links: dict[tuple[str, str], tuple[str | None, str]] = {}
         for rec in batch:
             pid = rec.get("path_id")
             if pid and not args.ignore_human_reviewed:
@@ -673,6 +705,11 @@ def main() -> int:
             dk = datetime_key_from_filename(name)
             epg = epg_cache.lookup(mk, dk)
             _enrich_with_epg(row, epg)
+            if epg and rec.get("path_id") and epg.get("program_id"):
+                path_program_links[(str(rec["path_id"]), str(epg["program_id"]))] = (
+                    str(epg.get("broadcast_id")) if epg.get("broadcast_id") else None,
+                    "reextract",
+                )
 
             row["genre"] = resolve_genre(row)
             row["franchise"] = resolve_franchise(row, args.franchise_rules or None)
@@ -696,6 +733,22 @@ def main() -> int:
             sys.argv += ["--franchise-rules", args.franchise_rules]
         if _upsert_main() != 0:
             raise SystemExit(f"upsert failed: {epath}")
+
+        if path_program_links:
+            ts_now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            for (path_id, program_id), (broadcast_id, source) in path_program_links.items():
+                db_con.execute(
+                    """
+                    INSERT INTO path_programs (path_id, program_id, broadcast_id, source, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(path_id, program_id) DO UPDATE SET
+                      broadcast_id=excluded.broadcast_id,
+                      source=excluded.source,
+                      updated_at=excluded.updated_at
+                    """,
+                    (path_id, program_id, broadcast_id, source, ts_now),
+                )
+            db_con.commit()
 
         generated_input_jsonl_paths.append(str(bpath))
         generated_output_jsonl_paths.append(str(epath))
