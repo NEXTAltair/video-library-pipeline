@@ -7,34 +7,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import unicodedata
-import uuid
 
+from epg_common import broadcast_id_for, normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from pathscan_common import now_iso
-
-WS = re.compile(r"[\s\u3000]+")
-BAD = re.compile(r"[<>:\"/\\|?*]")
-UND = re.compile(r"_+")
-
-
-def normalize_program_key(title: str) -> str:
-    t = unicodedata.normalize("NFKC", str(title or "")).strip().lower()
-    t = WS.sub("_", t)
-    t = BAD.sub("", t)
-    t = UND.sub("_", t).strip("_")
-    return t or "unknown"
-
-
-def program_id_for(program_key: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"program_key:{program_key}"))
-
-
-def broadcast_id_for(match_key: str, fallback_seed: str) -> str:
-    if match_key:
-        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"broadcast_match_key:{match_key}"))
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"broadcast_fallback:{fallback_seed}"))
 
 
 def main() -> int:
@@ -81,7 +57,7 @@ def main() -> int:
             match_key = str(data.get("match_key") or "").strip()
             program_key = normalize_program_key(title)
             program_id = program_id_for(program_key)
-            b_seed = f"{path_id}:{data.get('air_date')}:{data.get('start_time')}:{title}"
+            b_seed = f"{program_id}::{data.get('air_date') or ''}::{data.get('start_time') or ''}::{data.get('broadcaster') or ''}"
             broadcast_id = broadcast_id_for(match_key, b_seed)
             ts = now_iso()
 

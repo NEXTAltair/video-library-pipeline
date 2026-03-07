@@ -699,18 +699,24 @@ def main() -> int:
             raise SystemExit(f"upsert failed: {epath}")
 
         if path_program_links:
-            db_con.executemany(
-                """
-                INSERT INTO path_programs (path_id, program_id, broadcast_id, source, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(path_id, program_id) DO UPDATE SET
-                  broadcast_id=excluded.broadcast_id,
-                  source=excluded.source,
-                  updated_at=excluded.updated_at
-                """,
-                path_program_links,
-            )
-            db_con.commit()
+            try:
+                db_con.executemany(
+                    """
+                    INSERT INTO path_programs (path_id, program_id, broadcast_id, source, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(path_id, program_id) DO UPDATE SET
+                      broadcast_id=excluded.broadcast_id,
+                      source=excluded.source,
+                      updated_at=excluded.updated_at
+                    """,
+                    path_program_links,
+                )
+                db_con.commit()
+            except sqlite3.OperationalError as e:
+                if "path_programs" in str(e):
+                    print(f"W path_programs upsert skipped (table may not exist yet): {e}", file=sys.stderr)
+                else:
+                    raise
 
         generated_input_jsonl_paths.append(str(bpath))
         generated_output_jsonl_paths.append(str(epath))

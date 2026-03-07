@@ -13,35 +13,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
-import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any
 
 from edcb_program_parser import datetime_key_from_epg, match_key_from_epg, parse_program_txt
+from epg_common import broadcast_id_for, normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from pathscan_common import now_iso
-
-WS = re.compile(r"[\s\u3000]+")
-BAD = re.compile(r"[<>:\"/\\|?*]")
-UND = re.compile(r"_+")
-
-
-def normalize_program_key(title: str) -> str:
-    t = unicodedata.normalize("NFKC", str(title or "")).strip().lower()
-    t = WS.sub("_", t)
-    t = BAD.sub("", t)
-    t = UND.sub("_", t).strip("_")
-    return t or "unknown"
-
-
-def program_id_for(program_key: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"program_key:{program_key}"))
-
-
-def broadcast_id_for(match_key: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"broadcast_match_key:{match_key}"))
 
 
 def find_program_txt_files(ts_root: Path) -> list[Path]:
@@ -159,7 +138,13 @@ def main() -> int:
             dt_key = datetime_key_from_epg(epg)
             program_key = normalize_program_key(str(epg.get("official_title") or ""))
             program_id = program_id_for(program_key)
-            broadcast_id = broadcast_id_for(match_key)
+            fallback_seed = "::".join([
+                program_id,
+                str(epg.get("air_date") or ""),
+                str(epg.get("start_time") or ""),
+                str(epg.get("broadcaster") or ""),
+            ])
+            broadcast_id = broadcast_id_for(match_key, fallback_seed)
 
             existing = con.execute(
                 "SELECT broadcast_id FROM broadcasts WHERE match_key = ?",

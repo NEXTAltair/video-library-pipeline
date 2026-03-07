@@ -6,8 +6,8 @@ export function registerToolIngestEpg(api: any, getCfg: (api: any) => any) {
     {
       name: "video_pipeline_ingest_epg",
       description:
-        "Scan a TS recording directory for EDCB .program.txt files and ingest EPG metadata (broadcaster, genre, description) into DB. " +
-        "Run this before deleting program.txt files so that encoded files can be matched to their EPG data.",
+        "Scan a TS recording directory for EDCB .program.txt files and ingest EPG metadata into programs/broadcasts tables. " +
+        "Run this before deleting program.txt files so that encoded files can be matched to broadcast history.",
       parameters: {
         type: "object",
         additionalProperties: false,
