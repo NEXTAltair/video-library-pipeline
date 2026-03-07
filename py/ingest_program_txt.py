@@ -1,11 +1,7 @@
 """Ingest EDCB .program.txt files into mediaops.sqlite.
 
 Scans a TS recording directory for .program.txt companion files,
-parses them, and stores structured EPG metadata in the database.
-
-The metadata is stored in `path_metadata` with source='edcb_epg'.
-Match keys are stored in data_json so that encoded files (MP4) can
-be correlated with the original EPG data later.
+parses them, and stores EPG metadata in programs/broadcasts tables.
 
 Usage:
   cd <video-library-pipeline-dir>/py
@@ -21,15 +17,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from edcb_program_parser import (
-    datetime_key_from_epg,
-    match_key_from_epg,
-    match_key_from_filename,
-    parse_program_txt,
-)
+from edcb_program_parser import match_key_from_epg, parse_program_txt
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
-from pathscan_common import now_iso, path_id_for, split_win, wsl_to_windows_path
-from source_history import make_entry
+from pathscan_common import now_iso
 
 
 def find_program_txt_files(ts_root: Path) -> list[Path]:
@@ -37,92 +27,25 @@ def find_program_txt_files(ts_root: Path) -> list[Path]:
     return sorted(ts_root.rglob("*.program.txt"))
 
 
-def ts_path_from_program_txt(program_txt_path: Path) -> Path | None:
-    """Derive the .ts file path from its .program.txt companion.
-
-    EDCB naming: "title_date.ts.program.txt" → "title_date.ts"
-    """
-    name = program_txt_path.name
-    if name.endswith(".ts.program.txt"):
-        ts_name = name[: -len(".program.txt")]
-        return program_txt_path.parent / ts_name
-    return None
+def _normalize_program_key(title: str) -> str:
+    return " ".join(str(title or "").strip().lower().split())
 
 
-def _migrate_match_keys(db_path: str, *, dry_run: bool = False) -> int:
-    """Re-generate match_keys for existing edcb_epg records (old→new format).
+def _program_id_for_key(program_key: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"program:{program_key}"))
 
-    New format includes broadcaster: title::broadcaster::date::time
-    """
-    con = connect_db(db_path)
-    rows = con.execute(
-        "SELECT path_id, data_json FROM path_metadata WHERE source='edcb_epg'",
-    ).fetchall()
 
-    updated = 0
-    skipped = 0
-    for path_id, data_json_str in rows:
-        try:
-            data = json.loads(data_json_str)
-        except Exception:
-            skipped += 1
-            continue
-        if not isinstance(data, dict):
-            skipped += 1
-            continue
-
-        title = data.get("official_title", "")
-        broadcaster = data.get("broadcaster", "")
-        air_date = data.get("air_date", "")
-        start_time = data.get("start_time", "")
-        if not title or not air_date or not start_time:
-            skipped += 1
-            continue
-
-        new_mk = match_key_from_epg({
-            "official_title": title,
-            "broadcaster": broadcaster,
-            "air_date": air_date,
-            "start_time": start_time,
-        })
-        old_mk = data.get("match_key")
-        if new_mk == old_mk:
-            skipped += 1
-            continue
-
-        data["match_key"] = new_mk
-        updated += 1
-
-        if not dry_run:
-            con.execute(
-                "UPDATE path_metadata SET data_json=?, updated_at=? WHERE path_id=? AND source='edcb_epg'",
-                (json.dumps(data, ensure_ascii=False), now_iso(), path_id),
-            )
-
-    if not dry_run:
-        con.commit()
-    con.close()
-
-    result = {"tool": "migrate_match_keys", "dry_run": dry_run, "total": len(rows), "updated": updated, "skipped": skipped}
-    print(json.dumps(result, ensure_ascii=False))
-    return 0
+def _broadcast_id_for_match_key(match_key: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"broadcast:{match_key}"))
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
-    ap.add_argument("--ts-root", help="WSL path to TS recording directory (e.g. /mnt/j/TVFile)")
+    ap.add_argument("--ts-root", required=True, help="WSL path to TS recording directory (e.g. /mnt/j/TVFile)")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--migrate-match-keys", action="store_true", help="Re-generate match_keys for existing edcb_epg records")
-    ap.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
     args = ap.parse_args()
-
-    if args.migrate_match_keys:
-        return _migrate_match_keys(args.db, dry_run=args.dry_run)
-
-    if not args.ts_root:
-        ap.error("--ts-root is required unless --migrate-match-keys is used")
 
     if not os.path.exists(args.db):
         raise SystemExit(f"DB not found: {args.db}")
@@ -153,7 +76,6 @@ def main() -> int:
             if args.limit and total > args.limit:
                 break
 
-            # Parse the program.txt
             epg = parse_program_txt(ptxt)
             if not epg:
                 skipped_parse_failed += 1
@@ -161,57 +83,50 @@ def main() -> int:
                 continue
             parsed += 1
 
-            # Derive TS file path and its Windows equivalent
-            ts_path = ts_path_from_program_txt(ptxt)
-            if not ts_path:
+            match_key = match_key_from_epg(epg)
+            if not match_key:
                 skipped_parse_failed += 1
-                errors.append(f"cannot_derive_ts_path: {ptxt.name}")
+                errors.append(f"missing_match_key: {ptxt.name}")
                 continue
 
-            ts_win_path = wsl_to_windows_path(str(ts_path))
-            pid = path_id_for(ts_win_path)
-
-            # Check if already ingested (idempotency)
             existing = fetchone(
                 con,
-                "SELECT path_id FROM path_metadata WHERE path_id = ? AND source = 'edcb_epg'",
-                (pid,),
+                "SELECT broadcast_id FROM broadcasts WHERE match_key = ?",
+                (match_key,),
             )
             if existing:
                 skipped_already_ingested += 1
                 continue
 
-            # Generate match keys for correlation with encoded files
-            match_key = match_key_from_epg(epg)
-            dt_key = datetime_key_from_epg(epg)
+            canonical_title = str(epg.get("official_title") or "").strip()
+            if not canonical_title:
+                skipped_parse_failed += 1
+                errors.append(f"missing_title: {ptxt.name}")
+                continue
 
-            # Build the data payload
-            data = {
-                "match_key": match_key,
-                "datetime_key": dt_key,
-                "air_date": epg["air_date"],
-                "start_time": epg["start_time"],
-                "end_time": epg["end_time"],
-                "broadcaster": epg["broadcaster"],
-                "broadcaster_raw": epg["broadcaster_raw"],
-                "official_title": epg["official_title"],
-                "title_raw": epg["title_raw"],
-                "annotations": epg["annotations"],
-                "is_rebroadcast_flag": epg["is_rebroadcast_flag"],
-                "description": epg["description"][:500] if epg["description"] else None,
-                "epg_genres": epg["epg_genres"],
-                "network_ids": epg["network_ids"],
-                "ts_path": ts_win_path,
-                "program_txt_path": str(ptxt),
-                "ingested_at": now_iso(),
-            }
-            data["source_history"] = [make_entry("edcb_epg", list(data.keys()))]
+            program_key = _normalize_program_key(canonical_title)
+            program_id = _program_id_for_key(program_key)
+            broadcast_id = _broadcast_id_for_match_key(match_key)
 
-            rows_to_insert.append({
-                "pid": pid,
-                "ts_win_path": ts_win_path,
-                "data": data,
-            })
+            payload = dict(epg)
+            payload["match_key"] = match_key
+            payload["ingested_at"] = now_iso()
+
+            rows_to_insert.append(
+                {
+                    "program_id": program_id,
+                    "program_key": program_key,
+                    "canonical_title": canonical_title,
+                    "broadcast_id": broadcast_id,
+                    "match_key": match_key,
+                    "air_date": epg.get("air_date"),
+                    "start_time": epg.get("start_time"),
+                    "end_time": epg.get("end_time"),
+                    "broadcaster": epg.get("broadcaster"),
+                    "data_json": json.dumps(payload, ensure_ascii=False),
+                    "created_at": now_iso(),
+                }
+            )
 
         if not args.apply:
             summary = {
@@ -229,7 +144,6 @@ def main() -> int:
             print(json.dumps(summary, ensure_ascii=False))
             return 0
 
-        # Apply: write to DB
         begin_immediate(con)
         con.execute(
             """
@@ -240,34 +154,38 @@ def main() -> int:
         )
 
         for row in rows_to_insert:
-            pid = row["pid"]
-            ts_win_path = row["ts_win_path"]
-            data = row["data"]
-            drive, dir_, name, ext = split_win(ts_win_path)
-            ts_now = now_iso()
-
-            # Ensure path exists in paths table
             con.execute(
                 """
-                INSERT INTO paths (path_id, path, drive, dir, name, ext, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(path_id) DO UPDATE SET updated_at=excluded.updated_at
+                INSERT INTO programs (program_id, program_key, canonical_title, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(program_id) DO UPDATE SET
+                  canonical_title=excluded.canonical_title
                 """,
-                (pid, ts_win_path, drive, dir_, name, ext, ts_now, ts_now),
+                (row["program_id"], row["program_key"], row["canonical_title"], row["created_at"]),
             )
-
-            # Insert EPG metadata
-            data_json = json.dumps(data, ensure_ascii=False)
             con.execute(
                 """
-                INSERT INTO path_metadata (path_id, source, data_json, updated_at)
-                VALUES (?, 'edcb_epg', ?, ?)
-                ON CONFLICT(path_id) DO UPDATE SET
-                  source='edcb_epg',
-                  data_json=excluded.data_json,
-                  updated_at=excluded.updated_at
+                INSERT INTO broadcasts (broadcast_id, program_id, air_date, start_time, end_time, broadcaster, match_key, data_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(broadcast_id) DO UPDATE SET
+                  air_date=excluded.air_date,
+                  start_time=excluded.start_time,
+                  end_time=excluded.end_time,
+                  broadcaster=excluded.broadcaster,
+                  match_key=excluded.match_key,
+                  data_json=excluded.data_json
                 """,
-                (pid, data_json, ts_now),
+                (
+                    row["broadcast_id"],
+                    row["program_id"],
+                    row["air_date"],
+                    row["start_time"],
+                    row["end_time"],
+                    row["broadcaster"],
+                    row["match_key"],
+                    row["data_json"],
+                    row["created_at"],
+                ),
             )
             ingested += 1
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -392,13 +393,7 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict
 
 
 class _EpgCache:
-    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key.
-
-    Indexes:
-    - _by_match_key: full key including broadcaster (no collision)
-    - _by_title_dt: title::date::time (old format) → list of EPG dicts
-    - _by_datetime_key: date::time → list of EPG dicts
-    """
+    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key."""
 
     def __init__(self, con: sqlite3.Connection):
         self._by_match_key: dict[str, dict] = {}
@@ -406,39 +401,42 @@ class _EpgCache:
         self._by_datetime_key: dict[str, list[dict]] = {}
         try:
             rows = con.execute(
-                "SELECT data_json FROM path_metadata WHERE source='edcb_epg'",
+                """
+                SELECT b.broadcast_id, b.program_id, b.match_key, b.air_date, b.start_time, b.data_json
+                FROM broadcasts b
+                """,
             ).fetchall()
         except sqlite3.Error:
             return
         for row in rows:
+            broadcast_id, program_id, mk, air_date, start_time, data_json = row
+            data: dict[str, Any] = {}
             try:
-                data = json.loads(row[0])
+                parsed = json.loads(data_json) if data_json else {}
+                if isinstance(parsed, dict):
+                    data = parsed
             except Exception:
-                continue
-            if not isinstance(data, dict):
-                continue
-            mk = data.get("match_key")
-            dk = data.get("datetime_key")
+                data = {}
+            if mk and not data.get("match_key"):
+                data["match_key"] = mk
+            item = {
+                "program_id": program_id,
+                "broadcast_id": broadcast_id,
+                "data": data,
+            }
             if mk:
-                self._by_match_key[mk] = data
-                # Build title::date::time key (strip broadcaster segment)
-                parts = mk.split("::")
+                self._by_match_key[mk] = item
+                parts = str(mk).split("::")
                 if len(parts) == 4:
                     title_dt = f"{parts[0]}::{parts[2]}::{parts[3]}"
-                    self._by_title_dt.setdefault(title_dt, []).append(data)
+                    self._by_title_dt.setdefault(title_dt, []).append(item)
                 elif len(parts) == 3:
-                    # Legacy format without broadcaster
-                    self._by_title_dt.setdefault(mk, []).append(data)
-            if dk:
-                self._by_datetime_key.setdefault(dk, []).append(data)
+                    self._by_title_dt.setdefault(mk, []).append(item)
+            if air_date and start_time:
+                dk = f"{air_date}::{start_time}"
+                self._by_datetime_key.setdefault(dk, []).append(item)
 
     def lookup(self, match_key: str | None, datetime_key: str | None) -> dict | None:
-        """Find EPG data by match_key, title_dt fallback, then datetime_key.
-
-        match_key from filename has no broadcaster segment (title::date::time),
-        so we try _by_match_key first (EPG-to-EPG exact), then _by_title_dt
-        (filename-to-EPG), then _by_datetime_key (date+time only).
-        """
         if match_key:
             if match_key in self._by_match_key:
                 return self._by_match_key[match_key]
@@ -449,9 +447,12 @@ class _EpgCache:
         return None
 
 
-def _enrich_with_epg(row: dict, epg: dict | None) -> None:
+def _enrich_with_epg(row: dict, epg_item: dict | None) -> None:
     """Add EPG-sourced fields to a metadata row (in-place)."""
-    if not epg:
+    if not epg_item:
+        return
+    epg = epg_item.get("data") if isinstance(epg_item, dict) else None
+    if not isinstance(epg, dict):
         return
     row["broadcaster"] = epg.get("broadcaster")
     row["epg_genre"] = None
@@ -589,6 +590,7 @@ def main() -> int:
         write_jsonl(bpath, batch)
 
         rows = []
+        path_program_links: list[tuple[str, str, str | None]] = []
         for rec in batch:
             pid = rec.get("path_id")
             if pid and not args.ignore_human_reviewed:
@@ -671,8 +673,16 @@ def main() -> int:
             # EPG enrichment: look up ingested program.txt data
             mk = match_key_from_filename(name)
             dk = datetime_key_from_filename(name)
-            epg = epg_cache.lookup(mk, dk)
-            _enrich_with_epg(row, epg)
+            epg_item = epg_cache.lookup(mk, dk)
+            _enrich_with_epg(row, epg_item)
+            if epg_item and row.get("path_id") and epg_item.get("program_id"):
+                path_program_links.append(
+                    (
+                        str(row["path_id"]),
+                        str(epg_item["program_id"]),
+                        str(epg_item.get("broadcast_id")) if epg_item.get("broadcast_id") else None,
+                    )
+                )
 
             row["genre"] = resolve_genre(row)
             row["franchise"] = resolve_franchise(row, args.franchise_rules or None)
@@ -696,6 +706,24 @@ def main() -> int:
             sys.argv += ["--franchise-rules", args.franchise_rules]
         if _upsert_main() != 0:
             raise SystemExit(f"upsert failed: {epath}")
+
+        if path_program_links:
+            ts_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            try:
+                db_con.executemany(
+                    """
+                    INSERT INTO path_programs (path_id, program_id, broadcast_id, source, updated_at)
+                    VALUES (?, ?, ?, 'reextract', ?)
+                    ON CONFLICT(path_id, program_id) DO UPDATE SET
+                      broadcast_id=excluded.broadcast_id,
+                      source='reextract',
+                      updated_at=excluded.updated_at
+                    """,
+                    [(pid, pgid, bid, ts_now) for (pid, pgid, bid) in path_program_links],
+                )
+                db_con.commit()
+            except sqlite3.Error as e:
+                print(f"W path_programs upsert skipped: {e}")
 
         generated_input_jsonl_paths.append(str(bpath))
         generated_output_jsonl_paths.append(str(epath))
