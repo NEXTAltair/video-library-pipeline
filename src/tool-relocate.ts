@@ -26,6 +26,7 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
           scanErrorThreshold: { type: "integer", minimum: 1, maximum: 100000, description: "Error count threshold when scanErrorPolicy=threshold." },
           scanRetryCount: { type: "integer", minimum: 0, maximum: 10, default: 1, description: "Retry count per file on scan error." },
           onDstExists: { type: "string", enum: ["error", "rename_suffix"], default: "error", description: "Behavior when destination file already exists: error=abort that file, rename_suffix=add suffix." },
+          skipSuspiciousTitleCheck: { type: "boolean", default: false, description: "Skip swallowed-title and subtitle-separator suspicious checks. Use only after validating metadata quality (e.g., human-reviewed)." },
         },
       },
       async execute(_id: string, params: AnyObj) {
@@ -130,6 +131,8 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
           String(params.scanRetryCount ?? 1),
           "--on-dst-exists",
           String(params.onDstExists || "error"),
+          "--skip-suspicious-title-check",
+          String(params.skipSuspiciousTitleCheck === true),
         ];
         if (driveRoutesPath && fs.existsSync(driveRoutesPath)) {
           args.push("--drive-routes", driveRoutesPath);
@@ -183,6 +186,7 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
           ...(typeof params.scanErrorThreshold === "number"
             ? { scanErrorThreshold: Math.trunc(params.scanErrorThreshold) }
             : {}),
+          ...(params.skipSuspiciousTitleCheck === true ? { skipSuspiciousTitleCheck: true } : {}),
         };
         const plannedMoves = Number(out.plannedMoves || 0);
         const hasSuspiciousTitles = Number(out.suspiciousProgramTitleSkipped || 0) > 0;

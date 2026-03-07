@@ -180,6 +180,11 @@ def main() -> int:
     ap.add_argument("--scan-retry-count", type=int, default=DEFAULT_SCAN_RETRY_COUNT)
     ap.add_argument("--on-dst-exists", choices=["error", "rename_suffix"], default="error")
     ap.add_argument("--drive-routes", default="", help="Path to drive_routes.yaml for multi-dest routing")
+    ap.add_argument(
+        "--skip-suspicious-title-check",
+        default="false",
+        help="Skip suspicious program_title checks (swallowed title / subtitle separator)",
+    )
     args = ap.parse_args()
 
     db_path = windows_to_wsl_path(args.db)
@@ -229,6 +234,7 @@ def main() -> int:
     queue_missing_metadata = as_bool(args.queue_missing_metadata, False)
     write_metadata_queue_on_dry_run = as_bool(args.write_metadata_queue_on_dry_run, False)
     scan_retry_count = max(0, int(args.scan_retry_count or DEFAULT_SCAN_RETRY_COUNT))
+    skip_suspicious_title_check = as_bool(args.skip_suspicious_title_check, False)
 
     scanned, scan_warnings, scan_errors, fallback_stats = scan_files(
         roots=roots,
@@ -375,7 +381,10 @@ def main() -> int:
                     )
                 continue
 
-            if looks_like_swallowed_program_title(sf.win_path, md):
+            is_human_reviewed = str(md_source or "").strip().lower() == "human_reviewed"
+            run_suspicious_title_check = not skip_suspicious_title_check and not is_human_reviewed
+
+            if run_suspicious_title_check and looks_like_swallowed_program_title(sf.win_path, md):
                 suspicious_program_title_skipped += 1
                 rows_for_plan.append(
                     {
@@ -395,7 +404,7 @@ def main() -> int:
                     )
                 continue
 
-            if detect_subtitle_in_program_title(str(md.get("program_title", ""))):
+            if run_suspicious_title_check and detect_subtitle_in_program_title(str(md.get("program_title", ""))):
                 suspicious_program_title_skipped += 1
                 rows_for_plan.append(
                     {
@@ -487,6 +496,7 @@ def main() -> int:
                             "apply": bool(args.apply),
                             "allow_needs_review": allow_needs_review,
                             "queue_missing_metadata": queue_missing_metadata,
+                            "skip_suspicious_title_check": skip_suspicious_title_check,
                             "extensions": extensions,
                             "on_dst_exists": str(args.on_dst_exists),
                         }
