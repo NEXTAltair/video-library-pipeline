@@ -133,6 +133,29 @@ def looks_like_swallowed_program_title(src_path_win: str, md: dict[str, Any] | N
     return False
 
 
+def looks_like_truncated_program_title(src_path_win: str, md: dict[str, Any] | None) -> bool:
+    """現在フォルダ名より program_title が不自然に短い場合を検出する。"""
+    if not isinstance(md, dict):
+        return False
+    group = _folder_title_from_path(src_path_win)
+    title = md.get("program_title")
+    if not group or not isinstance(title, str):
+        return False
+    title = title.strip()
+    if not title:
+        return False
+
+    g = _normalize_title_compare(group)
+    t = _normalize_title_compare(title)
+    if not g or not t or t == g:
+        return False
+
+    # LLM short extraction (ex: "RNC_news_every" folder vs "RNC" title)
+    if g.startswith(t) and len(g) >= len(t) + 3:
+        return True
+    return False
+
+
 def parse_last_json_object(stdout: str) -> dict[str, Any] | None:
     for line in reversed((stdout or "").splitlines()):
         s = line.strip()
@@ -412,6 +435,26 @@ def main() -> int:
                         "src": sf.win_path,
                         "status": "skipped",
                         "reason": "subtitle_separator_in_program_title",
+                        "metadata_source": md_source,
+                        "program_title": md.get("program_title"),
+                        "folderTitle": _folder_title_from_path(sf.win_path),
+                        "ts": ts_row,
+                    }
+                )
+                if queue_missing_metadata:
+                    queue_candidates.append(
+                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
+                    )
+                continue
+
+            if run_suspicious_title_check and looks_like_truncated_program_title(sf.win_path, md):
+                suspicious_program_title_skipped += 1
+                rows_for_plan.append(
+                    {
+                        "path_id": path_id,
+                        "src": sf.win_path,
+                        "status": "skipped",
+                        "reason": "truncated_program_title_vs_folder",
                         "metadata_source": md_source,
                         "program_title": md.get("program_title"),
                         "folderTitle": _folder_title_from_path(sf.win_path),
