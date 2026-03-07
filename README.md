@@ -321,6 +321,7 @@ sourceRoot (未視聴フォルダ) のファイルを正規化・棚卸し、メ
 | `queueMissingMetadata`       | boolean                      | メタデータ不足ファイルをキューに収集                               |
 | `writeMetadataQueueOnDryRun` | boolean                      | dry-run時もキューファイルを書き出す                                |
 | `onDstExists`                | `error`\|`rename_suffix` | 移動先に同名ファイルが存在する場合の挙動                           |
+| `skipSuspiciousTitleCheck`    | boolean                      | suspiciousなtitle安全チェックを一時的に無効化 (default: false)       |
 
 **安全機構:**
 
