@@ -232,13 +232,18 @@ function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, str
       retitledRowsCount += 1;
       changed = true;
     }
-    if (canonical && next.needs_review === true) {
-      next.needs_review = false;
-      if (typeof next.needs_review_reason === "string" && next.needs_review_reason.trim()) {
+    // needs_review をクリアするのはタイトルが実際に修正された場合のみ
+    // かつ、タイトル以外の理由（missing_air_date 等）が残っていない場合のみ
+    if (canonical && canonical !== beforeTitle && next.needs_review === true) {
+      const reason = typeof next.needs_review_reason === "string" ? next.needs_review_reason.trim() : "";
+      const titleRelatedReasons = ["needs_review_flagged", "program_title_may_include_description", "relocate_suspicious_program_title", "relocate_suspicious_program_title_shortened", "relocate_subtitle_separator_in_program_title"];
+      const remainingReasons = reason.split(",").map((r: string) => r.trim()).filter((r: string) => r && !titleRelatedReasons.includes(r));
+      if (remainingReasons.length === 0) {
+        next.needs_review = false;
         next.needs_review_reason = "";
+        reviewClearedRowsCount += 1;
+        changed = true;
       }
-      reviewClearedRowsCount += 1;
-      changed = true;
     }
     if (changed) changedRowsCount += 1;
     editedRows.push(next);
@@ -273,12 +278,22 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         const resolved = resolvePythonScript("upsert_path_metadata_jsonl.py");
         const franchiseRulesPath = path.join(getExtensionRootDir(), "rules", "franchise_rules.yaml");
         const explicitYamlPath = typeof params.sourceYamlPath === "string" ? params.sourceYamlPath.trim() : "";
-        const source = chooseSourceJsonl(llmDir, explicitYamlPath || (typeof params.sourceJsonlPath === "string" ? params.sourceJsonlPath : undefined));
+        // YAML パスが指定された場合は chooseSourceJsonl を経由せず直接使う
+        let source: { ok: boolean; path?: string; error?: string };
+        if (explicitYamlPath) {
+          if (!fs.existsSync(explicitYamlPath)) {
+            source = { ok: false, error: `sourceYamlPath not found: ${explicitYamlPath}` };
+          } else {
+            source = { ok: true, path: explicitYamlPath };
+          }
+        } else {
+          source = chooseSourceJsonl(llmDir, typeof params.sourceJsonlPath === "string" ? params.sourceJsonlPath : undefined);
+        }
         if (!source.ok || !source.path) {
           return toToolResult({
             ok: false,
             tool: "video_pipeline_apply_reviewed_metadata",
-            error: source.error ?? "failed to resolve source jsonl",
+            error: source.error ?? "failed to resolve source",
             llmDir,
           });
         }
@@ -321,7 +336,8 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         const reviewRiskSummary = summarizeReviewRisk(sourceComparable.rows);
 
         // Gate 1: raw 抽出ファイルは allowNoContentChanges でもバイパス不可
-        if (markHumanReviewed && sourceLooksRawExtractionOutput) {
+        // YAML フローでは source_jsonl が生抽出ファイルを指すのが正常なのでスキップ
+        if (markHumanReviewed && sourceLooksRawExtractionOutput && !sourceIsYaml) {
           return toToolResult({
             ok: false,
             tool: "video_pipeline_apply_reviewed_metadata",
@@ -334,8 +350,10 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         }
 
         // Gate 2: 変更なしチェック (allowNoContentChanges で合法的にバイパス可能)
+        // YAML フローでは yamlDerived の変更数で判定
+        const effectiveChangedRows = sourceIsYaml && yamlDerived ? yamlDerived.changedRowsCount : (diff?.comparable ? diff.changedRowsCount : null);
         if (markHumanReviewed && !allowNoContentChanges) {
-          if (diff && diff.comparable && diff.changedRowsCount === 0) {
+          if (effectiveChangedRows === 0) {
             return toToolResult({
               ok: false,
               tool: "video_pipeline_apply_reviewed_metadata",
