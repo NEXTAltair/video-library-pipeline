@@ -112,6 +112,25 @@ def _normalize_title_compare(s: str) -> str:
     return BAD.sub("", norm_ws(str(s or "")).lower()).replace(" ", "")
 
 
+def _score_title_overlap(base: str, candidate: str) -> int:
+    b = _normalize_title_compare(base)
+    c = _normalize_title_compare(candidate)
+    if not b or not c:
+        return 0
+    if b == c:
+        return 10_000
+    if b in c:
+        return len(b)
+    if c in b:
+        return len(c)
+    score = 0
+    for token in re.split(r"[\s_]+", norm_ws(base)):
+        t = _normalize_title_compare(token)
+        if t and t in c:
+            score += len(t)
+    return score
+
+
 def _by_program_group_name_from_path(win_path: str) -> str | None:
     parts = str(win_path or "").split("\\")
     for i, seg in enumerate(parts[:-1]):
@@ -375,7 +394,24 @@ def parse_program_and_subtitle(base: str) -> tuple[str, str | None]:
     return prog[:80], parse_quoted_subtitle(b)
 
 
-def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict:
+def _choose_epg_title_candidate(base: str, epg_candidates: list[dict]) -> str | None:
+    if not epg_candidates:
+        return None
+    ranked = sorted(
+        (
+            (_score_title_overlap(base, str(c.get("official_title") or "")), str(c.get("official_title") or "").strip())
+            for c in epg_candidates
+        ),
+        key=lambda x: x[0],
+        reverse=True,
+    )
+    best_score, best_title = ranked[0]
+    if best_score <= 0 or not best_title:
+        return None
+    return best_title
+
+
+def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet, epg_candidates: list[dict] | None = None) -> dict:
     # Architecture A: AI-primary path with optional alias guardrails.
     prog, sub = parse_program_and_subtitle(base)
     canonical = _canonicalize_title_from_hints(base=base, parsed_program_title=prog, alias_map=alias_hints)
@@ -383,6 +419,20 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict
     if canonical != prog:
         prog = canonical
         source = "ai_primary_policy+hints"
+    epg_title = _choose_epg_title_candidate(base, epg_candidates or [])
+    if epg_title:
+        prog_norm = _normalize_title_compare(prog)
+        epg_norm = _normalize_title_compare(epg_title)
+        should_take_epg = (
+            not prog_norm
+            or prog in ("UNKNOWN", "")
+            or SUBTITLE_SEPARATORS.search(prog) is not None
+            or len(prog) > 80
+            or _score_title_overlap(base, epg_title) > _score_title_overlap(base, prog)
+        )
+        if should_take_epg and prog_norm != epg_norm:
+            prog = epg_title
+            source = "ai_primary_policy+epg_hint"
     return {
         "program_title": prog,
         "subtitle": sub,
@@ -440,6 +490,57 @@ class _EpgCache:
             return self._by_datetime_key[datetime_key][0]
         return None
 
+    def candidates(self, match_key: str | None, datetime_key: str | None) -> list[dict]:
+        out: list[dict] = []
+        seen: set[str] = set()
+
+        def _push(items: list[dict] | None) -> None:
+            if not items:
+                return
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("official_title") or "").strip()
+                if not title:
+                    continue
+                key = _normalize_title_compare(title)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                out.append(item)
+
+        if match_key:
+            direct = self._by_match_key.get(match_key)
+            if isinstance(direct, dict):
+                _push([direct])
+            _push(self._by_title_dt.get(match_key))
+        if datetime_key:
+            _push(self._by_datetime_key.get(datetime_key))
+        return out
+
+
+def _to_epg_hint_payload(epg_candidates: list[dict]) -> dict:
+    titles: list[str] = []
+    seen_titles: set[str] = set()
+    start_at: list[str] = []
+    seen_start_at: set[str] = set()
+    for item in epg_candidates:
+        title = str(item.get("official_title") or "").strip()
+        if title and title not in seen_titles:
+            titles.append(title)
+            seen_titles.add(title)
+        air_date = str(item.get("air_date") or "").strip()
+        start_time = str(item.get("start_time") or "").strip()
+        if air_date and start_time:
+            dt = f"{air_date} {start_time}"
+            if dt not in seen_start_at:
+                start_at.append(dt)
+                seen_start_at.add(dt)
+    return {
+        "epg_hint_titles": titles[:5],
+        "epg_hint_start_at": start_at[:5],
+    }
+
 
 def _enrich_with_epg(row: dict, epg: dict | None) -> None:
     """Add EPG-sourced fields to a metadata row (in-place)."""
@@ -485,6 +586,18 @@ def write_jsonl(path: Path, rows: list[dict]):
     with open(path, "w", encoding="utf-8") as fo:
         for r in rows:
             fo.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def _build_llm_input_rows(batch: list[dict], epg_cache: _EpgCache) -> list[dict]:
+    rows: list[dict] = []
+    for rec in batch:
+        rec_out = dict(rec)
+        mk = match_key_from_filename(str(rec.get("name") or ""))
+        dk = datetime_key_from_filename(str(rec.get("name") or ""))
+        epg_candidates = epg_cache.candidates(mk, dk)
+        rec_out.update(_to_epg_hint_payload(epg_candidates))
+        rows.append(rec_out)
+    return rows
 
 
 def _get_latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
@@ -578,7 +691,8 @@ def main() -> int:
         batch_no = args.start_batch + batch_idx - 1
         bpath = outdir / f"llm_filename_extract_input_{batch_no:04d}_{len(batch):04d}.jsonl"
         epath = outdir / f"llm_filename_extract_output_{batch_no:04d}_{len(batch):04d}.jsonl"
-        write_jsonl(bpath, batch)
+        llm_input_rows = _build_llm_input_rows(batch, epg_cache)
+        write_jsonl(bpath, llm_input_rows)
 
         rows = []
         path_program_links: list[tuple[str, str, str | None, str, str]] = []
@@ -595,7 +709,10 @@ def main() -> int:
 
             name = rec["name"]
             base = strip_suffix(name)
-            title_res = extract_title_ai_primary(name=name, base=base, alias_hints=alias_hints)
+            mk = match_key_from_filename(name)
+            dk = datetime_key_from_filename(name)
+            epg_candidates = epg_cache.candidates(mk, dk)
+            title_res = extract_title_ai_primary(name=name, base=base, alias_hints=alias_hints, epg_candidates=epg_candidates)
             air = title_res.get("air_date")
             prog = str(title_res.get("program_title") or "")
             sub = title_res.get("subtitle")
@@ -662,8 +779,6 @@ def main() -> int:
             }
 
             # EPG enrichment: look up ingested program.txt data
-            mk = match_key_from_filename(name)
-            dk = datetime_key_from_filename(name)
             epg = epg_cache.lookup(mk, dk)
             _enrich_with_epg(row, epg)
             if epg and rec.get("path_id") and epg.get("program_id"):
@@ -732,7 +847,8 @@ def main() -> int:
             batch_idx += 1
             batch_no = args.start_batch + batch_idx - 1
             bpath = outdir / f"llm_filename_extract_input_{batch_no:04d}_{len(batch):04d}.jsonl"
-            write_jsonl(bpath, batch)
+            llm_input_rows = _build_llm_input_rows(batch, epg_cache)
+            write_jsonl(bpath, llm_input_rows)
             generated_input_jsonl_paths.append(str(bpath))
             batch = []
 
