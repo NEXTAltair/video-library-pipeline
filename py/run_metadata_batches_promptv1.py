@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 import re
@@ -440,6 +441,63 @@ class _EpgCache:
             return self._by_datetime_key[datetime_key][0]
         return None
 
+    def candidates(self, match_key: str | None, datetime_key: str | None, limit: int = 5) -> list[dict]:
+        """Return de-duplicated candidate broadcasts for extraction hints."""
+        out: list[dict] = []
+        seen: set[str] = set()
+
+        def _push(items: list[dict] | None):
+            if not items:
+                return
+            for item in items:
+                bid = str(item.get("broadcast_id") or "")
+                if bid and bid in seen:
+                    continue
+                if bid:
+                    seen.add(bid)
+                out.append(item)
+                if len(out) >= limit:
+                    return
+
+        if match_key:
+            one = self._by_match_key.get(match_key)
+            if one:
+                _push([one])
+            _push(self._by_title_dt.get(match_key))
+        if len(out) < limit and datetime_key:
+            _push(self._by_datetime_key.get(datetime_key))
+        return out[:limit]
+
+
+def _epg_title_from_broadcast(epg: dict) -> str | None:
+    title = str(epg.get("official_title") or epg.get("program_title") or "").strip()
+    return title or None
+
+
+def _select_epg_title_hint(base: str, parsed_program_title: str, candidates: list[dict]) -> tuple[str | None, float]:
+    base_norm = _normalize_title_compare(base)
+    parsed_norm = _normalize_title_compare(parsed_program_title)
+    best_title: str | None = None
+    best_score = 0.0
+
+    for epg in candidates:
+        title = _epg_title_from_broadcast(epg)
+        if not title:
+            continue
+        cand_norm = _normalize_title_compare(title)
+        if not cand_norm:
+            continue
+        score = difflib.SequenceMatcher(None, base_norm, cand_norm).ratio()
+        if cand_norm in base_norm or base_norm in cand_norm:
+            score += 0.15
+        if parsed_norm and (parsed_norm in cand_norm or cand_norm in parsed_norm):
+            score += 0.1
+        score = min(score, 1.0)
+        if score > best_score:
+            best_score = score
+            best_title = title
+    return best_title, best_score
+
 
 def _enrich_with_epg(row: dict, epg: dict | None) -> None:
     """Add EPG-sourced fields to a metadata row (in-place)."""
@@ -600,6 +658,20 @@ def main() -> int:
             prog = str(title_res.get("program_title") or "")
             sub = title_res.get("subtitle")
             ep = title_res.get("episode_no")
+            mk = match_key_from_filename(name)
+            dk = datetime_key_from_filename(name)
+            epg_candidates = epg_cache.candidates(mk, dk)
+
+            epg_hint_title, epg_hint_score = _select_epg_title_hint(base, prog, epg_candidates)
+            if epg_hint_title and (
+                prog in ("UNKNOWN", "")
+                or SUBTITLE_SEPARATORS.search(prog)
+                or _looks_swallowed_program_title(str(rec.get("path") or ""), prog)
+                or epg_hint_score >= 0.8
+            ):
+                if epg_hint_title != prog:
+                    prog = epg_hint_title
+                    title_res["title_extraction_path"] = "ai_primary_policy+epg_hint"
 
             needs = False
             reasons: list[str] = []
@@ -662,8 +734,6 @@ def main() -> int:
             }
 
             # EPG enrichment: look up ingested program.txt data
-            mk = match_key_from_filename(name)
-            dk = datetime_key_from_filename(name)
             epg = epg_cache.lookup(mk, dk)
             _enrich_with_epg(row, epg)
             if epg and rec.get("path_id") and epg.get("program_id"):
@@ -732,7 +802,24 @@ def main() -> int:
             batch_idx += 1
             batch_no = args.start_batch + batch_idx - 1
             bpath = outdir / f"llm_filename_extract_input_{batch_no:04d}_{len(batch):04d}.jsonl"
-            write_jsonl(bpath, batch)
+            batch_with_hints: list[dict] = []
+            for rec in batch:
+                obj = dict(rec)
+                name = str(rec.get("name") or "")
+                mk = match_key_from_filename(name)
+                dk = datetime_key_from_filename(name)
+                cands = epg_cache.candidates(mk, dk)
+                hint_titles = [t for t in (_epg_title_from_broadcast(c) for c in cands) if t]
+                if hint_titles:
+                    obj["epg_hint_titles"] = hint_titles
+                top = cands[0] if cands else None
+                if top:
+                    if top.get("air_date") and top.get("start_time"):
+                        obj["epg_hint_broadcast_datetime"] = f"{top['air_date']}T{top['start_time']}"
+                    if top.get("broadcaster"):
+                        obj["epg_hint_broadcaster"] = top.get("broadcaster")
+                batch_with_hints.append(obj)
+            write_jsonl(bpath, batch_with_hints)
             generated_input_jsonl_paths.append(str(bpath))
             batch = []
 
