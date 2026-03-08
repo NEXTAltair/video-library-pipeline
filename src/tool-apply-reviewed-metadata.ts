@@ -461,6 +461,37 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           // best effort cleanup for temp file
         }
 
+        // --- auto archive after successful DB write ---
+        const archivedFiles: string[] = [];
+        if (r.ok) {
+          const archiveDir = path.join(llmDir, "archive");
+          const toArchive: string[] = [];
+          // YAML ファイル
+          if (sourceIsYaml && source.path) toArchive.push(source.path);
+          // 抽出出力 JSONL
+          if (effectiveSourceJsonlPath && fs.existsSync(effectiveSourceJsonlPath)) {
+            toArchive.push(effectiveSourceJsonlPath);
+          }
+          // 対応する入力 JSONL (_output_ → _input_)
+          const inputJsonlPath = effectiveSourceJsonlPath.replace(/_output_/g, "_input_");
+          if (inputJsonlPath !== effectiveSourceJsonlPath && fs.existsSync(inputJsonlPath)) {
+            toArchive.push(inputJsonlPath);
+          }
+          if (toArchive.length > 0) {
+            try {
+              fs.mkdirSync(archiveDir, { recursive: true });
+              for (const src of toArchive) {
+                if (!fs.existsSync(src)) continue;
+                const dst = path.join(archiveDir, path.basename(src));
+                fs.renameSync(src, dst);
+                archivedFiles.push(path.basename(src));
+              }
+            } catch {
+              // archive failure is non-fatal
+            }
+          }
+        }
+
         return toToolResult({
           ok: r.ok,
           tool: "video_pipeline_apply_reviewed_metadata",
@@ -487,7 +518,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           reviewDiff: diff,
           reviewRiskSummary,
           sourceParseErrors: sourceComparable.parseErrors,
-          archivedFiles: [],
+          archivedFiles,
         });
       },
     }

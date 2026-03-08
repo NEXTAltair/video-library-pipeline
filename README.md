@@ -543,7 +543,7 @@ B:\_AI_WORK/                          ← windowsOpsRoot
 └── .gitignore                               ← ランタイムデータを除外
 ```
 
-`archive/` ディレクトリはDB反映完了が確認されたアーティファクトの退避先。現在は手動運用（自動アーカイブは Issue #39 の修正に伴い一時無効化中）。
+`archive/` ディレクトリはDB反映完了が確認されたアーティファクトの退避先。`apply_reviewed_metadata` の upsert 成功後に、使用した YAML・抽出出力 JSONL・対応する入力 JSONL を自動アーカイブする。
 
 ### アーティファクトライフサイクル
 
@@ -621,10 +621,10 @@ stateDiagram-v2
 
 #### TODO
 
-- [ ] [#40](https://github.com/NEXTAltair/video-library-pipeline/issues/40) **relocate ゲートを `needs_review` + `source` 併用方式に変更**
-- [ ] [#41](https://github.com/NEXTAltair/video-library-pipeline/issues/41) **`source=llm_subagent` を `llm` にリネーム**
+- [x] [#40](https://github.com/NEXTAltair/video-library-pipeline/issues/40) **relocate ゲートを `needs_review` + `source` 併用方式に変更**
+- [x] [#41](https://github.com/NEXTAltair/video-library-pipeline/issues/41) **`source=llm_subagent` を `llm` にリネーム**
 - [x] [#42](https://github.com/NEXTAltair/video-library-pipeline/issues/42) **YAML→DB反映パスの実装とレビューワークフロー改善** (YAML編集を優先導線化、`reviewed_metadata_apply_*.jsonl` 一時ファイル化)
-- [ ] [#43](https://github.com/NEXTAltair/video-library-pipeline/issues/43) **DB反映確認後の自動アーカイブ再実装**
+- [x] [#43](https://github.com/NEXTAltair/video-library-pipeline/issues/43) **DB反映確認後の自動アーカイブ再実装**
 - [ ] [#44](https://github.com/NEXTAltair/video-library-pipeline/issues/44) **EPG情報をメタデータ抽出のヒントとして活用**
 - [ ] [#45](https://github.com/NEXTAltair/video-library-pipeline/issues/45) **Stage 名称・説明の見直しとドキュメント整理**
 
