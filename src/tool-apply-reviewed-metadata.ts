@@ -306,20 +306,23 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         ];
         const r = runCmd("uv", upsertArgs, resolved.cwd);
 
-        // Archive program_aliases_review_*.yaml files after successful DB write
-        const archivedYamls: string[] = [];
+        // Archive artifacts after successful DB write
+        const archivedFiles: string[] = [];
         if (r.ok) {
           const archiveDir = path.join(llmDir, "archive");
           try {
-            const yamlFiles = fs.readdirSync(llmDir)
-              .filter((n) => n.startsWith("program_aliases_review_") && n.endsWith(".yaml"));
-            if (yamlFiles.length > 0) {
+            const archiveTargets = fs.readdirSync(llmDir).filter((n) =>
+              (n.startsWith("program_aliases_review_") && n.endsWith(".yaml")) ||
+              (n.startsWith("llm_filename_extract_output_") && n.endsWith(".jsonl")) ||
+              (n.startsWith("llm_filename_extract_input_") && n.endsWith(".jsonl"))
+            );
+            if (archiveTargets.length > 0) {
               fs.mkdirSync(archiveDir, { recursive: true });
-              for (const name of yamlFiles) {
+              for (const name of archiveTargets) {
                 const src = path.join(llmDir, name);
                 const dst = path.join(archiveDir, name);
                 fs.renameSync(src, dst);
-                archivedYamls.push(name);
+                archivedFiles.push(name);
               }
             }
           } catch {
@@ -349,7 +352,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           reviewDiff: diff,
           reviewRiskSummary,
           sourceParseErrors: sourceComparable.parseErrors,
-          archivedYamls,
+          archivedFiles,
         });
       },
     }
