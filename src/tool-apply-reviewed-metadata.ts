@@ -306,30 +306,6 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         ];
         const r = runCmd("uv", upsertArgs, resolved.cwd);
 
-        // Archive artifacts after successful DB write
-        const archivedFiles: string[] = [];
-        if (r.ok) {
-          const archiveDir = path.join(llmDir, "archive");
-          try {
-            const archiveTargets = fs.readdirSync(llmDir).filter((n) =>
-              (n.startsWith("program_aliases_review_") && n.endsWith(".yaml")) ||
-              (n.startsWith("llm_filename_extract_output_") && n.endsWith(".jsonl")) ||
-              (n.startsWith("llm_filename_extract_input_") && n.endsWith(".jsonl"))
-            );
-            if (archiveTargets.length > 0) {
-              fs.mkdirSync(archiveDir, { recursive: true });
-              for (const name of archiveTargets) {
-                const src = path.join(llmDir, name);
-                const dst = path.join(archiveDir, name);
-                fs.renameSync(src, dst);
-                archivedFiles.push(name);
-              }
-            }
-          } catch {
-            // archive failure is non-fatal
-          }
-        }
-
         return toToolResult({
           ok: r.ok,
           tool: "video_pipeline_apply_reviewed_metadata",
@@ -352,7 +328,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           reviewDiff: diff,
           reviewRiskSummary,
           sourceParseErrors: sourceComparable.parseErrors,
-          archivedFiles,
+          archivedFiles: [],
         });
       },
     }
