@@ -300,7 +300,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           "--in",
           outputStampedJsonlPath,
           "--source",
-          String(params.source || (markHumanReviewed ? "human_reviewed" : "rule_based")),
+          String(params.source || (markHumanReviewed ? "human_reviewed" : "llm")),
           "--franchise-rules",
           franchiseRulesPath,
         ];

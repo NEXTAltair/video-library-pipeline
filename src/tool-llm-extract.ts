@@ -38,9 +38,9 @@ export function registerToolLlmExtract(api: any, getCfg: (api: any) => any) {
     {
       name: "video_pipeline_apply_llm_extract_output",
       description:
-        "Validate and upsert LLM-subagent extraction output JSONL into the DB. " +
+        "Validate and upsert LLM extraction output JSONL into the DB. " +
         "Call this after a sessions_spawn subagent has finished writing its extraction output. " +
-        "Runs subtitle-separator / length checks, coerces types, and upserts to path_metadata with source='llm_subagent'. " +
+        "Runs subtitle-separator / length checks, coerces types, and upserts to path_metadata with source='llm'. " +
         "Records with issues are marked needs_review=true instead of being rejected. " +
         "On success, if any records need review (needs_review=true), generates a human-review YAML and returns reviewYamlPath + reviewCandidates. " +
         "If no records need review (needsReviewFlagRows=0), no YAML is generated — proceed directly to video_pipeline_relocate_existing_files.",
@@ -51,7 +51,7 @@ export function registerToolLlmExtract(api: any, getCfg: (api: any) => any) {
         properties: {
           outputJsonlPath: {
             type: "string",
-            description: "Path to the JSONL file written by the LLM subagent (llm_filename_extract_output_*.jsonl).",
+            description: "Path to the JSONL file written by the LLM extraction flow (llm_filename_extract_output_*.jsonl).",
           },
           dryRun: {
             type: "boolean",
@@ -91,7 +91,7 @@ export function registerToolLlmExtract(api: any, getCfg: (api: any) => any) {
           "--in",
           outputJsonlPath,
           "--source",
-          "llm_subagent",
+          "llm",
         ];
         if (params.dryRun === true) args.push("--dry-run");
 
@@ -137,7 +137,7 @@ export function registerToolLlmExtract(api: any, getCfg: (api: any) => any) {
             out.reviewCandidates = review.candidates;
             out.reviewCandidatesTruncated = review.truncated;
             out.nextStep =
-              `LLM extraction output applied to DB (source=llm_subagent). ` +
+              `LLM extraction output applied to DB (source=llm). ` +
               `${review.summary.needsReviewFlagRows} records need human review — see reviewCandidates. ` +
               `To fix: (1) Copy outputJsonlPath to a new filename (e.g. reviewed_metadata_YYYYMMDD.jsonl) — do NOT use the original llm_filename_extract_output_* name. ` +
               `(2) Ask the user to edit program_title / air_date / needs_review fields in the copy. ` +
@@ -145,9 +145,9 @@ export function registerToolLlmExtract(api: any, getCfg: (api: any) => any) {
               `Do NOT pass the .yaml file or the original llm_filename_extract_output_*.jsonl to video_pipeline_apply_reviewed_metadata.`;
           } else {
             // レビュー不要: YAMLファイルは生成しない。エージェントが混乱する原因になるため。
-            // Records are already in DB with source=llm_subagent and needs_review=false.
+            // Records are already in DB with source=llm and needs_review=false.
             out.nextStep =
-              "LLM extraction output applied to DB (source=llm_subagent). " +
+              "LLM extraction output applied to DB (source=llm). " +
               "No records need review (needsReviewFlagRows=0). " +
               "ACTION: Call video_pipeline_relocate_existing_files directly. " +
               "Do NOT call video_pipeline_apply_reviewed_metadata — records are already in DB and no review is needed.";

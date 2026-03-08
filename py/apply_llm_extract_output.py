@@ -1,6 +1,6 @@
-"""Validate and upsert LLM-subagent-extracted metadata JSONL into path_metadata.
+"""Validate and upsert LLM-extracted metadata JSONL into path_metadata.
 
-This script is the apply step after a LLM subagent has written extraction output.
+This script is the apply step after an LLM extractor has written output.
 It performs additional sanity checks on top of the base upsert contract:
 - subtitle separator (▽/▼/◇) must not remain in program_title
 - program_title must not exceed 80 characters
@@ -94,7 +94,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
     ap.add_argument("--in", dest="inp", required=True)
-    ap.add_argument("--source", default="llm_subagent")
+    ap.add_argument("--source", default="llm")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
