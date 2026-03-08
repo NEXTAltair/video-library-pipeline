@@ -18,7 +18,7 @@ type ReviewCandidate = {
   columns: string[];
   reasons: string[];
   severity: "required" | "review";
-  byProgramFolderTitle?: string;
+  folderTitle?: string;
   current: {
     program_title?: string;
     air_date?: string;
@@ -121,8 +121,8 @@ export function buildReviewDiagnostics(rows: AnyObj[]): {
       appendUnique(reasons, needsReviewReason || "needs_review_flagged");
     }
 
-    const byProgramFolderTitle = byProgramGroupFromPath(pathValue);
-    if (byProgramFolderTitle && programTitle && looksSwallowedProgramTitle(programTitle, byProgramFolderTitle)) {
+    const folderTitle = byProgramGroupFromPath(pathValue);
+    if (folderTitle && programTitle && looksSwallowedProgramTitle(programTitle, folderTitle)) {
       appendUnique(columns, "program_title");
       appendUnique(reasons, "program_title_may_include_description");
     }
@@ -145,7 +145,7 @@ export function buildReviewDiagnostics(rows: AnyObj[]): {
         columns,
         reasons,
         severity,
-        byProgramFolderTitle,
+        folderTitle,
         current: {
           program_title: previewText(r.program_title),
           air_date: previewText(r.air_date),

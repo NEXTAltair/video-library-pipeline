@@ -444,7 +444,7 @@ def main() -> int:
                         "reason": "suspicious_program_title",
                         "metadata_source": md_source,
                         "program_title": md.get("program_title"),
-                        "byProgramGroup": by_program_group_name(sf.win_path),
+                        "folderTitle": _folder_title_from_path(sf.win_path),
                         "ts": ts_row,
                     }
                 )
