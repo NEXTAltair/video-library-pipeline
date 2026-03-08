@@ -166,7 +166,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           markHumanReviewed: { type: "boolean", default: true },
           allowNoContentChanges: { type: "boolean", default: false },
           reviewedBy: { type: "string" },
-          source: { type: "string", default: "rule_based" },
+          source: { type: "string", default: "human_reviewed" },
         },
       },
       async execute(_id: string, params: AnyObj) {
@@ -300,7 +300,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           "--in",
           outputStampedJsonlPath,
           "--source",
-          String(params.source || "rule_based"),
+          String(params.source || (markHumanReviewed ? "human_reviewed" : "rule_based")),
           "--franchise-rules",
           franchiseRulesPath,
         ];
