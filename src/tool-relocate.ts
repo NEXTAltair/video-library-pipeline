@@ -20,7 +20,7 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
           extensions: { type: "array", items: { type: "string" }, default: [".mp4"], description: "File extensions to include. Default: [\".mp4\"]." },
           limit: { type: "integer", minimum: 1, maximum: 100000, description: "Max files to process in one run." },
           allowNeedsReview: { type: "boolean", default: false, description: "Include files flagged needs_review in move plan. Default false (skip them)." },
-          allowUnreviewedMetadata: { type: "boolean", default: false, description: "Allow relocation planning with metadata that is not source=human_reviewed. Default false (safer: skip machine-only metadata)." },
+          allowUnreviewedMetadata: { type: "boolean", default: false, description: "Allow relocation planning with metadata source other than human_reviewed/llm. Default false (safer: skip unknown sources)." },
           queueMissingMetadata: { type: "boolean", default: false, description: "Collect files with missing metadata into a queue for reextract. Set true to enable metadata preparation flow." },
           writeMetadataQueueOnDryRun: { type: "boolean", default: false, description: "Write the metadata queue file even during dry-run. Required to use the queue path in a subsequent reextract call." },
           scanErrorPolicy: { type: "string", enum: ["warn", "fail", "threshold"], default: "warn", description: "How to handle scan errors: warn=continue, fail=abort, threshold=abort after N errors." },

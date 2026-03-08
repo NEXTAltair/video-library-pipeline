@@ -318,7 +318,7 @@ sourceRoot (未視聴フォルダ) のファイルを正規化・棚卸し、メ
 | `planPath`                   | string                       | apply時必須。dry-runが返す計画ファイルパス                         |
 | `roots`                      | string[]                     | スキャン対象。省略時は `relocate_roots.yaml`                     |
 | `allowNeedsReview`           | boolean                      | `needs_review=true`のファイルも移動対象に含める (default: false) |
-| `allowUnreviewedMetadata`    | boolean                      | `source=human_reviewed` 以外のメタデータでの計画生成を許可 (default: false) |
+| `allowUnreviewedMetadata`    | boolean                      | `source` が `human_reviewed` / `llm` 以外でも計画生成を許可 (default: false) |
 | `queueMissingMetadata`       | boolean                      | メタデータ不足ファイルをキューに収集                               |
 | `writeMetadataQueueOnDryRun` | boolean                      | dry-run時もキューファイルを書き出す                                |
 | `onDstExists`                | `error`\|`rename_suffix` | 移動先に同名ファイルが存在する場合の挙動                           |
@@ -329,6 +329,7 @@ sourceRoot (未視聴フォルダ) のファイルを正規化・棚卸し、メ
 - apply時に `planPath` の存在確認 + 24時間以内の鮮度チェック
 - apply前に自動DBバックアップ + ローテーション (最新10世代)
 - `followUpToolCalls` でRoute A (apply可能) / Route B (メタデータ準備必要) / Route C (移動不要) を分岐
+- `source=llm` は suspicious title 安全チェックを通過した行のみ計画対象。失敗行は `needs_review=true` に自動更新して隔離
 
 ---
 
@@ -863,9 +864,16 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 `allowNeedsReview` は `relocate_existing_files` と `analyze_and_move_videos` の両方で **デフォルトfalse**。`needs_review=true` のファイルはレビュー完了まで移動計画から除外される。
 
-### allowUnreviewedMetadata のデフォルト
+### relocate の `needs_review + source` ゲート
 
-`relocate_existing_files` は **デフォルトで `source=human_reviewed` のメタデータのみ** 移動計画に使用する。`source=llm` など未レビュー行は `unreviewedMetadataSkipped` として除外され、レビュー適用後に再実行する前提。
+`relocate_existing_files` は以下の段階的ゲートで移動可否を判定する。
+
+- `needs_review=true` は `allowNeedsReview=true` を指定しない限り常に除外。
+- `needs_review=false` + `source=human_reviewed` はそのまま移動計画対象。
+- `needs_review=false` + `source=llm` は suspicious title チェック（飲み込み/短縮/▽▼混入）を通過した場合のみ移動計画対象。
+- `source` が `human_reviewed` / `llm` 以外の行は `allowUnreviewedMetadata=true` を指定しない限り除外。
+
+`source=llm` で suspicious title チェックに失敗した行は、DB上で `needs_review=true` + `needs_review_reason` 追記に更新し、レビュー待ちに戻す。
 
 ---
 

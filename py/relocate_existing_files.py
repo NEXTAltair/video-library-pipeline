@@ -172,6 +172,38 @@ def parse_last_json_object(stdout: str) -> dict[str, Any] | None:
     return None
 
 
+def mark_metadata_needs_review(
+    con,
+    path_id: str,
+    md: dict[str, Any],
+    md_source: str | None,
+    reason: str,
+) -> bool:
+    if not isinstance(md, dict):
+        return False
+    next_md = dict(md)
+    next_md["needs_review"] = True
+    existing_reason = str(next_md.get("needs_review_reason") or "").strip()
+    reason_parts = [p.strip() for p in existing_reason.split(",") if p.strip()]
+    if reason not in reason_parts:
+        reason_parts.append(reason)
+    if reason_parts:
+        next_md["needs_review_reason"] = ",".join(reason_parts)
+    source = str(md_source or "llm")
+    con.execute(
+        """
+        INSERT INTO path_metadata (path_id, source, data_json, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(path_id) DO UPDATE SET
+          source=excluded.source,
+          data_json=excluded.data_json,
+          updated_at=excluded.updated_at
+        """,
+        (path_id, source, safe_json(next_md), now_iso()),
+    )
+    return True
+
+
 def run_uv_python_json(script: Path, args: list[str], cwd: str | None = None) -> tuple[dict[str, Any] | None, str, str, int]:
     cp = subprocess.run(
         ["uv", "run", "python", str(script), *args],
@@ -413,8 +445,11 @@ def main() -> int:
                     )
                 continue
 
-            is_human_reviewed = str(md_source or "").strip().lower() == "human_reviewed"
-            if not allow_unreviewed_metadata and not is_human_reviewed:
+            source_norm = str(md_source or "").strip().lower()
+            is_human_reviewed = source_norm == "human_reviewed"
+            is_llm = source_norm == "llm"
+
+            if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
                 unreviewed_metadata_skipped += 1
                 rows_for_plan.append(
                     {
@@ -436,6 +471,8 @@ def main() -> int:
 
             if run_suspicious_title_check and looks_like_swallowed_program_title(sf.win_path, md):
                 suspicious_program_title_skipped += 1
+                if is_llm:
+                    mark_metadata_needs_review(con, path_id, md, md_source, "relocate_suspicious_program_title")
                 rows_for_plan.append(
                     {
                         "path_id": path_id,
@@ -456,6 +493,8 @@ def main() -> int:
 
             if run_suspicious_title_check and looks_like_shortened_program_title(sf.win_path, md):
                 suspicious_program_title_skipped += 1
+                if is_llm:
+                    mark_metadata_needs_review(con, path_id, md, md_source, "relocate_suspicious_program_title_shortened")
                 rows_for_plan.append(
                     {
                         "path_id": path_id,
@@ -476,6 +515,8 @@ def main() -> int:
 
             if run_suspicious_title_check and detect_subtitle_in_program_title(str(md.get("program_title", ""))):
                 suspicious_program_title_skipped += 1
+                if is_llm:
+                    mark_metadata_needs_review(con, path_id, md, md_source, "relocate_subtitle_separator_in_program_title")
                 rows_for_plan.append(
                     {
                         "path_id": path_id,
@@ -918,7 +959,7 @@ def main() -> int:
             )
         if unreviewed_metadata_skipped > 0:
             next_actions.append(
-                "Some files were skipped because latest metadata is not human_reviewed; review/apply metadata, or rerun with allowUnreviewedMetadata=true only when intentionally accepting machine-only metadata."
+                "Some files were skipped because latest metadata source is neither human_reviewed nor llm; review/apply metadata, or rerun with allowUnreviewedMetadata=true only when intentionally accepting other sources."
             )
         if (not args.apply) and unregistered_skipped > 0:
             next_actions.append(
