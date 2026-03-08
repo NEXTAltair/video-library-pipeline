@@ -375,7 +375,7 @@ def parse_program_and_subtitle(base: str) -> tuple[str, str | None]:
     return prog[:80], parse_quoted_subtitle(b)
 
 
-def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict:
+def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet, epg_candidates: list[dict] | None = None) -> dict:
     # Architecture A: AI-primary path with optional alias guardrails.
     prog, sub = parse_program_and_subtitle(base)
     canonical = _canonicalize_title_from_hints(base=base, parsed_program_title=prog, alias_map=alias_hints)
@@ -383,6 +383,10 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet) -> dict
     if canonical != prog:
         prog = canonical
         source = "ai_primary_policy+hints"
+    epg_title = _pick_title_from_epg(base, prog, epg_candidates or [])
+    if epg_title and epg_title != prog:
+        prog = epg_title
+        source = f"{source}+epg"
     return {
         "program_title": prog,
         "subtitle": sub,
@@ -439,6 +443,90 @@ class _EpgCache:
         if datetime_key and datetime_key in self._by_datetime_key:
             return self._by_datetime_key[datetime_key][0]
         return None
+
+    def candidates(self, match_key: str | None, datetime_key: str | None) -> list[dict]:
+        """Return candidate broadcasts ordered by match specificity."""
+        result: list[dict] = []
+
+        def _append(items: list[dict] | None) -> None:
+            if not items:
+                return
+            for it in items:
+                if it not in result:
+                    result.append(it)
+
+        if match_key:
+            if match_key in self._by_match_key:
+                result.append(self._by_match_key[match_key])
+            _append(self._by_title_dt.get(match_key))
+        if datetime_key:
+            _append(self._by_datetime_key.get(datetime_key))
+        return result
+
+
+def _epg_official_titles(epg_candidates: list[dict]) -> list[str]:
+    titles: list[str] = []
+    for epg in epg_candidates:
+        t = str(epg.get("official_title") or "").strip()
+        if t and t not in titles:
+            titles.append(t)
+    return titles
+
+
+def _pick_title_from_epg(base: str, parsed_program_title: str, epg_candidates: list[dict]) -> str | None:
+    """Choose EPG official title as extraction hint when it can improve confidence."""
+    titles = _epg_official_titles(epg_candidates)
+    if not titles:
+        return None
+
+    parsed_norm = _normalize_title_compare(parsed_program_title)
+    base_norm = _normalize_title_compare(base)
+
+    if parsed_program_title in ("", "UNKNOWN"):
+        return titles[0]
+
+    # Same title with punctuation/space variation -> replace with official EPG title.
+    for t in titles:
+        if _normalize_title_compare(t) == parsed_norm:
+            return t
+
+    # If parser seems to swallow description, prefer official title when it appears in filename base.
+    for t in titles:
+        t_norm = _normalize_title_compare(t)
+        if not t_norm:
+            continue
+        if t_norm in base_norm and parsed_norm.startswith(t_norm):
+            return t
+
+    return None
+
+
+def _build_epg_llm_hint(name: str, epg_cache: _EpgCache) -> dict | None:
+    mk = match_key_from_filename(name)
+    dk = datetime_key_from_filename(name)
+    candidates = epg_cache.candidates(mk, dk)
+    if not candidates:
+        return None
+    hint_rows: list[dict[str, Any]] = []
+    for epg in candidates[:5]:
+        title = str(epg.get("official_title") or "").strip()
+        if not title:
+            continue
+        hint_rows.append(
+            {
+                "official_title": title,
+                "air_date": epg.get("air_date"),
+                "start_time": epg.get("start_time"),
+                "broadcaster": epg.get("broadcaster"),
+            }
+        )
+    if not hint_rows:
+        return None
+    return {
+        "match_key": mk,
+        "datetime_key": dk,
+        "candidates": hint_rows,
+    }
 
 
 def _enrich_with_epg(row: dict, epg: dict | None) -> None:
@@ -595,7 +683,10 @@ def main() -> int:
 
             name = rec["name"]
             base = strip_suffix(name)
-            title_res = extract_title_ai_primary(name=name, base=base, alias_hints=alias_hints)
+            mk = match_key_from_filename(name)
+            dk = datetime_key_from_filename(name)
+            epg_candidates = epg_cache.candidates(mk, dk)
+            title_res = extract_title_ai_primary(name=name, base=base, alias_hints=alias_hints, epg_candidates=epg_candidates)
             air = title_res.get("air_date")
             prog = str(title_res.get("program_title") or "")
             sub = title_res.get("subtitle")
@@ -642,6 +733,7 @@ def main() -> int:
             row = {
                 "path_id": rec["path_id"],
                 "path": rec["path"],
+                "name": name,
                 "program_title": prog,
                 "episode_no": ep,
                 "subtitle": sub,
@@ -661,9 +753,11 @@ def main() -> int:
                 "evidence": {"source_name": "filename", "raw": name},
             }
 
+            epg_hint_for_llm = _build_epg_llm_hint(name, epg_cache)
+            if epg_hint_for_llm:
+                row["epg_hint"] = epg_hint_for_llm
+
             # EPG enrichment: look up ingested program.txt data
-            mk = match_key_from_filename(name)
-            dk = datetime_key_from_filename(name)
             epg = epg_cache.lookup(mk, dk)
             _enrich_with_epg(row, epg)
             if epg and rec.get("path_id") and epg.get("program_id"):
