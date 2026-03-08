@@ -377,19 +377,19 @@ relocateフロー専用の複合オーケストレーター。内部で relocate
 | `sourceJsonlPath`       | string  | レビュー済みJSONLのパス（生ファイル名は拒否される）        |
 | `markHumanReviewed`     | boolean | `human_reviewed=true` を付与 (default: true)             |
 | `allowNoContentChanges` | boolean | 内容未変更でも適用を許可 (default: false)                  |
-| `source`                | string  | `path_metadata.source` に記録する値 (default: `"rule_based"`) |
+| `source`                | string  | `path_metadata.source` に記録する値 (default: `"human_reviewed"` / markHumanReviewed=false時は `"llm"`) |
 
 **安全機構:** apply前に自動DBバックアップ + ローテーション (最新10世代)。適用成功後、`program_aliases_review_*.yaml` をアーカイブに移動。
 
 ---
 
-#### `video_pipeline_apply_llm_extract_output` — LLMサブエージェント結果統合
+#### `video_pipeline_apply_llm_extract_output` — LLM抽出結果統合
 
-LLMサブエージェントが書き出した抽出結果JSONLを検証し、`source='llm_subagent'` でDBに upsert する。
+LLMが書き出した抽出結果JSONLを検証し、`source='llm'` でDBに upsert する。
 
 | パラメータ          | 型      | 説明                                              |
 | ------------------- | ------- | ------------------------------------------------- |
-| `outputJsonlPath` | string  | **必須**。サブエージェントが書いたJSONLパス |
+| `outputJsonlPath` | string  | **必須**。LLM抽出結果JSONLパス |
 | `dryRun`          | boolean | 検証のみ (default: false)                         |
 
 サブタイトル区切り文字の混入チェック、program_title長さ検証、型の強制変換を行う。問題のあるレコードは `needs_review=true` にマークして保存（拒否ではなく保全）。
@@ -560,7 +560,7 @@ flowchart TD
     SUBAGENT["LLMサブエージェント<br/>(各バッチを独立処理)"]
     LLM_OUT["llm_filename_extract_output_NNNN_NNNN.jsonl<br/>(サブエージェント出力)"]
 
-    APPLY_LLM["video_pipeline_apply_llm_extract_output<br/>検証 + DB upsert<br/>source='llm_subagent'"]
+    APPLY_LLM["video_pipeline_apply_llm_extract_output<br/>検証 + DB upsert<br/>source='llm'"]
 
     BRANCH{"needsReviewFlagRows?"}
     REVIEW["レビューYAML生成<br/>→ apply_reviewed_metadata"]
@@ -779,9 +779,9 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | source値         | 意味                    | 生成元                               |
 | ---------------- | ----------------------- | ------------------------------------ |
 | `rule_based`   | ルールベース抽出        | `run_metadata_batches_promptv1.py` |
-| `llm_subagent` | LLMサブエージェント抽出 | `apply_llm_extract_output.py`      |
+| `llm` | LLM抽出 | `apply_llm_extract_output.py`      |
 
-> `source='rule_based'` はルールベース抽出の結果を示す。旧値 `llm` は移行スクリプトで `rule_based` に統一可能。
+> `source='rule_based'` はルールベース抽出の結果を示す。`source='llm'` は LLM 抽出の結果を示す。
 
 ### is_current 運用
 
