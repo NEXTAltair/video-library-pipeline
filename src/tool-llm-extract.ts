@@ -139,10 +139,9 @@ export function registerToolLlmExtract(api: any, getCfg: (api: any) => any) {
             out.nextStep =
               `LLM extraction output applied to DB (source=llm). ` +
               `${review.summary.needsReviewFlagRows} records need human review — see reviewCandidates. ` +
-              `To fix: (1) Copy outputJsonlPath to a new filename (e.g. reviewed_metadata_YYYYMMDD.jsonl) — do NOT use the original llm_filename_extract_output_* name. ` +
-              `(2) Ask the user to edit program_title / air_date / needs_review fields in the copy. ` +
-              `(3) After user confirms edits, call video_pipeline_apply_reviewed_metadata with sourceJsonlPath set to the edited copy. ` +
-              `Do NOT pass the .yaml file or the original llm_filename_extract_output_*.jsonl to video_pipeline_apply_reviewed_metadata.`;
+              `To fix: (1) Ask the user to edit canonical_title / aliases in reviewYamlPath. ` +
+              `(2) After user confirms YAML edits, call video_pipeline_apply_reviewed_metadata with sourceYamlPath set to reviewYamlPath. ` +
+              `Legacy fallback: sourceJsonlPath with a reviewed copy is still supported.`;
           } else {
             // レビュー不要: YAMLファイルは生成しない。エージェントが混乱する原因になるため。
             // Records are already in DB with source=llm and needs_review=false.

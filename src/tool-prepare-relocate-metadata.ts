@@ -341,13 +341,13 @@ export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any)
             followUpToolCalls.push({
               tool: "video_pipeline_export_program_yaml",
               reason: "export_human_review_yaml_from_reextract_output",
-              params: { sourceJsonlPath: outputJsonlPath },
+              params: { sourceJsonlPath: outputJsonlPath, outputPath: outputJsonlPath.replace(/\.jsonl$/i, "_review.yaml") },
             });
             followUpToolCalls.push({
               tool: "video_pipeline_apply_reviewed_metadata",
               reason: "run_after_human_review_of_extracted_metadata",
               requiresHumanReview: true,
-              params: { sourceJsonlPath: outputJsonlPath },
+              params: { sourceYamlPath: outputJsonlPath.replace(/\.jsonl$/i, "_review.yaml") },
             });
           }
           if (outputJsonlPaths.length > 0) {
