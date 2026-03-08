@@ -27,7 +27,7 @@ export function registerToolLlmExtractStatus(api: any, getCfg: (api: any) => any
       name: "video_pipeline_llm_extract_status",
       description:
         "Check LLM subagent batch completion status by scanning for input/output JSONL pairs in the llm/ directory. " +
-        "Returns batch status (complete/pending/incomplete) and followUpToolCalls for retrying pending batches or applying completed outputs. " +
+        "Returns batch status (complete/pending/incomplete) and followUpToolCalls for retrying pending batches. " +
         "Use this tool when a sessions_spawn call fails, times out, or a subagent doesn't produce output.",
       parameters: {
         type: "object",
@@ -102,8 +102,6 @@ export function registerToolLlmExtractStatus(api: any, getCfg: (api: any) => any
         // Build followUpToolCalls
         const followUpToolCalls: Array<Record<string, unknown>> = [];
         const needsRetry = batches.filter((b) => b.status === "pending" || b.status === "incomplete");
-        const completed = batches.filter((b) => b.status === "complete");
-
         // Spawn subagents for pending/incomplete batches
         for (const batch of needsRetry) {
           const task = buildLlmExtractTask(batch.inputPath, batch.outputPath, hintsPath);
@@ -126,15 +124,6 @@ export function registerToolLlmExtractStatus(api: any, getCfg: (api: any) => any
           followUpToolCalls.push({
             tool: "video_pipeline_apply_llm_extract_output",
             reason: "apply_llm_extract_output_after_retry",
-            params: { outputJsonlPath: batch.outputPath },
-          });
-        }
-
-        // Apply outputs for completed batches (idempotent re-apply)
-        for (const batch of completed) {
-          followUpToolCalls.push({
-            tool: "video_pipeline_apply_llm_extract_output",
-            reason: "apply_llm_extract_output_completed_batch",
             params: { outputJsonlPath: batch.outputPath },
           });
         }
