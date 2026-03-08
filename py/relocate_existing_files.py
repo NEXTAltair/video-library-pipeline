@@ -471,7 +471,7 @@ def main() -> int:
 
             if run_suspicious_title_check and looks_like_swallowed_program_title(sf.win_path, md):
                 suspicious_program_title_skipped += 1
-                if is_llm:
+                if is_llm and args.apply:
                     mark_metadata_needs_review(con, path_id, md, md_source, "relocate_suspicious_program_title")
                 rows_for_plan.append(
                     {
@@ -493,7 +493,7 @@ def main() -> int:
 
             if run_suspicious_title_check and looks_like_shortened_program_title(sf.win_path, md):
                 suspicious_program_title_skipped += 1
-                if is_llm:
+                if is_llm and args.apply:
                     mark_metadata_needs_review(con, path_id, md, md_source, "relocate_suspicious_program_title_shortened")
                 rows_for_plan.append(
                     {
@@ -515,7 +515,7 @@ def main() -> int:
 
             if run_suspicious_title_check and detect_subtitle_in_program_title(str(md.get("program_title", ""))):
                 suspicious_program_title_skipped += 1
-                if is_llm:
+                if is_llm and args.apply:
                     mark_metadata_needs_review(con, path_id, md, md_source, "relocate_subtitle_separator_in_program_title")
                 rows_for_plan.append(
                     {
@@ -593,6 +593,10 @@ def main() -> int:
             row_move = {"path_id": path_id, "src": sf.win_path, "dst": dst}
             rows_for_move.append(row_move)
             plan_reason_map[(path_id, sf.win_path, dst)] = reason
+
+        # commit any mark_metadata_needs_review writes (apply mode only)
+        if args.apply:
+            con.commit()
 
         with plan_path.open("w", encoding="utf-8") as w:
             w.write(

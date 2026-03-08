@@ -379,7 +379,7 @@ relocateフロー専用の複合オーケストレーター。内部で relocate
 | `allowNoContentChanges` | boolean | 内容未変更でも適用を許可 (default: false)                  |
 | `source`                | string  | `path_metadata.source` に記録する値 (default: `"human_reviewed"` / markHumanReviewed=false時は `"llm"`) |
 
-**安全機構:** apply前に自動DBバックアップ + ローテーション (最新10世代)。適用成功後、`program_aliases_review_*.yaml` をアーカイブに移動。
+**安全機構:** apply前に自動DBバックアップ + ローテーション (最新10世代)。
 
 ---
 
@@ -519,7 +519,7 @@ B:\_AI_WORK/                          ← windowsOpsRoot
 ├── llm/
 │   ├── llm_filename_extract_input_*.jsonl   ← reextract入力バッチ
 │   ├── llm_filename_extract_output_*.jsonl  ← 抽出結果
-│   ├── program_aliases_review_*.yaml        ← レビューYAML (apply後にarchive/へ移動)
+│   ├── program_aliases_review_*.yaml        ← レビューYAML
 │   ├── queue_unwatched_batch_*.jsonl        ← 未視聴キュー
 │   ├── relocate_metadata_queue_*.jsonl      ← relocateメタデータ不足キュー
 │   ├── reviewed_metadata_*.yaml             ← レビュー済みメタデータ
@@ -542,7 +542,90 @@ B:\_AI_WORK/                          ← windowsOpsRoot
 └── .gitignore                               ← ランタイムデータを除外
 ```
 
-`archive/` ディレクトリ内のファイルは `.gz` 圧縮され、定期ローテーションで古いアーティファクトが自動退避される。
+`archive/` ディレクトリはDB反映完了が確認されたアーティファクトの退避先。現在は手動運用（自動アーカイブは Issue #39 の修正に伴い一時無効化中）。
+
+### アーティファクトライフサイクル
+
+各JSONL/YAMLファイルの生成から廃棄までのライフサイクルと、DB (`path_metadata`) への反映タイミングを示す。
+
+#### 全体フロー
+
+```mermaid
+flowchart TD
+    subgraph "① 抽出 (Extract)"
+        REEXTRACT["video_pipeline_reextract<br/>--prepare-only"]
+        INPUT_JSONL["llm_filename_extract_input_*.jsonl<br/>(LLM入力バッチ)"]
+        OUTPUT_JSONL["llm_filename_extract_output_*.jsonl<br/>(抽出結果)"]
+        APPLY_LLM["apply_llm_extract_output<br/>source='llm_subagent'"]
+    end
+
+    subgraph "② レビュー (Review)"
+        EXPORT_YAML["export_program_yaml"]
+        REVIEW_YAML["program_aliases_review_*.yaml<br/>(人間向けレビュー表示用)"]
+        EDITED_JSONL["*_reviewed_*.jsonl<br/>(人間が編集したJSONL)"]
+        HUMAN["👤 ヒューマンレビュー"]
+    end
+
+    subgraph "③ 適用 (Apply)"
+        APPLY_REV["apply_reviewed_metadata<br/>source='human_reviewed'"]
+        STAMPED["reviewed_metadata_apply_*.jsonl<br/>(タイムスタンプ付き)"]
+    end
+
+    subgraph "④ 再配置 (Relocate)"
+        RELOCATE["relocate_existing_files<br/>source='human_reviewed' のみ信頼"]
+    end
+
+    DB[("mediaops.sqlite<br/>path_metadata")]
+    ARCHIVE["llm/archive/<br/>(確認済みアーティファクト退避)"]
+
+    REEXTRACT --> INPUT_JSONL
+    INPUT_JSONL -->|sessions_spawn| OUTPUT_JSONL
+    OUTPUT_JSONL --> APPLY_LLM -->|upsert| DB
+
+    OUTPUT_JSONL --> EXPORT_YAML --> REVIEW_YAML
+    OUTPUT_JSONL -.->|コピー＋編集| EDITED_JSONL
+    REVIEW_YAML -.->|参照しながら| HUMAN
+    HUMAN -->|編集| EDITED_JSONL
+
+    EDITED_JSONL --> APPLY_REV --> STAMPED -->|upsert| DB
+    DB -->|source=human_reviewed| RELOCATE
+
+    OUTPUT_JSONL -.->|DB反映確認後| ARCHIVE
+    INPUT_JSONL -.->|DB反映確認後| ARCHIVE
+    REVIEW_YAML -.->|DB反映確認後| ARCHIVE
+```
+
+#### source 値の遷移
+
+```mermaid
+stateDiagram-v2
+    [*] --> llm_subagent : apply_llm_extract_output
+    [*] --> rule_based : run_metadata_batches (非LLM)
+
+    llm_subagent --> human_reviewed : apply_reviewed_metadata
+    rule_based --> human_reviewed : apply_reviewed_metadata
+
+    human_reviewed --> [*] : relocate が信頼する唯一の source
+```
+
+#### アーティファクト種別と寿命
+
+| アーティファクト | 生成ツール | 消費ツール | DB反映 | アーカイブ条件 |
+|---|---|---|---|---|
+| `llm_filename_extract_input_*.jsonl` | `reextract --prepare-only` | `sessions_spawn` (LLMサブエージェント) | なし | 対応する output が DB に反映済み |
+| `llm_filename_extract_output_*.jsonl` | LLMサブエージェント | `apply_llm_extract_output`, `export_program_yaml` | `apply_llm_extract_output` で upsert | `apply_reviewed_metadata` で上書き済み、または needsReview=0 で直接 relocate 完了後 |
+| `program_aliases_review_*.yaml` | `export_program_yaml` | 人間が目視レビュー | なし (現状。YAML→DB反映ツール未実装) | 対応 JSONL の DB 反映確認後 |
+| `*_reviewed_*.jsonl` | 人間がコピー＋編集 | `apply_reviewed_metadata` | `apply_reviewed_metadata` で upsert | apply 成功・DB 反映確認後 |
+| `reviewed_metadata_apply_*.jsonl` | `apply_reviewed_metadata` | なし (監査証跡) | 元データ。apply 時に生成 | 長期保持推奨 |
+
+#### TODO
+
+- [ ] [#40](https://github.com/NEXTAltair/video-library-pipeline/issues/40) **relocate ゲートを `needs_review` + `source` 併用方式に変更**
+- [ ] [#41](https://github.com/NEXTAltair/video-library-pipeline/issues/41) **`source=llm_subagent` を `llm` にリネーム**
+- [ ] [#42](https://github.com/NEXTAltair/video-library-pipeline/issues/42) **YAML→DB反映パスの実装とレビューワークフロー改善** (JSONL手動編集廃止、`reviewed_metadata_apply_*.jsonl` 廃止含む)
+- [ ] [#43](https://github.com/NEXTAltair/video-library-pipeline/issues/43) **DB反映確認後の自動アーカイブ再実装**
+- [ ] [#44](https://github.com/NEXTAltair/video-library-pipeline/issues/44) **EPG情報をメタデータ抽出のヒントとして活用**
+- [ ] [#45](https://github.com/NEXTAltair/video-library-pipeline/issues/45) **Stage 名称・説明の見直しとドキュメント整理**
 
 ---
 
@@ -776,12 +859,13 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 ### source 値一覧
 
-| source値         | 意味                    | 生成元                               |
-| ---------------- | ----------------------- | ------------------------------------ |
-| `rule_based`   | ルールベース抽出        | `run_metadata_batches_promptv1.py` |
-| `llm` | LLM抽出 | `apply_llm_extract_output.py`      |
+| source値           | 意味                        | 生成元                               |
+| ------------------ | --------------------------- | ------------------------------------ |
+| `rule_based`     | ルールベース抽出            | `run_metadata_batches_promptv1.py` |
+| `llm`            | LLM抽出                    | `apply_llm_extract_output.py`      |
+| `human_reviewed` | ヒューマンレビュー済み      | `apply_reviewed_metadata` ツール   |
 
-> `source='rule_based'` はルールベース抽出の結果を示す。`source='llm'` は LLM 抽出の結果を示す。
+> `source='human_reviewed'` はレビュー済み確定データ。`source='llm'` は LLM 推測データで、relocate 時に suspicious title チェックを通過した場合のみ信頼される。
 
 ### is_current 運用
 
@@ -873,7 +957,7 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 - `needs_review=false` + `source=llm` は suspicious title チェック（飲み込み/短縮/▽▼混入）を通過した場合のみ移動計画対象。
 - `source` が `human_reviewed` / `llm` 以外の行は `allowUnreviewedMetadata=true` を指定しない限り除外。
 
-`source=llm` で suspicious title チェックに失敗した行は、DB上で `needs_review=true` + `needs_review_reason` 追記に更新し、レビュー待ちに戻す。
+`source=llm` で suspicious title チェックに失敗した行は、apply 時のみ DB上で `needs_review=true` + `needs_review_reason` 追記に更新し、レビュー待ちに戻す（dry-run ではDBを変更しない）。
 
 ---
 
