@@ -330,8 +330,8 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
           reviewCandidatesTruncated: review.truncated,
           reviewGuidance: {
             stage: "metadata_review",
-            yamlRole: "human_review_artifact_only",
-            agentShouldUseYamlForDecision: false,
+            yamlRole: "human_review_and_apply_input",
+            agentShouldUseYamlForDecision: true,
             agentShouldUseStructuredFields: true,
             reviewColumnsInScope: [
               "program_title",
@@ -352,12 +352,12 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
             handoffRule:
               "This stage reviews metadata only. Physical move destination decisions belong to relocate/move stages after metadata is confirmed.",
             yamlHandlingRule:
-              "Do not derive automated corrections from YAML text. YAML is for human visual review; agent should rely on reviewCandidates/reviewSummary and user-confirmed column-level edits.",
+              "Use the reviewed YAML as the source of truth for title alias corrections when calling video_pipeline_apply_reviewed_metadata with sourceYamlPath.",
           },
           nextStep:
             "Present reviewCandidates (path + columns + reasons) to the user. " +
-            "Ask the user to edit the JSONL file if corrections are needed (program_title, air_date, needs_review). " +
-            "Once the user confirms edits are done (or says no edits are needed), call video_pipeline_apply_reviewed_metadata with sourceJsonlPath set to the extraction JSONL (.jsonl file, NOT the .yaml file). " +
+            "Ask the user to edit the exported YAML aliases/canonical_title for corrections. " +
+            "Once the user confirms YAML review is done, call video_pipeline_apply_reviewed_metadata with sourceYamlPath set to this YAML path. " +
             "Do NOT ask for additional permission to call video_pipeline_apply_reviewed_metadata — proceed immediately after user confirmation.",
         });
       },

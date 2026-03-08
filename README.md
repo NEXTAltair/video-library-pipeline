@@ -370,11 +370,12 @@ relocateフロー専用の複合オーケストレーター。内部で relocate
 
 #### `video_pipeline_apply_reviewed_metadata` — レビュー済みメタデータDB適用
 
-ヒューマンレビュー済みのJSONLファイルをDBに書き込む。2段ゲートで誤適用を防止する（セクション12参照）。
+ヒューマンレビュー済みメタデータ（YAML優先 / JSONL互換）をDBに書き込む。2段ゲートで誤適用を防止する（セクション12参照）。
 
 | パラメータ                | 型      | 説明                                                       |
 | ------------------------- | ------- | ---------------------------------------------------------- |
-| `sourceJsonlPath`       | string  | レビュー済みJSONLのパス（生ファイル名は拒否される）        |
+| `sourceYamlPath`       | string  | レビュー済みYAMLのパス（`export_program_yaml`出力、推奨） |
+| `sourceJsonlPath`       | string  | レビュー済みJSONLのパス（互換導線）                        |
 | `markHumanReviewed`     | boolean | `human_reviewed=true` を付与 (default: true)             |
 | `allowNoContentChanges` | boolean | 内容未変更でも適用を許可 (default: false)                  |
 | `source`                | string  | `path_metadata.source` に記録する値 (default: `"human_reviewed"` / markHumanReviewed=false時は `"llm"`) |
@@ -561,14 +562,14 @@ flowchart TD
 
     subgraph "② レビュー (Review)"
         EXPORT_YAML["export_program_yaml"]
-        REVIEW_YAML["program_aliases_review_*.yaml<br/>(人間向けレビュー表示用)"]
-        EDITED_JSONL["*_reviewed_*.jsonl<br/>(人間が編集したJSONL)"]
+        REVIEW_YAML["program_aliases_review_*.yaml<br/>(人間が編集)"]
+        EDITED_JSONL["*_reviewed_*.jsonl<br/>(互換: JSONL編集時のみ)"]
         HUMAN["👤 ヒューマンレビュー"]
     end
 
     subgraph "③ 適用 (Apply)"
         APPLY_REV["apply_reviewed_metadata<br/>source='human_reviewed'"]
-        STAMPED["reviewed_metadata_apply_*.jsonl<br/>(タイムスタンプ付き)"]
+        STAMPED["tmp reviewed_metadata_apply_*.jsonl<br/>(apply後に自動削除)"]
     end
 
     subgraph "④ 再配置 (Relocate)"
@@ -614,15 +615,15 @@ stateDiagram-v2
 |---|---|---|---|---|
 | `llm_filename_extract_input_*.jsonl` | `reextract --prepare-only` | `sessions_spawn` (LLMサブエージェント) | なし | 対応する output が DB に反映済み |
 | `llm_filename_extract_output_*.jsonl` | LLMサブエージェント | `apply_llm_extract_output`, `export_program_yaml` | `apply_llm_extract_output` で upsert | `apply_reviewed_metadata` で上書き済み、または needsReview=0 で直接 relocate 完了後 |
-| `program_aliases_review_*.yaml` | `export_program_yaml` | 人間が目視レビュー | なし (現状。YAML→DB反映ツール未実装) | 対応 JSONL の DB 反映確認後 |
-| `*_reviewed_*.jsonl` | 人間がコピー＋編集 | `apply_reviewed_metadata` | `apply_reviewed_metadata` で upsert | apply 成功・DB 反映確認後 |
-| `reviewed_metadata_apply_*.jsonl` | `apply_reviewed_metadata` | なし (監査証跡) | 元データ。apply 時に生成 | 長期保持推奨 |
+| `program_aliases_review_*.yaml` | `export_program_yaml` | `apply_reviewed_metadata` (sourceYamlPath) | YAMLエイリアス定義を展開して upsert | apply 成功・DB 反映確認後 |
+| `*_reviewed_*.jsonl` | 人間がコピー＋編集 (互換) | `apply_reviewed_metadata` | `apply_reviewed_metadata` で upsert | apply 成功・DB 反映確認後 |
+| `reviewed_metadata_apply_*.jsonl` | `apply_reviewed_metadata` | なし | 一時ファイル（apply 後に自動削除） | 原則残らない |
 
 #### TODO
 
 - [ ] [#40](https://github.com/NEXTAltair/video-library-pipeline/issues/40) **relocate ゲートを `needs_review` + `source` 併用方式に変更**
 - [ ] [#41](https://github.com/NEXTAltair/video-library-pipeline/issues/41) **`source=llm_subagent` を `llm` にリネーム**
-- [ ] [#42](https://github.com/NEXTAltair/video-library-pipeline/issues/42) **YAML→DB反映パスの実装とレビューワークフロー改善** (JSONL手動編集廃止、`reviewed_metadata_apply_*.jsonl` 廃止含む)
+- [x] [#42](https://github.com/NEXTAltair/video-library-pipeline/issues/42) **YAML→DB反映パスの実装とレビューワークフロー改善** (YAML編集を優先導線化、`reviewed_metadata_apply_*.jsonl` 一時ファイル化)
 - [ ] [#43](https://github.com/NEXTAltair/video-library-pipeline/issues/43) **DB反映確認後の自動アーカイブ再実装**
 - [ ] [#44](https://github.com/NEXTAltair/video-library-pipeline/issues/44) **EPG情報をメタデータ抽出のヒントとして活用**
 - [ ] [#45](https://github.com/NEXTAltair/video-library-pipeline/issues/45) **Stage 名称・説明の見直しとドキュメント整理**

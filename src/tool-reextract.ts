@@ -234,7 +234,7 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
           followUpToolCalls.push({
             tool: "video_pipeline_export_program_yaml",
             reason: "export_human_review_yaml_from_reextract_output",
-            params: { sourceJsonlPath: outputJsonlPath },
+            params: { sourceJsonlPath: outputJsonlPath, outputPath: outputJsonlPath.replace(/\.jsonl$/i, "_review.yaml") },
           });
         }
 
