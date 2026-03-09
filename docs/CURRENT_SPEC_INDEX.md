@@ -58,8 +58,8 @@
   - トップレベルオーケストレータスキル
   - インテントマッピング（自然言語 → ツールフロー）
   - エージェントガードレール（ツール/スキル混同禁止、シェルフォールバック禁止）
-- `skills/normalize-review/SKILL.md`
-  - sourceRoot パイプライン ステージ1（正規化 + レビューゲート）
+- `skills/inventory-review/SKILL.md`
+  - sourceRoot パイプライン ステージ1（棚卸 + キュー生成 + レビューゲート）
 - `skills/extract-review/SKILL.md`
   - メタデータレビューステージ
   - YAML は人間専用アーティファクト。エージェントは構造化フィールドを使うこと

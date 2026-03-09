@@ -26,7 +26,7 @@ Classify the user request first, then **immediately read the sub-skill SKILL.md 
 | User intent | → Action |
 |-------------|----------|
 | Reorganize/relocate existing files ("整理したい", "フォルダを移動したい", subtitle in folder name, etc.) | Read `skills/relocate-review/SKILL.md`, then follow its sequence |
-| Process new recordings from `sourceRoot` (B:\未視聴) | Read `skills/normalize-review/SKILL.md`, then follow its sequence |
+| Process new recordings from `sourceRoot` (B:\未視聴) | Read `skills/inventory-review/SKILL.md`, then follow its sequence |
 | DB sync only ("DB化", "DBに登録して", "既存ファイルをDBに入れて") | Call `video_pipeline_backfill_moved_files` directly (no `roots` param needed) |
 | Ingest EPG (program.txt capture) | Call `video_pipeline_ingest_epg` (run before deleting program.txt) |
 | Re-run metadata extraction only | Read `skills/extract-review/SKILL.md`, then follow its sequence |

@@ -18,7 +18,7 @@ flowchart LR
     subgraph PIPELINE["Openclaw Skills"]
         direction TB
         S0["ingest_epg<br>EPG取り込み"]
-        S1["Stage 1: normalize-review<br>ファイル名正規化 + 棚卸"]
+        S1["Stage 1: inventory-review<br>ファイル棚卸 + キュー生成"]
         S2["Stage 2: extract-review<br>メタデータ抽出 + レビュー"]
         S3["Stage 3: move-review<br>ジャンル別振り分け + 移動"]
         DB[("mediaops.sqlite")]
@@ -125,7 +125,7 @@ flowchart TD
     S1_PS_INV["PowerShell: unwatched_inventory.ps1<br/>ファイル列挙 + ハッシュ"]
     S1_OUT_INV["inventory_unwatched_*.jsonl"]
     S1_OUT_Q["queue_unwatched_batch_*.jsonl"]
-    S1_GATE{{"ヒューマンレビュー<br/>ファイル名正規化確認"}}
+    S1_GATE{{"ヒューマンレビュー<br/>棚卸・キュー確認"}}
 
     S1_IN --> S1_VALIDATE --> S1_RUN
     S1_RUN --> S1_PS_INV
@@ -215,14 +215,14 @@ flowchart TD
 | Skill                      | 概要                                                                                |
 | -------------------------- | ----------------------------------------------------------------------------------- |
 | `video-library-pipeline` | トップレベルインテントルーター。ユーザーの意図を判別し適切なSkillに誘導する         |
-| `normalize-review`       | Stage 1 — 未視聴フォルダのファイル名正規化と棚卸を行う                             |
+| `inventory-review`       | Stage 1 — 未視聴フォルダのファイル棚卸とキュー生成を行う                           |
 | `extract-review`         | Stage 2 — ファイル名からメタデータを抽出し、ヒューマンレビューを経てDBに書き込む   |
-| `move-review`            | Stage 3 — レビュー済みメタデータに基づき、ジャンル別ドライブにファイルを振り分ける |
+| `move-review`            | Stage 3 — DBのメタデータに基づき、ジャンル別ドライブにファイルを振り分ける         |
 | `relocate-review`        | 既存ライブラリの再配置。メタデータ補完→dry-run→apply のサイクルを誘導する         |
 
 ```mermaid
 graph LR
-    subgraph "Skill: normalize-review"
+    subgraph "Skill: inventory-review"
         T_VAL["validate"]
         T_STATUS["status"]
         T_RUN_DRY["analyze_and_move_videos<br/>apply=false"]
@@ -283,7 +283,7 @@ sourceRoot (未視聴フォルダ) のファイルを正規化・棚卸し、メ
 
 | パラメータ           | 型      | 説明                                                                            |
 | -------------------- | ------- | ------------------------------------------------------------------------------- |
-| `apply`            | boolean | `false`=dry-run (Stage 1: normalize+inventory), `true`=実行 (Stage 3: move) |
+| `apply`            | boolean | `false`=dry-run (Stage 1: inventory+queue), `true`=実行 (Stage 3: move)     |
 | `maxFilesPerRun`   | integer | 1回の処理上限 (default: 200)                                                    |
 | `allowNeedsReview` | boolean | `needs_review=true`のファイルも移動対象に含める (default: false)              |
 
@@ -456,7 +456,7 @@ JSONL/YAMLアーティファクトの生成・消費関係を示す。
 
 ```mermaid
 flowchart TD
-    subgraph "Stage 1: Normalize"
+    subgraph "Stage 1: Inventory"
         INV["inventory_unwatched_*.jsonl<br/>(ファイル列挙結果)"]
         QUEUE["queue_unwatched_batch_*.jsonl<br/>(抽出対象キュー)"]
     end
@@ -524,13 +524,13 @@ B:\_AI_WORK/                          ← windowsOpsRoot
 │   ├── queue_unwatched_batch_*.jsonl        ← 未視聴キュー
 │   ├── relocate_metadata_queue_*.jsonl      ← relocateメタデータ不足キュー
 │   ├── reviewed_metadata_*.yaml             ← レビュー済みメタデータ
-│   └── archive/                             ← 処理済みアーティファクトの退避先
+│   └── archive/                             ← 処理済みアーティファクトの退避先 (非圧縮)
 ├── move/
 │   ├── inventory_unwatched_*.jsonl          ← Stage 1 棚卸結果
 │   ├── move_plan_from_inventory_*.jsonl     ← Stage 3 移動計画
 │   ├── move_apply_*.jsonl                   ← Stage 3 移動結果
 │   ├── relocate_plan_*.jsonl                ← relocate移動計画
-│   └── archive/                             ← ローテーション済みアーティファクト (.gz)
+│   └── archive/                             ← ローテーション済みアーティファクト (.gz圧縮)
 ├── scripts/                                 ← ensureWindowsScripts()が自動配置するps1
 │   ├── _long_path_utils.ps1
 │   ├── unwatched_inventory.ps1
@@ -543,7 +543,10 @@ B:\_AI_WORK/                          ← windowsOpsRoot
 └── .gitignore                               ← ランタイムデータを除外
 ```
 
-`archive/` ディレクトリはDB反映完了が確認されたアーティファクトの退避先。`apply_reviewed_metadata` の upsert 成功後に、使用した YAML・抽出出力 JSONL・対応する入力 JSONL を自動アーカイブする。
+`archive/` ディレクトリは2系統あり、管理方法が異なる:
+
+- **`llm/archive/`** — `apply_reviewed_metadata` の upsert 成功後に、使用した YAML・抽出出力 JSONL・対応する入力 JSONL を非圧縮で自動アーカイブする。
+- **`move/archive/`** — `rotate_move_audit_logs.py` (Stage 1 の `unwatched_pipeline_runner.py` から呼出) が移動計画・結果JSONL を gzip 圧縮してアーカイブする。
 
 ### アーティファクトライフサイクル
 
@@ -557,7 +560,7 @@ flowchart TD
         REEXTRACT["video_pipeline_reextract<br/>--prepare-only"]
         INPUT_JSONL["llm_filename_extract_input_*.jsonl<br/>(LLM入力バッチ)"]
         OUTPUT_JSONL["llm_filename_extract_output_*.jsonl<br/>(抽出結果)"]
-        APPLY_LLM["apply_llm_extract_output<br/>source='llm_subagent'"]
+        APPLY_LLM["apply_llm_extract_output<br/>source='llm'"]
     end
 
     subgraph "② レビュー (Review)"
@@ -600,13 +603,14 @@ flowchart TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> llm_subagent : apply_llm_extract_output
+    [*] --> llm : apply_llm_extract_output
     [*] --> rule_based : run_metadata_batches (非LLM)
 
-    llm_subagent --> human_reviewed : apply_reviewed_metadata
+    llm --> human_reviewed : apply_reviewed_metadata
     rule_based --> human_reviewed : apply_reviewed_metadata
 
-    human_reviewed --> [*] : relocate が信頼する唯一の source
+    human_reviewed --> [*] : relocate が無条件で信頼
+    llm --> [*] : suspicious title チェック通過時のみ relocate 可
 ```
 
 #### アーティファクト種別と寿命
@@ -626,7 +630,7 @@ stateDiagram-v2
 - [x] [#42](https://github.com/NEXTAltair/video-library-pipeline/issues/42) **YAML→DB反映パスの実装とレビューワークフロー改善** (YAML編集を優先導線化、`reviewed_metadata_apply_*.jsonl` 一時ファイル化)
 - [x] [#43](https://github.com/NEXTAltair/video-library-pipeline/issues/43) **DB反映確認後の自動アーカイブ再実装**
 - [x] [#44](https://github.com/NEXTAltair/video-library-pipeline/issues/44) **EPG情報をメタデータ抽出のヒントとして活用**
-- [ ] [#45](https://github.com/NEXTAltair/video-library-pipeline/issues/45) **Stage 名称・説明の見直しとドキュメント整理**
+- [x] [#45](https://github.com/NEXTAltair/video-library-pipeline/issues/45) **Stage 名称・説明の見直しとドキュメント整理**
 
 ---
 

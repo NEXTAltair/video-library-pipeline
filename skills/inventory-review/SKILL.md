@@ -1,10 +1,10 @@
 ---
-name: video-library-pipeline-normalize-review
-description: Stage 1 of interactive operation. Run normalization/inventory and stop for human review before extraction.
-metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipeline"]}}}
+name: video-library-pipeline-inventory-review
+description: Stage 1 of interactive operation. Run inventory scan and queue generation, then stop for human review before extraction.
+metadata: {"openclaw":{"emoji":"📋","requires":{"plugins":["video-library-pipeline"]}}}
 ---
 
-# Stage 1: Normalize + Human Review
+# Stage 1: Inventory + Human Review
 
 ## Rule
 
@@ -33,7 +33,7 @@ metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipe
 ## Human review checklist
 
 - Inventory path exists and points to the expected run.
-- Filename normalization result is acceptable.
+- Inventory file list is acceptable.
 - `plan_stats.skipped_outside == 0` (or user explicitly accepts reason).
 - No non-zero exit code / no runtime error.
 

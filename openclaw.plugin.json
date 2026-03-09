@@ -8,7 +8,7 @@
   },
   "skills": [
     "./skills/video-library-pipeline",
-    "./skills/normalize-review",
+    "./skills/inventory-review",
     "./skills/extract-review",
     "./skills/move-review",
     "./skills/relocate-review"
