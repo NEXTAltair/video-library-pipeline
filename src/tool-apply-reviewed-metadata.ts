@@ -59,6 +59,8 @@ function readComparableRows(sourcePath: string): { rows: AnyObj[]; parseErrors: 
   return { rows: out, parseErrors };
 }
 
+const SUBTITLE_SEPARATOR_RE = /[▽▼◇]/;
+
 function summarizeReviewRisk(rows: AnyObj[]): {
   rows: number;
   needsReviewRows: number;
@@ -68,7 +70,12 @@ function summarizeReviewRisk(rows: AnyObj[]): {
   let suspiciousProgramTitleRows = 0;
   for (const row of rows) {
     if (row && row.needs_review === true) needsReviewRows += 1;
-    if (looksSwallowedProgramTitleInRow(row)) suspiciousProgramTitleRows += 1;
+    if (looksSwallowedProgramTitleInRow(row)) {
+      suspiciousProgramTitleRows += 1;
+    } else {
+      const pt = typeof row?.program_title === "string" ? row.program_title : "";
+      if (SUBTITLE_SEPARATOR_RE.test(pt)) suspiciousProgramTitleRows += 1;
+    }
   }
   return { rows: rows.length, needsReviewRows, suspiciousProgramTitleRows };
 }
@@ -217,6 +224,15 @@ function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, str
   retitledRowsCount: number;
   reviewClearedRowsCount: number;
 } {
+  // canonical titles の逆引きリストを構築 (prefix マッチ用)
+  const canonicalSet = new Set(aliasToCanonical.values());
+  const canonicalByNorm: Array<[string, string]> = [];
+  for (const ct of canonicalSet) {
+    canonicalByNorm.push([lowerCompact(ct), ct]);
+  }
+  // 長い順にソート → 最長一致を保証
+  canonicalByNorm.sort((a, b) => b[0].length - a[0].length);
+
   const editedRows: AnyObj[] = [];
   let changedRowsCount = 0;
   let retitledRowsCount = 0;
@@ -225,7 +241,19 @@ function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, str
     const next: AnyObj = { ...row };
     let changed = false;
     const beforeTitle = typeof row.program_title === "string" ? row.program_title.trim() : "";
-    const canonical = beforeTitle ? aliasToCanonical.get(lowerCompact(beforeTitle)) : undefined;
+    let canonical = beforeTitle ? aliasToCanonical.get(lowerCompact(beforeTitle)) : undefined;
+
+    // Prefix fallback: exact match がない場合、canonical_title の最長 prefix マッチを試行
+    if (!canonical && beforeTitle) {
+      const titleNorm = lowerCompact(beforeTitle);
+      for (const [ctNorm, ct] of canonicalByNorm) {
+        if (titleNorm.startsWith(ctNorm) && titleNorm.length >= ctNorm.length + 8) {
+          canonical = ct;
+          break; // 最長一致 (ソート済み)
+        }
+      }
+    }
+
     if (canonical && canonical !== beforeTitle) {
       next.program_title = canonical;
       next.normalized_program_key = lowerCompact(canonical);

@@ -468,6 +468,9 @@ def main() -> int:
                 continue
 
             run_suspicious_title_check = not skip_suspicious_title_check and not is_human_reviewed
+            # サブタイトル区切り検出は source に関係なく常に実行
+            # (▽▼◇ は正当な番組タイトルにほぼ使われない)
+            run_subtitle_separator_check = not skip_suspicious_title_check
 
             if run_suspicious_title_check and looks_like_swallowed_program_title(sf.win_path, md):
                 suspicious_program_title_skipped += 1
@@ -513,9 +516,9 @@ def main() -> int:
                     )
                 continue
 
-            if run_suspicious_title_check and detect_subtitle_in_program_title(str(md.get("program_title", ""))):
+            if run_subtitle_separator_check and detect_subtitle_in_program_title(str(md.get("program_title", ""))):
                 suspicious_program_title_skipped += 1
-                if is_llm and args.apply:
+                if args.apply:
                     mark_metadata_needs_review(con, path_id, md, md_source, "relocate_subtitle_separator_in_program_title")
                 rows_for_plan.append(
                     {
