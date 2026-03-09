@@ -13,7 +13,6 @@ metadata: {"openclaw":{"emoji":"🧠","requires":{"plugins":["video-library-pipe
 - This stage must save program info to YAML after extraction.
 - This stage ends with human review. Do not continue to move/apply automatically.
 - This stage is **metadata review only**. Do not ask the human to decide filesystem move destinations or folder taxonomy here.
-- YAML output in this stage is a **human-facing review artifact**. The agent must not infer corrections from YAML prose/text; use structured tool fields (`reviewCandidates`, `reviewSummary`, `reviewGuidance`) for reporting.
 
 ## Review scope (required)
 
@@ -34,20 +33,30 @@ metadata: {"openclaw":{"emoji":"🧠","requires":{"plugins":["video-library-pipe
 
 See main `video-library-pipeline` SKILL.md for definitions of `machine_extracted_unreviewed_metadata`, `human_reviewed_metadata`, and `auto_registered_file_facts`.
 
-## YAML vs JSONL: two distinct artifacts (required)
+## YAML→DB 反映フロー (primary path)
 
-These two file types serve completely different purposes. Never confuse them:
+`video_pipeline_export_program_yaml` が生成する YAML は **人間のレビュー・編集用アーティファクト** であると同時に、`video_pipeline_apply_reviewed_metadata` の `sourceYamlPath` パラメータ経由で **DB に直接反映できる**。
 
-- **`program_aliases_review_YYYYMMDD_HHMMSS.yaml`** (output of `video_pipeline_export_program_yaml`)
-  - A **human-facing hints/alias reference file** for organizing canonical titles and aliases
-  - Used as **input hints to `video_pipeline_reextract`** (via `hintsYamlPath` parameter) to regenerate better extraction JSONL
-  - **MUST NOT be passed to `video_pipeline_apply_reviewed_metadata`** — it is not a reviewed metadata JSONL
-  - Editing this YAML does not directly update DB; it only affects subsequent reextract runs
+### 仕組み
 
-- **`reviewed_metadata_YYYYMMDD_HHMMSS.jsonl`** (output of `video_pipeline_reextract`)
-  - The actual per-file metadata records (one JSON object per line)
-  - The only valid input to `video_pipeline_apply_reviewed_metadata`
-  - After human review/manual edits to this JSONL, apply it to write `human_reviewed_metadata` to DB
+1. YAML 内の `source_jsonl` フィールドが元の抽出結果 JSONL を指す
+2. `apply_reviewed_metadata` は YAML の `canonical_title` / `aliases` マッピングを読み取り、JSONL の各行に適用する
+3. エイリアスにマッチした行は `program_title` が `canonical_title` に書き換わる
+4. タイトル修正により `needs_review` の理由がなくなった行は自動的に `needs_review=false` にクリアされる
+5. 修正済み行を `source='human_reviewed'` で DB に upsert する
+6. upsert 成功後、YAML・抽出出力 JSONL・入力 JSONL を `llm/archive/` に自動アーカイブする
+
+### YAML 編集で解決できること
+
+- 番組名の正規化 (`canonical_title` 設定)
+- 同一番組の表記揺れ統合 (`aliases` に追加)
+- サブタイトル混入の修正 (例: `"もぎたて!▽天気"` → `canonical_title: "もぎたて!"` + alias に元の文字列を追加)
+
+### YAML 編集で解決できないこと
+
+- `air_date` の修正 (YAML にはタイトル情報のみ)
+- 個別レコードの `needs_review` 手動制御 (タイトル起因以外の理由)
+- 上記が必要な場合は JSONL 直接編集 (後述の Legacy path) を使用する
 
 ## Tool sequence (rule-based extraction — default)
 
@@ -77,16 +86,12 @@ Use this when rule-based extraction leaves many `needs_review` entries and a hig
    - Each `{tool: "video_pipeline_apply_llm_extract_output", params: {...}}` entry: call after the corresponding subagent finishes.
 
 3. Common mistake to avoid:
-   - ❌ `video_pipeline_reextract({ inputJsonlPaths: [...] })` — `inputJsonlPaths` is an OUTPUT field, not a valid parameter. This will fail.
-   - ✅ Call `sessions_spawn` with `followUpToolCalls[i].params` where `followUpToolCalls[i].tool == "sessions_spawn"`.
+   - `video_pipeline_reextract({ inputJsonlPaths: [...] })` — `inputJsonlPaths` is an OUTPUT field, not a valid parameter. This will fail.
+   - Call `sessions_spawn` with `followUpToolCalls[i].params` where `followUpToolCalls[i].tool == "sessions_spawn"`.
 
 4. After each `video_pipeline_apply_llm_extract_output` call, check `reviewSummary.needsReviewFlagRows` in the result:
    - **`needsReviewFlagRows == 0`**: Records are in DB. **Do NOT call `video_pipeline_apply_reviewed_metadata`**. Proceed directly to `video_pipeline_relocate_existing_files` (follow the `nextStep` field).
-   - **`needsReviewFlagRows > 0`**: Show `reviewCandidates` (path + columns + reasons) to the user. Then follow the correction flow:
-     1. Copy `outputJsonlPath` to a new file (e.g. `reviewed_metadata_YYYYMMDD.jsonl`). The copy **must not** keep the `llm_filename_extract_output_*` name — `apply_reviewed_metadata` rejects raw extraction filenames.
-     2. Ask the user to edit `program_title` / `air_date` / `needs_review` fields in the copy.
-     3. After user confirms edits, call `video_pipeline_apply_reviewed_metadata` with `sourceJsonlPath` = path to the **edited copy**.
-     4. **Do NOT** pass the `.yaml` file or the original `llm_filename_extract_output_*.jsonl` to `video_pipeline_apply_reviewed_metadata`.
+   - **`needsReviewFlagRows > 0`**: Show `reviewCandidates` (path + columns + reasons) to the user. Then call `video_pipeline_export_program_yaml` to generate a review YAML, and follow the standard YAML review flow below.
 
 ## Recovery (LLM subagent failure or timeout)
 
@@ -101,36 +106,38 @@ If a sessions_spawn call fails, times out, or the subagent doesn't produce outpu
 
 ## Continuing after extraction
 
-4. After human review, choose the editing path (Path A is recommended for most cases):
-   - **Path A — Edit the extraction JSONL directly** (immediate per-record fixes, preferred):
-     - Human edits `program_title`, `air_date`, `needs_review` fields in the JSONL
+4. After human review, choose the editing path:
+
+   - **Path A — YAML 編集 → DB 反映 (推奨)**:
+     - 人間が `program_aliases_review_*.yaml` の `canonical_title` / `aliases` を編集
+     - 編集完了の確認後、`video_pipeline_apply_reviewed_metadata` を呼び出す:
+       - `sourceYamlPath`: 編集済み YAML のパス
+       - default `markHumanReviewed=true`
+     - ツールが YAML のエイリアスマッピングを元の抽出結果 JSONL に適用し、DB を更新する
+     - タイトル変更により review reason が解消された行は自動的に `needs_review=false` になる
+
+   - **Path B — JSONL 直接編集 (レガシー / air_date 修正等)**:
+     - `air_date` の修正やタイトル以外の理由による `needs_review` クリアなど、YAML では対応できない修正が必要な場合に使用
+     - 人間が抽出結果 JSONL の `program_title`, `air_date`, `needs_review` フィールドを直接編集
      - Call `video_pipeline_apply_reviewed_metadata`:
-       - `sourceJsonlPath`: the edited extraction JSONL path (**.jsonl file, NOT the .yaml file**)
+       - `sourceJsonlPath`: the edited extraction JSONL path
        - default `markHumanReviewed=true`
        - default `allowNoContentChanges=false` (safety guard)
        - do not use `allowNoContentChanges=true` while review-risk rows remain (for example `suspiciousProgramTitleRows > 0` or `needsReviewFlagRows > 0`)
        - this step writes **`human_reviewed_metadata`** into DB (`path_metadata`)
        - if the tool reports no-content-change guard (`ok=false` with `reviewDiff.changedRowsCount == 0`), do not claim review was applied; ask for actual JSONL edits or an explicit override decision
-   - **Path B — Edit the YAML hints file** (canonical title / alias rule fixes):
-     - Human edits `canonical_title` / `aliases` / `rules` in the `program_aliases_review_*.yaml`
-     - Propagate those edits to `rules/program_aliases.yaml` (the built-in hints file used by `reextract`)
-     - Re-run `video_pipeline_reextract` (it will pick up the updated `rules/program_aliases.yaml` automatically)
-     - Apply the resulting new JSONL via `video_pipeline_apply_reviewed_metadata` (Path A above)
-     - **CRITICAL: Do NOT pass the `.yaml` file directly to `video_pipeline_apply_reviewed_metadata`**
-       - `sourceJsonlPath` must be a `.jsonl` file (reextract output)
-       - Passing a YAML file here with `allowNoContentChanges=true` is a data-corruption vector: it bypasses the raw-extraction guard and writes garbage into DB
 
 ## Human review checklist
 
 - YAML file was generated successfully.
 - Program titles/aliases in YAML are acceptable.
 - Rows with `needs_review` are either fixed or intentionally kept for later.
-- **The agent calls `video_pipeline_apply_reviewed_metadata`** after the user confirms the JSONL edits are done.
-  - The user's role is editing the JSONL (program_title, air_date, needs_review fields). Calling the tool is the agent's responsibility.
-  - `sourceJsonlPath` must be a `.jsonl` file (reextract output). Never pass a `.yaml` file here.
+- **The agent calls `video_pipeline_apply_reviewed_metadata`** after the user confirms the YAML edits are done.
+  - YAML path: use `sourceYamlPath` parameter (recommended)
+  - JSONL path: use `sourceJsonlPath` parameter (legacy, for air_date fixes etc.)
 - Confirm `video_pipeline_apply_reviewed_metadata` actually applied reviewed edits:
-  - do not treat it as successful review apply if the tool reports "raw extraction output" or "no content edits detected"
-  - do not use `allowNoContentChanges=true` as a shortcut when suspicious titles or `needs_review` rows are still present
+  - do not treat it as successful review apply if the tool reports "no content edits detected"
+  - YAML flow: if `yamlReviewApplied.changedRowsCount == 0`, the YAML aliases did not match any rows — check that aliases are correctly spelled
 
 ## Review reporting rule (required)
 
@@ -139,7 +146,6 @@ If a sessions_spawn call fails, times out, or the subagent doesn't produce outpu
   - `reviewSummary`
   - `reviewCandidates`
   - `reviewGuidance`
-- Treat YAML as human-readable review material only. Do not use YAML content as the agent's source of truth for automated correction decisions.
 - For each review candidate you mention, include:
   - the exact record path (`path`)
   - the exact columns to review (`columns[]`)
@@ -151,7 +157,6 @@ If a sessions_spawn call fails, times out, or the subagent doesn't produce outpu
 - Do not ask broad questions such as "which folder should this move to?" in this stage.
 - Do not reinterpret the review task as genre classification unless the user explicitly asks for genre rules.
 - When the user corrects a record, restate the correction as column updates (for example, `program_title` stays `X`; `subtitle`/description is not part of `program_title`) instead of inventing additional taxonomy.
-- The real apply input is JSONL (`video_pipeline_apply_reviewed_metadata`). Do not claim YAML edits were applied unless the corresponding JSONL edits were applied successfully.
 
 ## Handoff
 
@@ -160,5 +165,5 @@ If a sessions_spawn call fails, times out, or the subagent doesn't produce outpu
   - YAML output path
   - count of programs exported
   - concrete review candidates (path + columns + reasons) when available
-- Ask the user to review/edit the JSONL if needed. Once the user confirms edits are done (or says no edits needed), the agent calls `video_pipeline_apply_reviewed_metadata` immediately — do not wait for additional permission.
+- Ask the user to review/edit the YAML if needed. Once the user confirms edits are done (or says no edits needed), the agent calls `video_pipeline_apply_reviewed_metadata` with `sourceYamlPath` immediately — do not wait for additional permission.
 - After apply succeeds, ask user whether to proceed to Stage 3 (Move + Human review).

@@ -138,8 +138,8 @@ flowchart TD
     S2_EXTRACT_OUT["llm_filename_extract_output_*.jsonl"]
     S2_EXPORT["video_pipeline_export_program_yaml<br/>ヒントYAML生成"]
     S2_YAML["program_aliases_review_*.yaml"]
-    S2_GATE{{"ヒューマンレビュー<br/>メタデータ確認・JSONL編集"}}
-    S2_APPLY["video_pipeline_apply_reviewed_metadata<br/>JSONL → DB書き込み"]
+    S2_GATE{{"ヒューマンレビュー<br/>メタデータ確認・YAML編集"}}
+    S2_APPLY["video_pipeline_apply_reviewed_metadata<br/>YAML/JSONL → DB書き込み"]
     S2_DB[("path_metadata<br/>human_reviewed=true")]
 
     S1_GATE -->|承認| S2_REEXTRACT
@@ -148,7 +148,8 @@ flowchart TD
     S2_EXTRACT_OUT --> S2_EXPORT --> S2_YAML
     S2_YAML -.->|次回reextractのヒント入力| S2_REEXTRACT
     S2_EXTRACT_OUT --> S2_GATE
-    S2_GATE -->|編集済JSONL| S2_APPLY --> S2_DB
+    S2_YAML -->|sourceYamlPath| S2_APPLY
+    S2_GATE -->|編集済YAML/JSONL| S2_APPLY --> S2_DB
 
     %% ── Stage 3: Move ──
     S3_RUN["video_pipeline_analyze_and_move_videos<br/>apply=true"]
@@ -566,17 +567,15 @@ flowchart TD
     subgraph "② レビュー (Review)"
         EXPORT_YAML["export_program_yaml"]
         REVIEW_YAML["program_aliases_review_*.yaml<br/>(人間が編集)"]
-        EDITED_JSONL["*_reviewed_*.jsonl<br/>(互換: JSONL編集時のみ)"]
         HUMAN["👤 ヒューマンレビュー"]
     end
 
     subgraph "③ 適用 (Apply)"
-        APPLY_REV["apply_reviewed_metadata<br/>source='human_reviewed'"]
-        STAMPED["tmp reviewed_metadata_apply_*.jsonl<br/>(apply後に自動削除)"]
+        APPLY_REV["apply_reviewed_metadata<br/>sourceYamlPath (推奨)<br/>source='human_reviewed'"]
     end
 
     subgraph "④ 再配置 (Relocate)"
-        RELOCATE["relocate_existing_files<br/>source='human_reviewed' のみ信頼"]
+        RELOCATE["relocate_existing_files"]
     end
 
     DB[("mediaops.sqlite<br/>path_metadata")]
@@ -587,16 +586,15 @@ flowchart TD
     OUTPUT_JSONL --> APPLY_LLM -->|upsert| DB
 
     OUTPUT_JSONL --> EXPORT_YAML --> REVIEW_YAML
-    OUTPUT_JSONL -.->|コピー＋編集| EDITED_JSONL
-    REVIEW_YAML -.->|参照しながら| HUMAN
-    HUMAN -->|編集| EDITED_JSONL
+    REVIEW_YAML -->|YAML編集| HUMAN
+    HUMAN -->|編集済YAML| APPLY_REV
 
-    EDITED_JSONL --> APPLY_REV --> STAMPED -->|upsert| DB
-    DB -->|source=human_reviewed| RELOCATE
+    APPLY_REV -->|YAML alias展開 + upsert| DB
+    DB --> RELOCATE
 
-    OUTPUT_JSONL -.->|DB反映確認後| ARCHIVE
-    INPUT_JSONL -.->|DB反映確認後| ARCHIVE
-    REVIEW_YAML -.->|DB反映確認後| ARCHIVE
+    OUTPUT_JSONL -.->|apply成功後| ARCHIVE
+    INPUT_JSONL -.->|apply成功後| ARCHIVE
+    REVIEW_YAML -.->|apply成功後| ARCHIVE
 ```
 
 #### source 値の遷移
