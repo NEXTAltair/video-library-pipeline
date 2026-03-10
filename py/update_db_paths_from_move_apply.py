@@ -8,6 +8,7 @@ import json
 import os
 import uuid
 
+from db_helpers import reconstruct_path_metadata, split_path_metadata
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from pathscan_common import iter_jsonl, now_iso, split_win
 
@@ -25,28 +26,33 @@ def _json_obj(s: str | None) -> dict:
 def _metadata_rank(row) -> tuple[int, str]:
     if row is None:
         return (-1, "")
-    data = _json_obj(row["data_json"])
-    human_reviewed = bool(data.get("human_reviewed"))
+    human_reviewed = bool(row["human_reviewed"]) if row["human_reviewed"] is not None else False
     return (1 if human_reviewed else 0, str(row["updated_at"] or ""))
 
 
 def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
     src = con.execute(
-        "SELECT path_id, source, data_json, updated_at FROM path_metadata WHERE path_id=?",
+        """SELECT path_id, source, data_json, updated_at,
+                  program_title, air_date, needs_review, normalized_program_key,
+                  episode_no, subtitle, broadcaster, human_reviewed
+           FROM path_metadata WHERE path_id=?""",
         (src_path_id,),
     ).fetchone()
     if src is None:
         return "none"
     dst = con.execute(
-        "SELECT path_id, source, data_json, updated_at FROM path_metadata WHERE path_id=?",
+        """SELECT path_id, source, data_json, updated_at,
+                  program_title, air_date, needs_review, normalized_program_key,
+                  episode_no, subtitle, broadcaster, human_reviewed
+           FROM path_metadata WHERE path_id=?""",
         (dst_path_id,),
     ).fetchone()
     if dst is None:
         con.execute("UPDATE path_metadata SET path_id=? WHERE path_id=?", (dst_path_id, src_path_id))
         return "moved_src_to_dst"
 
-    src_md = _json_obj(src["data_json"])
-    dst_md = _json_obj(dst["data_json"])
+    src_md = reconstruct_path_metadata(src)
+    dst_md = reconstruct_path_metadata(dst)
     src_hist = src_md.get("source_history") if isinstance(src_md.get("source_history"), list) else []
     dst_hist = dst_md.get("source_history") if isinstance(dst_md.get("source_history"), list) else []
     combined_hist = list(dst_hist) + [h for h in src_hist if h not in dst_hist]
@@ -54,16 +60,38 @@ def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
     preferred = src if _metadata_rank(src) > _metadata_rank(dst) else dst
     if preferred["path_id"] == src_path_id:
         src_md["source_history"] = combined_hist
+        promoted, data_json = split_path_metadata(src_md)
         con.execute(
-            "UPDATE path_metadata SET source=?, data_json=?, updated_at=? WHERE path_id=?",
-            (src["source"], json.dumps(src_md, ensure_ascii=False), src["updated_at"], dst_path_id),
+            """UPDATE path_metadata SET source=?, data_json=?, updated_at=?,
+                 program_title=?, air_date=?, needs_review=?, normalized_program_key=?,
+                 episode_no=?, subtitle=?, broadcaster=?, human_reviewed=?
+               WHERE path_id=?""",
+            (
+                src["source"], data_json, src["updated_at"],
+                promoted.get("program_title"), promoted.get("air_date"),
+                promoted.get("needs_review", 0), promoted.get("normalized_program_key"),
+                promoted.get("episode_no"), promoted.get("subtitle"),
+                promoted.get("broadcaster"), promoted.get("human_reviewed", 0),
+                dst_path_id,
+            ),
         )
         action = "src_overwrote_dst"
     else:
         dst_md["source_history"] = combined_hist
+        promoted, data_json = split_path_metadata(dst_md)
         con.execute(
-            "UPDATE path_metadata SET data_json=?, updated_at=? WHERE path_id=?",
-            (json.dumps(dst_md, ensure_ascii=False), dst["updated_at"], dst_path_id),
+            """UPDATE path_metadata SET data_json=?, updated_at=?,
+                 program_title=?, air_date=?, needs_review=?, normalized_program_key=?,
+                 episode_no=?, subtitle=?, broadcaster=?, human_reviewed=?
+               WHERE path_id=?""",
+            (
+                data_json, dst["updated_at"],
+                promoted.get("program_title"), promoted.get("air_date"),
+                promoted.get("needs_review", 0), promoted.get("normalized_program_key"),
+                promoted.get("episode_no"), promoted.get("subtitle"),
+                promoted.get("broadcaster"), promoted.get("human_reviewed", 0),
+                dst_path_id,
+            ),
         )
         action = "kept_dst_with_history"
     con.execute("DELETE FROM path_metadata WHERE path_id=?", (src_path_id,))

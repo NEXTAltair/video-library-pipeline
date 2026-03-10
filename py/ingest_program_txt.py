@@ -17,10 +17,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from db_helpers import split_broadcast_data
 from edcb_program_parser import datetime_key_from_epg, match_key_from_epg, parse_program_txt
 from epg_common import broadcast_id_for, normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from pathscan_common import now_iso
+from series_name_extractor import series_program_id, series_program_key
 
 
 def find_program_txt_files(ts_root: Path) -> list[Path]:
@@ -90,6 +92,7 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--migrate-match-keys", action="store_true", help="Re-generate match_keys for existing broadcast records")
     ap.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
+    ap.add_argument("--aliases", default="", help="Path to program_aliases.yaml for series-level grouping")
     args = ap.parse_args()
 
     if args.migrate_match_keys:
@@ -104,6 +107,9 @@ def main() -> int:
     ts_root = Path(args.ts_root).resolve()
     if not ts_root.exists():
         raise SystemExit(f"TS root not found: {ts_root}")
+
+    # Auto-detect aliases path
+    aliases_path = args.aliases or str(Path(__file__).resolve().parent.parent / "rules" / "program_aliases.yaml")
 
     con = connect_db(args.db)
     create_schema_if_needed(con)
@@ -136,10 +142,14 @@ def main() -> int:
 
             match_key = match_key_from_epg(epg)
             dt_key = datetime_key_from_epg(epg)
-            program_key = normalize_program_key(str(epg.get("official_title") or ""))
-            program_id = program_id_for(program_key)
+            official_title = str(epg.get("official_title") or "").strip()
+
+            # Series-level program key
+            s_key = series_program_key(official_title, aliases_path=aliases_path)
+            s_pid = program_id_for(s_key)
+
             fallback_seed = "::".join([
-                program_id,
+                s_pid,
                 str(epg.get("air_date") or ""),
                 str(epg.get("start_time") or ""),
                 str(epg.get("broadcaster") or ""),
@@ -162,7 +172,7 @@ def main() -> int:
                 "end_time": epg["end_time"],
                 "broadcaster": epg["broadcaster"],
                 "broadcaster_raw": epg["broadcaster_raw"],
-                "official_title": epg["official_title"],
+                "official_title": official_title,
                 "title_raw": epg["title_raw"],
                 "annotations": epg["annotations"],
                 "is_rebroadcast_flag": epg["is_rebroadcast_flag"],
@@ -175,9 +185,9 @@ def main() -> int:
             }
 
             rows_to_insert.append({
-                "program_id": program_id,
-                "program_key": program_key,
-                "canonical_title": str(epg.get("official_title") or "").strip() or "UNKNOWN",
+                "program_id": s_pid,
+                "program_key": s_key,
+                "canonical_title": official_title or "UNKNOWN",
                 "broadcast_id": broadcast_id,
                 "match_key": match_key,
                 "air_date": epg.get("air_date"),
@@ -224,10 +234,15 @@ def main() -> int:
                 (row["program_id"], row["program_key"], row["canonical_title"], ts_now),
             )
 
+            # Split broadcast data into promoted columns + residual data_json
+            promoted, data_json = split_broadcast_data(row["data"])
+
             con.execute(
                 """
-                INSERT INTO broadcasts (broadcast_id, program_id, air_date, start_time, end_time, broadcaster, match_key, data_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO broadcasts (broadcast_id, program_id, air_date, start_time,
+                  end_time, broadcaster, match_key, data_json, created_at,
+                  is_rebroadcast_flag, epg_genres, description, official_title, annotations)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(broadcast_id) DO UPDATE SET
                   program_id=excluded.program_id,
                   air_date=excluded.air_date,
@@ -235,7 +250,12 @@ def main() -> int:
                   end_time=excluded.end_time,
                   broadcaster=excluded.broadcaster,
                   match_key=excluded.match_key,
-                  data_json=excluded.data_json
+                  data_json=excluded.data_json,
+                  is_rebroadcast_flag=excluded.is_rebroadcast_flag,
+                  epg_genres=excluded.epg_genres,
+                  description=excluded.description,
+                  official_title=excluded.official_title,
+                  annotations=excluded.annotations
                 """,
                 (
                     row["broadcast_id"],
@@ -245,8 +265,13 @@ def main() -> int:
                     row["end_time"],
                     row["broadcaster"],
                     row["match_key"],
-                    json.dumps(row["data"], ensure_ascii=False),
+                    data_json,
                     ts_now,
+                    promoted.get("is_rebroadcast_flag"),
+                    promoted.get("epg_genres"),
+                    promoted.get("description"),
+                    promoted.get("official_title"),
+                    promoted.get("annotations"),
                 ),
             )
             ingested += 1

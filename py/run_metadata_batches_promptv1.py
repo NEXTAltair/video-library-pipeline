@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from edcb_program_parser import match_key_from_filename, datetime_key_from_filename
+from db_helpers import reconstruct_broadcast_data, reconstruct_path_metadata
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
 from source_history import make_entry
@@ -452,19 +453,16 @@ class _EpgCache:
         try:
             rows = con.execute(
                 """
-                SELECT b.broadcast_id, b.program_id, b.match_key, b.data_json
+                SELECT b.broadcast_id, b.program_id, b.match_key, b.data_json,
+                       b.is_rebroadcast_flag, b.epg_genres, b.description,
+                       b.official_title, b.annotations
                 FROM broadcasts b
                 """,
             ).fetchall()
         except sqlite3.Error:
             return
         for row in rows:
-            try:
-                data = json.loads(row[3] or "{}")
-            except Exception:
-                continue
-            if not isinstance(data, dict):
-                continue
+            data = reconstruct_broadcast_data(row)
             data["broadcast_id"] = row[0]
             data["program_id"] = row[1]
             mk = row[2] or data.get("match_key")
@@ -605,7 +603,8 @@ def _get_latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | No
     try:
         row = cur.execute(
             """
-            SELECT data_json
+            SELECT data_json, program_title, air_date, needs_review,
+                   normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
             FROM path_metadata
             WHERE path_id=?
             ORDER BY updated_at DESC
@@ -617,11 +616,7 @@ def _get_latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | No
         return None
     if not row:
         return None
-    try:
-        d = json.loads(row[0])
-        return d if isinstance(d, dict) else None
-    except Exception:
-        return None
+    return reconstruct_path_metadata(row)
 
 
 def _build_locked_row(existing: dict, rec: dict, model: str, extraction_version: str) -> dict:

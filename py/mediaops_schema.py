@@ -1,4 +1,4 @@
-"""SQLite schema helpers for mediaops.sqlite (v1).
+"""SQLite schema helpers for mediaops.sqlite (v3).
 
 This module intentionally uses only the Python standard library.
 It preserves the existing table/index/constraint shapes used by the pipeline.
@@ -126,7 +126,26 @@ DDL_STATEMENTS = [
       source TEXT NOT NULL,
       data_json TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      program_title TEXT,
+      air_date TEXT,
+      needs_review INTEGER NOT NULL DEFAULT 0,
+      normalized_program_key TEXT,
+      episode_no TEXT,
+      subtitle TEXT,
+      broadcaster TEXT,
+      human_reviewed INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (path_id) REFERENCES paths(path_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_path_metadata_program_title ON path_metadata(program_title)",
+    "CREATE INDEX IF NOT EXISTS idx_path_metadata_npk ON path_metadata(normalized_program_key)",
+    "CREATE INDEX IF NOT EXISTS idx_path_metadata_air_date ON path_metadata(air_date)",
+    "CREATE INDEX IF NOT EXISTS idx_path_metadata_needs_review ON path_metadata(needs_review)",
+    """
+    CREATE TABLE IF NOT EXISTS franchises (
+      franchise_id TEXT PRIMARY KEY,
+      franchise_name TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
     )
     """,
     """
@@ -134,9 +153,12 @@ DDL_STATEMENTS = [
       program_id TEXT PRIMARY KEY,
       program_key TEXT NOT NULL UNIQUE,
       canonical_title TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      franchise_id TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (franchise_id) REFERENCES franchises(franchise_id)
     )
     """,
+    "CREATE INDEX IF NOT EXISTS idx_programs_franchise ON programs(franchise_id)",
     """
     CREATE TABLE IF NOT EXISTS broadcasts (
       broadcast_id TEXT PRIMARY KEY,
@@ -148,11 +170,17 @@ DDL_STATEMENTS = [
       match_key TEXT UNIQUE,
       data_json TEXT,
       created_at TEXT NOT NULL,
+      is_rebroadcast_flag INTEGER,
+      epg_genres TEXT,
+      description TEXT,
+      official_title TEXT,
+      annotations TEXT,
       FOREIGN KEY (program_id) REFERENCES programs(program_id)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_broadcasts_program ON broadcasts(program_id)",
     "CREATE INDEX IF NOT EXISTS idx_broadcasts_air_date ON broadcasts(air_date)",
+    "CREATE INDEX IF NOT EXISTS idx_broadcasts_official_title ON broadcasts(official_title)",
     """
     CREATE TABLE IF NOT EXISTS path_programs (
       path_id TEXT NOT NULL,
@@ -184,13 +212,22 @@ DDL_STATEMENTS = [
       air_date TEXT,
       broadcaster TEXT,
       added_at TEXT NOT NULL,
+      broadcast_id TEXT,
       CONSTRAINT uq_bgm UNIQUE (group_id, path_id),
       FOREIGN KEY (group_id) REFERENCES broadcast_groups(group_id),
-      FOREIGN KEY (path_id) REFERENCES paths(path_id)
+      FOREIGN KEY (path_id) REFERENCES paths(path_id),
+      FOREIGN KEY (broadcast_id) REFERENCES broadcasts(broadcast_id)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_bgm_group ON broadcast_group_members(group_id)",
     "CREATE INDEX IF NOT EXISTS idx_bgm_path ON broadcast_group_members(path_id)",
+    "CREATE INDEX IF NOT EXISTS idx_bgm_broadcast ON broadcast_group_members(broadcast_id)",
+    """
+    CREATE TABLE IF NOT EXISTS schema_version (
+      version INTEGER NOT NULL,
+      migrated_at TEXT NOT NULL
+    )
+    """,
 ]
 
 _FILES_NEW_COLUMNS: list[tuple[str, str]] = [
@@ -202,12 +239,102 @@ _FILES_NEW_COLUMNS: list[tuple[str, str]] = [
     ("fps", "TEXT"),
 ]
 
+_PATH_METADATA_NEW_COLUMNS: list[tuple[str, str, str]] = [
+    ("program_title", "TEXT", ""),
+    ("air_date", "TEXT", ""),
+    ("needs_review", "INTEGER NOT NULL DEFAULT 0", ""),
+    ("normalized_program_key", "TEXT", ""),
+    ("episode_no", "TEXT", ""),
+    ("subtitle", "TEXT", ""),
+    ("broadcaster", "TEXT", ""),
+    ("human_reviewed", "INTEGER NOT NULL DEFAULT 0", ""),
+]
+
+_BROADCASTS_NEW_COLUMNS: list[tuple[str, str, str]] = [
+    ("is_rebroadcast_flag", "INTEGER", ""),
+    ("epg_genres", "TEXT", ""),
+    ("description", "TEXT", ""),
+    ("official_title", "TEXT", ""),
+    ("annotations", "TEXT", ""),
+]
+
+_PROGRAMS_NEW_COLUMNS: list[tuple[str, str, str]] = [
+    ("franchise_id", "TEXT", ""),
+]
+
+_BGM_NEW_COLUMNS: list[tuple[str, str, str]] = [
+    ("broadcast_id", "TEXT", ""),
+]
+
+
+def _add_columns_if_missing(con: sqlite3.Connection, table: str, columns: list[tuple[str, str, str]]) -> None:
+    existing = {str(row[1]) for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+    for col, typ, _default in columns:
+        if col not in existing:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+
 
 def _migrate_files_columns(con: sqlite3.Connection) -> None:
     existing = {str(row[1]) for row in con.execute("PRAGMA table_info(files)").fetchall()}
     for col, typ in _FILES_NEW_COLUMNS:
         if col not in existing:
             con.execute(f"ALTER TABLE files ADD COLUMN {col} {typ}")
+
+
+def _table_exists(con: sqlite3.Connection, name: str) -> bool:
+    row = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+def _migrate_to_v3(con: sqlite3.Connection) -> None:
+    """Add v3 columns to existing tables and create new tables."""
+    # Check if already migrated
+    if _table_exists(con, "schema_version"):
+        row = con.execute("SELECT MAX(version) FROM schema_version").fetchone()
+        if row and row[0] is not None and int(row[0]) >= 3:
+            return
+
+    # Create new tables (franchises, schema_version) if not exist
+    if not _table_exists(con, "franchises"):
+        con.execute("""
+            CREATE TABLE franchises (
+              franchise_id TEXT PRIMARY KEY,
+              franchise_name TEXT NOT NULL UNIQUE,
+              created_at TEXT NOT NULL
+            )
+        """)
+    if not _table_exists(con, "schema_version"):
+        con.execute("""
+            CREATE TABLE schema_version (
+              version INTEGER NOT NULL,
+              migrated_at TEXT NOT NULL
+            )
+        """)
+
+    # Add new columns to existing tables
+    if _table_exists(con, "path_metadata"):
+        _add_columns_if_missing(con, "path_metadata", _PATH_METADATA_NEW_COLUMNS)
+    if _table_exists(con, "broadcasts"):
+        _add_columns_if_missing(con, "broadcasts", _BROADCASTS_NEW_COLUMNS)
+    if _table_exists(con, "programs"):
+        _add_columns_if_missing(con, "programs", _PROGRAMS_NEW_COLUMNS)
+    if _table_exists(con, "broadcast_group_members"):
+        _add_columns_if_missing(con, "broadcast_group_members", _BGM_NEW_COLUMNS)
+
+    # Create new indexes (IF NOT EXISTS is safe)
+    _v3_indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_path_metadata_program_title ON path_metadata(program_title)",
+        "CREATE INDEX IF NOT EXISTS idx_path_metadata_npk ON path_metadata(normalized_program_key)",
+        "CREATE INDEX IF NOT EXISTS idx_path_metadata_air_date ON path_metadata(air_date)",
+        "CREATE INDEX IF NOT EXISTS idx_path_metadata_needs_review ON path_metadata(needs_review)",
+        "CREATE INDEX IF NOT EXISTS idx_broadcasts_official_title ON broadcasts(official_title)",
+        "CREATE INDEX IF NOT EXISTS idx_programs_franchise ON programs(franchise_id)",
+        "CREATE INDEX IF NOT EXISTS idx_bgm_broadcast ON broadcast_group_members(broadcast_id)",
+    ]
+    for idx in _v3_indexes:
+        con.execute(idx)
 
 
 def connect_db(db_path: str) -> sqlite3.Connection:
@@ -221,6 +348,7 @@ def create_schema_if_needed(con: sqlite3.Connection) -> None:
     for stmt in DDL_STATEMENTS:
         con.execute(stmt)
     _migrate_files_columns(con)
+    _migrate_to_v3(con)
 
 
 def begin_immediate(con: sqlite3.Connection) -> None:

@@ -23,7 +23,8 @@ def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
     cur = con.cursor()
     row = cur.execute(
         """
-        SELECT data_json
+        SELECT data_json, program_title, air_date, needs_review,
+               normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
         FROM path_metadata
         WHERE path_id=?
         ORDER BY updated_at DESC
@@ -33,10 +34,8 @@ def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
     ).fetchone()
     if not row:
         return None
-    try:
-        return json.loads(row[0])
-    except Exception:
-        return None
+    from db_helpers import reconstruct_path_metadata
+    return reconstruct_path_metadata(row)
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")

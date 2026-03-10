@@ -22,6 +22,7 @@ import hashlib
 import json
 from typing import Any
 
+from db_helpers import reconstruct_path_metadata
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
 from pathscan_common import now_iso
 
@@ -105,11 +106,11 @@ def main() -> int:
 
     errors: list[str] = []
     try:
-        # Load EPG rebroadcast flags via path_programs -> broadcasts
+        # Load EPG rebroadcast flags via path_programs -> broadcasts (use promoted column)
         epg_rows = fetchall(
             con,
             """
-            SELECT pp.path_id, b.data_json
+            SELECT pp.path_id, b.is_rebroadcast_flag
             FROM path_programs pp
             JOIN broadcasts b ON b.broadcast_id = pp.broadcast_id
             WHERE pp.broadcast_id IS NOT NULL
@@ -119,7 +120,10 @@ def main() -> int:
         path_rebroadcast_flag: dict[str, bool | None] = {}
         for r in epg_rows:
             pid = str(r["path_id"])
-            flag = _extract_rebroadcast_flag(r["data_json"])
+            raw = r["is_rebroadcast_flag"]
+            flag: bool | None = None
+            if raw is not None:
+                flag = bool(raw)
             if flag is True:
                 path_rebroadcast_flag[pid] = True
             elif pid not in path_rebroadcast_flag:
@@ -129,7 +133,10 @@ def main() -> int:
         md_rows = fetchall(
             con,
             """
-            SELECT pm.path_id, pm.data_json, p.path
+            SELECT pm.path_id, pm.data_json, p.path,
+                   pm.program_title, pm.air_date, pm.needs_review,
+                   pm.normalized_program_key, pm.episode_no, pm.subtitle,
+                   pm.broadcaster, pm.human_reviewed
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
             WHERE pm.source != 'edcb_epg'
@@ -142,13 +149,7 @@ def main() -> int:
         skipped_no_key = 0
         for r in md_rows:
             path_id = str(r["path_id"])
-            try:
-                md = json.loads(str(r["data_json"]))
-            except Exception:
-                errors.append(f"invalid metadata json: path_id={path_id}")
-                continue
-            if not isinstance(md, dict):
-                continue
+            md = reconstruct_path_metadata(r)
             ep_key = _build_episode_key(md)
             if not ep_key:
                 skipped_no_key += 1
@@ -237,16 +238,24 @@ def main() -> int:
                     db_inserted_groups += 1
 
                     for entry in entries_classified:
+                        # Lookup broadcast_id from path_programs
+                        bid_row = con.execute(
+                            "SELECT broadcast_id FROM path_programs WHERE path_id=? AND broadcast_id IS NOT NULL LIMIT 1",
+                            (entry["path_id"],),
+                        ).fetchone()
+                        broadcast_id = bid_row["broadcast_id"] if bid_row else None
+
                         con.execute(
                             """
                             INSERT INTO broadcast_group_members
-                              (group_id, path_id, broadcast_type, air_date, broadcaster, added_at)
-                            VALUES (?, ?, ?, ?, ?, ?)
+                              (group_id, path_id, broadcast_type, air_date, broadcaster, added_at, broadcast_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT(group_id, path_id) DO UPDATE SET
                               broadcast_type = excluded.broadcast_type,
                               air_date = excluded.air_date,
                               broadcaster = excluded.broadcaster,
-                              added_at = excluded.added_at
+                              added_at = excluded.added_at,
+                              broadcast_id = excluded.broadcast_id
                             """,
                             (
                                 group_id,
@@ -255,6 +264,7 @@ def main() -> int:
                                 entry["air_date"] or None,
                                 entry["broadcaster"],
                                 now_iso(),
+                                broadcast_id,
                             ),
                         )
                         db_inserted_members += 1

@@ -57,25 +57,47 @@ def build_drive_map(obj: dict[str, str] | None) -> dict[str, str]:
     return out
 
 
-def metadata_row_needs_queue(data_json: str | None) -> bool:
-    if not data_json:
+def metadata_row_needs_queue(row) -> bool:
+    """Check if a path_metadata row needs re-queuing for extraction.
+
+    Accepts a sqlite3.Row with promoted columns (program_title, air_date, needs_review, etc.)
+    or a raw data_json string for backward compat.
+    """
+    if row is None:
         return True
-    try:
-        md = json.loads(data_json)
-        if not isinstance(md, dict):
+    # If it's a string, use legacy parsing
+    if isinstance(row, str):
+        try:
+            md = json.loads(row)
+            if not isinstance(md, dict):
+                return True
+        except Exception:
             return True
-    except Exception:
+        missing = [k for k in DB_CONTRACT_REQUIRED if k not in md]
+        if missing:
+            return True
+        if not isinstance(md.get("needs_review"), bool):
+            return True
+        if md.get("needs_review") is True:
+            return True
+        if not md.get("program_title"):
+            return True
+        if md.get("air_date") is None:
+            return True
+        return False
+
+    # Use promoted columns from the row
+    program_title = row["program_title"] if "program_title" in row.keys() else None
+    air_date = row["air_date"] if "air_date" in row.keys() else None
+    needs_review = row["needs_review"] if "needs_review" in row.keys() else None
+
+    if not program_title:
         return True
-    missing = [k for k in DB_CONTRACT_REQUIRED if k not in md]
-    if missing:
+    if air_date is None:
         return True
-    if not isinstance(md.get("needs_review"), bool):
+    if needs_review is None:
         return True
-    if md.get("needs_review") is True:
-        return True
-    if not md.get("program_title"):
-        return True
-    if md.get("air_date") is None:
+    if bool(needs_review):
         return True
     return False
 
@@ -514,7 +536,8 @@ def main() -> int:
                 md_row = fetchone(
                     con,
                     """
-                    SELECT data_json
+                    SELECT data_json, program_title, air_date, needs_review,
+                           normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
                     FROM path_metadata
                     WHERE path_id=?
                     ORDER BY updated_at DESC
@@ -522,8 +545,7 @@ def main() -> int:
                     """,
                     (tr["path_id"],),
                 )
-                data_json = str(md_row["data_json"]) if md_row and "data_json" in md_row.keys() else None
-                if metadata_row_needs_queue(data_json):
+                if metadata_row_needs_queue(md_row):
                     queue_candidates.append(tr)
             metadata_queue_planned_count = len(queue_candidates)
             if args.apply:

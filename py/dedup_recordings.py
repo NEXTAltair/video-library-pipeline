@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
+from db_helpers import reconstruct_path_metadata
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
 from move_apply_stats import aggregate_move_apply
 from pathscan_common import (
@@ -355,7 +356,10 @@ def main() -> int:
         md_rows = fetchall(
             con,
             """
-            SELECT pm.path_id, pm.data_json, p.path
+            SELECT pm.path_id, pm.data_json, p.path,
+                   pm.program_title, pm.air_date, pm.needs_review,
+                   pm.normalized_program_key, pm.episode_no, pm.subtitle,
+                   pm.broadcaster, pm.human_reviewed
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
             WHERE pm.source != 'edcb_epg'
@@ -368,13 +372,7 @@ def main() -> int:
         for r in md_rows:
             path_id = str(r["path_id"])
             path_val = canonicalize_windows_path(str(r["path"]))
-            try:
-                md = json.loads(str(r["data_json"]))
-            except Exception:
-                errors.append(f"invalid metadata json: path_id={path_id}")
-                continue
-            if not isinstance(md, dict):
-                continue
+            md = reconstruct_path_metadata(r)
             group_key, reason = build_group_key(md)
             if not group_key:
                 dropped_for_missing_key += 1

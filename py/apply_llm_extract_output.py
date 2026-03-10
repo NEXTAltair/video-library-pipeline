@@ -21,6 +21,7 @@ import sys
 
 sys.path.insert(0, str(__file__).rsplit("/", 1)[0])  # ensure local imports work
 
+from db_helpers import reconstruct_path_metadata, split_path_metadata
 from genre_resolver import resolve_genre
 from franchise_resolver import resolve_franchise
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
@@ -147,16 +148,32 @@ def main() -> int:
             rec["franchise"] = resolve_franchise(rec)
 
         # Merge with existing data in DB
-        existing_row = fetchone(con, "SELECT data_json FROM path_metadata WHERE path_id = ?", (path_id,))
-        if existing_row and existing_row["data_json"]:
-            existing_data = json.loads(existing_row["data_json"])
+        existing_row = fetchone(
+            con,
+            """SELECT source, data_json, program_title, air_date, needs_review,
+                      normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
+               FROM path_metadata WHERE path_id = ?""",
+            (path_id,),
+        )
+        if existing_row:
+            existing_data = reconstruct_path_metadata(existing_row)
             rec["source_history"] = [make_entry(args.source, [k for k, v in rec.items() if v is not None and k != "source_history"])]
             rec = merge_data(existing_data, rec, args.source)
         else:
             rec["source_history"] = [make_entry(args.source, [k for k, v in rec.items() if v is not None and k != "source_history"])]
 
-        data_json = json.dumps(rec, ensure_ascii=False)
-        to_upsert.append((path_id, args.source, data_json, updated_at))
+        promoted, data_json = split_path_metadata(rec)
+        to_upsert.append((
+            path_id, args.source, data_json, updated_at,
+            promoted.get("program_title"),
+            promoted.get("air_date"),
+            promoted.get("needs_review", 0),
+            promoted.get("normalized_program_key"),
+            promoted.get("episode_no"),
+            promoted.get("subtitle"),
+            promoted.get("broadcaster"),
+            promoted.get("human_reviewed", 0),
+        ))
 
     if validation_errors:
         for e in validation_errors[:20]:
@@ -184,7 +201,7 @@ def main() -> int:
         placeholders = ",".join("?" * len(pids))
         row = con.execute(
             f"SELECT COUNT(*) FROM path_metadata WHERE path_id IN ({placeholders})"
-            f" AND json_extract(data_json, '$.human_reviewed') = 1",
+            f" AND human_reviewed = 1",
             pids,
         ).fetchone()
         human_reviewed_protected = row[0] if row else 0
@@ -194,13 +211,23 @@ def main() -> int:
         if to_upsert:
             con.executemany(
                 """
-                INSERT INTO path_metadata (path_id, source, data_json, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO path_metadata (path_id, source, data_json, updated_at,
+                  program_title, air_date, needs_review, normalized_program_key,
+                  episode_no, subtitle, broadcaster, human_reviewed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(path_id) DO UPDATE SET
                   source=excluded.source,
                   data_json=excluded.data_json,
-                  updated_at=excluded.updated_at
-                WHERE json_extract(path_metadata.data_json, '$.human_reviewed') IS NOT 1
+                  updated_at=excluded.updated_at,
+                  program_title=excluded.program_title,
+                  air_date=excluded.air_date,
+                  needs_review=excluded.needs_review,
+                  normalized_program_key=excluded.normalized_program_key,
+                  episode_no=excluded.episode_no,
+                  subtitle=excluded.subtitle,
+                  broadcaster=excluded.broadcaster,
+                  human_reviewed=excluded.human_reviewed
+                WHERE path_metadata.human_reviewed IS NOT 1
                 """,
                 to_upsert,
             )

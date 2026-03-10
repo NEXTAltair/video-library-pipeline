@@ -16,7 +16,8 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 def latest_llm_row(cur: sqlite3.Cursor, path_id: str):
     return cur.execute(
         """
-        SELECT data_json
+        SELECT data_json, program_title, air_date, needs_review,
+               normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
         FROM path_metadata
         WHERE path_id=?
         ORDER BY updated_at DESC
@@ -89,16 +90,14 @@ def main() -> int:
                 if md_row is None:
                     pick = True
                 else:
-                    try:
-                        md = json.loads(md_row[0])
-                    except Exception:
-                        md = {}
-                    missing_contract = any(k not in md for k in DB_CONTRACT_REQUIRED)
+                    # Use promoted columns if available
+                    program_title = md_row[1]  # program_title
+                    air_date = md_row[2]        # air_date
+                    needs_review = md_row[3]    # needs_review
                     pick = (
-                        missing_contract
-                        or bool(md.get("needs_review"))
-                        or (md.get("air_date") is None)
-                        or (not md.get("program_title"))
+                        not program_title
+                        or air_date is None
+                        or bool(needs_review)
                     )
 
                 if not pick:

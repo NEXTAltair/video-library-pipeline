@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from db_helpers import reconstruct_path_metadata
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from move_apply_stats import aggregate_move_apply
 from path_placement_rules import (
@@ -54,7 +55,8 @@ def latest_metadata_for_path(con, path_id: str) -> tuple[dict[str, Any] | None, 
     row = fetchone(
         con,
         """
-        SELECT source, data_json
+        SELECT source, data_json, program_title, air_date, needs_review,
+               normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
         FROM path_metadata
         WHERE path_id=?
         ORDER BY updated_at DESC
@@ -64,11 +66,8 @@ def latest_metadata_for_path(con, path_id: str) -> tuple[dict[str, Any] | None, 
     )
     if not row:
         return None, None
-    try:
-        md = json.loads(str(row["data_json"]))
-    except Exception:
-        return None, str(row["source"]) if row["source"] is not None else None
-    return md if isinstance(md, dict) else None, str(row["source"]) if row["source"] is not None else None
+    md = reconstruct_path_metadata(row)
+    return md if md else None, str(row["source"]) if row["source"] is not None else None
 
 
 def metadata_needs_queue(md: dict[str, Any] | None) -> bool:

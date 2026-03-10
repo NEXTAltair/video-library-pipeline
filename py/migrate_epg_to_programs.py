@@ -8,9 +8,11 @@ from __future__ import annotations
 import argparse
 import json
 
-from epg_common import broadcast_id_for, normalize_program_key, program_id_for
+from db_helpers import split_broadcast_data
+from epg_common import broadcast_id_for
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from pathscan_common import now_iso
+from series_name_extractor import series_program_id, series_program_key
 
 
 def main() -> int:
@@ -18,10 +20,13 @@ def main() -> int:
     ap.add_argument("--db", required=True)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--delete-legacy", action="store_true", help="Delete migrated source='edcb_epg' rows from path_metadata")
+    ap.add_argument("--aliases", default="", help="Path to program_aliases.yaml for series-level grouping")
     args = ap.parse_args()
 
     con = connect_db(args.db)
     create_schema_if_needed(con)
+
+    aliases_path = args.aliases or None
 
     rows = con.execute(
         """
@@ -55,9 +60,12 @@ def main() -> int:
                 continue
 
             match_key = str(data.get("match_key") or "").strip()
-            program_key = normalize_program_key(title)
-            program_id = program_id_for(program_key)
-            b_seed = f"{program_id}::{data.get('air_date') or ''}::{data.get('start_time') or ''}::{data.get('broadcaster') or ''}"
+
+            # Series-level program
+            s_key = series_program_key(title, aliases_path=aliases_path)
+            s_pid = series_program_id(title, aliases_path=aliases_path)
+
+            b_seed = f"{s_pid}::{data.get('air_date') or ''}::{data.get('start_time') or ''}::{data.get('broadcaster') or ''}"
             broadcast_id = broadcast_id_for(match_key, b_seed)
             ts = now_iso()
 
@@ -69,12 +77,18 @@ def main() -> int:
                     ON CONFLICT(program_id) DO UPDATE SET
                       canonical_title=excluded.canonical_title
                     """,
-                    (program_id, program_key, title, ts),
+                    (s_pid, s_key, title, ts),
                 )
+
+                # Split broadcast data into promoted columns + residual
+                promoted, residual_json = split_broadcast_data(data)
+
                 con.execute(
                     """
-                    INSERT INTO broadcasts (broadcast_id, program_id, air_date, start_time, end_time, broadcaster, match_key, data_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO broadcasts (broadcast_id, program_id, air_date, start_time,
+                      end_time, broadcaster, match_key, data_json, created_at,
+                      is_rebroadcast_flag, epg_genres, description, official_title, annotations)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(broadcast_id) DO UPDATE SET
                       program_id=excluded.program_id,
                       air_date=excluded.air_date,
@@ -82,18 +96,28 @@ def main() -> int:
                       end_time=excluded.end_time,
                       broadcaster=excluded.broadcaster,
                       match_key=excluded.match_key,
-                      data_json=excluded.data_json
+                      data_json=excluded.data_json,
+                      is_rebroadcast_flag=excluded.is_rebroadcast_flag,
+                      epg_genres=excluded.epg_genres,
+                      description=excluded.description,
+                      official_title=excluded.official_title,
+                      annotations=excluded.annotations
                     """,
                     (
                         broadcast_id,
-                        program_id,
+                        s_pid,
                         data.get("air_date"),
                         data.get("start_time"),
                         data.get("end_time"),
                         data.get("broadcaster"),
                         match_key or None,
-                        json.dumps(data, ensure_ascii=False),
+                        residual_json,
                         ts,
+                        promoted.get("is_rebroadcast_flag"),
+                        promoted.get("epg_genres"),
+                        promoted.get("description"),
+                        promoted.get("official_title"),
+                        promoted.get("annotations"),
                     ),
                 )
             migrated += 1

@@ -1,6 +1,6 @@
 version: 1
 roots:
-  # Example: relocate legacy by_program leftovers to current placement rules
-  - B:\\VideoLibrary\\by_program
+# Example: relocate legacy by_program leftovers to current placement rules
+- B:\\VideoLibrary
 extensions:
-  - .mp4
+- .mp4
