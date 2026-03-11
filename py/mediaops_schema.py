@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from epg_common import normalize_program_key
+
 
 DDL_STATEMENTS = [
     """
@@ -228,6 +230,44 @@ DDL_STATEMENTS = [
       migrated_at TEXT NOT NULL
     )
     """,
+    # -- Views --
+    """
+    CREATE VIEW IF NOT EXISTS v_program_titles AS
+    SELECT
+      pm.program_title,
+      pm.normalized_program_key,
+      COUNT(*) AS file_count,
+      MIN(pm.air_date) AS first_air_date,
+      MAX(pm.air_date) AS last_air_date,
+      SUM(pm.human_reviewed) AS reviewed_count,
+      SUM(CASE WHEN pm.human_reviewed = 0 THEN 1 ELSE 0 END) AS unreviewed_count
+    FROM path_metadata pm
+    WHERE pm.program_title IS NOT NULL AND pm.program_title != ''
+    GROUP BY pm.program_title
+    ORDER BY pm.program_title
+    """,
+    """
+    CREATE VIEW IF NOT EXISTS v_titles_needs_review AS
+    SELECT
+      pm.path_id,
+      pm.program_title,
+      p.name AS filename,
+      pm.needs_review
+    FROM path_metadata pm
+    JOIN paths p ON p.path_id = pm.path_id
+    WHERE pm.needs_review = 1
+    ORDER BY pm.program_title
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_v_titles_needs_review_update
+    INSTEAD OF UPDATE ON v_titles_needs_review
+    BEGIN
+      UPDATE path_metadata
+        SET program_title = NEW.program_title,
+            needs_review  = NEW.needs_review
+        WHERE path_id = NEW.path_id;
+    END
+    """,
 ]
 
 _FILES_NEW_COLUMNS: list[tuple[str, str]] = [
@@ -337,11 +377,29 @@ def _migrate_to_v3(con: sqlite3.Connection) -> None:
         con.execute(idx)
 
 
+def register_custom_functions(con: sqlite3.Connection) -> None:
+    """Register Python functions as SQLite custom functions.
+
+    These are required by triggers (e.g. trg_path_metadata_npk_*).
+    Only available in Python connections — external tools like DBeaver
+    won't have them, so triggers will not fire there.
+    """
+    con.create_function("normalize_program_key", 1, normalize_program_key)
+
+
 def connect_db(db_path: str) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
+    register_custom_functions(con)
     return con
+
+
+def _ensure_triggers(con: sqlite3.Connection) -> None:
+    """Create normalized_program_key auto-sync triggers if missing."""
+    for stmt in DDL_STATEMENTS:
+        if "CREATE TRIGGER" in stmt:
+            con.execute(stmt)
 
 
 def create_schema_if_needed(con: sqlite3.Connection) -> None:
@@ -349,6 +407,7 @@ def create_schema_if_needed(con: sqlite3.Connection) -> None:
         con.execute(stmt)
     _migrate_files_columns(con)
     _migrate_to_v3(con)
+    _ensure_triggers(con)
 
 
 def begin_immediate(con: sqlite3.Connection) -> None:

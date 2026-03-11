@@ -450,6 +450,8 @@ class _EpgCache:
         self._by_match_key: dict[str, dict] = {}
         self._by_title_dt: dict[str, list[dict]] = {}
         self._by_datetime_key: dict[str, list[dict]] = {}
+        old_factory = con.row_factory
+        con.row_factory = sqlite3.Row
         try:
             rows = con.execute(
                 """
@@ -461,6 +463,8 @@ class _EpgCache:
             ).fetchall()
         except sqlite3.Error:
             return
+        finally:
+            con.row_factory = old_factory
         for row in rows:
             data = reconstruct_broadcast_data(row)
             data["broadcast_id"] = row[0]
@@ -674,7 +678,9 @@ def main() -> int:
     preserved_human_reviewed = 0
     generated_input_jsonl_paths: list[str] = []
     generated_output_jsonl_paths: list[str] = []
+    from mediaops_schema import register_custom_functions
     db_con = sqlite3.connect(args.db)
+    register_custom_functions(db_con)
     epg_cache = _EpgCache(db_con)
 
     def flush():

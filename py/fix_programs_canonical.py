@@ -19,7 +19,7 @@ import sqlite3
 from collections import defaultdict
 
 from epg_common import normalize_program_key, program_id_for
-from mediaops_schema import begin_immediate
+from mediaops_schema import begin_immediate, connect_db
 from pathscan_common import now_iso
 from series_name_extractor import _load_aliases, extract_series_name, series_program_key
 
@@ -31,8 +31,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    con = sqlite3.connect(args.db)
-    con.row_factory = sqlite3.Row
+    con = connect_db(args.db)
     alias_map = _load_aliases(args.aliases or None)
 
     old_programs = con.execute(

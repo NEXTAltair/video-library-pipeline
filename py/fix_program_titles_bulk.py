@@ -19,7 +19,7 @@ import sqlite3
 from collections import Counter
 
 from epg_common import normalize_program_key
-from mediaops_schema import begin_immediate
+from mediaops_schema import begin_immediate, connect_db
 from series_name_extractor import _load_aliases, extract_series_name
 
 MAX_GOOD_TITLE_LEN = 25
@@ -78,8 +78,7 @@ def main() -> int:
                     help="Only fix human_reviewed=1 records")
     args = ap.parse_args()
 
-    con = sqlite3.connect(args.db)
-    con.row_factory = sqlite3.Row
+    con = connect_db(args.db)
     alias_map = _load_aliases(args.aliases or None)
     known_titles = _build_known_titles(con)
 

@@ -31,7 +31,7 @@ from typing import Any
 
 from db_helpers import PROMOTED_BROADCAST_KEYS, PROMOTED_PATH_METADATA_KEYS
 from epg_common import normalize_program_key, program_id_for
-from mediaops_schema import _add_columns_if_missing, _table_exists
+from mediaops_schema import _add_columns_if_missing, _table_exists, register_custom_functions
 from pathscan_common import now_iso
 
 try:
@@ -406,6 +406,7 @@ def main() -> int:
 
     con = sqlite3.connect(args.db)
     con.row_factory = sqlite3.Row
+    register_custom_functions(con)
     # FK constraints OFF during migration so program_id changes don't fail
     con.execute("PRAGMA foreign_keys = OFF")
 
