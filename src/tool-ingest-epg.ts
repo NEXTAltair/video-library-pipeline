@@ -1,4 +1,5 @@
-import { parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { toToolResult } from "./runtime";
+import { runIngestEpg } from "./core-ingest-epg";
 import type { AnyObj } from "./types";
 
 export function registerToolIngestEpg(api: any, getCfg: (api: any) => any) {
@@ -31,47 +32,7 @@ export function registerToolIngestEpg(api: any, getCfg: (api: any) => any) {
       },
       async execute(_id: string, params: AnyObj) {
         const cfg = getCfg(api);
-        const resolved = resolvePythonScript("ingest_program_txt.py");
-
-        const tsRoot = String(params.tsRoot || cfg.tsRoot || "");
-        if (!tsRoot) {
-          return toToolResult({
-            ok: false,
-            tool: "video_pipeline_ingest_epg",
-            error: "tsRoot is required. Pass it as a parameter or configure plugins.entries.video-library-pipeline.config.tsRoot.",
-          });
-        }
-
-        const args = [
-          "run",
-          "python",
-          resolved.scriptPath,
-          "--db",
-          String(cfg.db || ""),
-          "--ts-root",
-          tsRoot,
-        ];
-
-        if (params.apply === true) args.push("--apply");
-        if (typeof params.limit === "number" && Number.isFinite(params.limit)) {
-          args.push("--limit", String(Math.trunc(params.limit)));
-        }
-
-        const r = runCmd("uv", args, resolved.cwd);
-        const parsed = parseJsonObject(r.stdout);
-        const out: AnyObj = {
-          ok: r.ok,
-          tool: "video_pipeline_ingest_epg",
-          scriptSource: resolved.source,
-          scriptPath: resolved.scriptPath,
-          exitCode: r.code,
-          stdout: r.stdout,
-          stderr: r.stderr,
-        };
-        if (parsed) {
-          for (const [k, v] of Object.entries(parsed)) out[k] = v;
-        }
-        return toToolResult(out);
+        return toToolResult(runIngestEpg(cfg, params));
       },
     }
   );

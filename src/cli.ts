@@ -1,5 +1,6 @@
 import path from "node:path";
 import { latestJsonlFile } from "./runtime";
+import { runIngestEpg } from "./core-ingest-epg";
 
 export function registerCli(api: any, pluginId: string, getCfg: (api: any) => any) {
   // CLI補助コマンド: 現在の plugin config を確認する。
@@ -28,7 +29,24 @@ export function registerCli(api: any, pluginId: string, getCfg: (api: any) => an
             ),
           );
         });
+
+      program
+        .command("video-pipeline-ingest-epg")
+        .description("Ingest EDCB .program.txt EPG data into DB (config auto-resolved)")
+        .option("--apply", "Write to DB (default: dry-run)", false)
+        .option("--ts-root <path>", "Override tsRoot from plugin config")
+        .option("--limit <n>", "Max files to process", parseInt)
+        .action((opts: { apply?: boolean; tsRoot?: string; limit?: number }) => {
+          const cfg = getCfg(api);
+          const result = runIngestEpg(cfg, {
+            tsRoot: opts.tsRoot,
+            apply: opts.apply,
+            limit: opts.limit,
+          });
+          console.log(JSON.stringify(result, null, 2));
+          process.exitCode = result.ok ? 0 : 1;
+        });
     },
-    { commands: ["video-pipeline-status"] },
+    { commands: ["video-pipeline-status", "video-pipeline-ingest-epg"] },
   );
 }
