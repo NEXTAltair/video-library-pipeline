@@ -373,7 +373,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
             sourceJsonlPath: effectiveSourceJsonlPath,
             sourceBaseName: sourceBase,
             sourceLooksRawExtractionOutput: true,
-            hint: "Copy the extraction output, review/edit it, then apply the reviewed copy.",
+            hint: "Use sourceYamlPath parameter instead of sourceJsonlPath. Pass the YAML file path from video_pipeline_export_program_yaml. The tool will read the YAML's alias mappings and apply them to the source JSONL automatically. Do NOT copy or rename JSONL files.",
           });
         }
 

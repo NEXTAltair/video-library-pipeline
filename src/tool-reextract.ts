@@ -54,6 +54,11 @@ export function buildLlmExtractTask(inputJsonlPath: string, outputJsonlPath: str
     `- air_date format: YYYY-MM-DD (e.g. 2025-04-21). null if truly absent.`,
     `- confidence=1.0 means certain; 0.5 means very uncertain`,
     "",
+    `## Constraints`,
+    `- Do NOT create Python scripts, shell scripts, or any executable files. Process data directly using read/write tools.`,
+    `- Read the input JSONL with the read tool, extract metadata from each JSON line in your reasoning, and write the output JSONL with the write tool.`,
+    `- Do NOT use exec/bash to run commands. Only use read, write, and video_pipeline_apply_llm_extract_output tools.`,
+    "",
     `When done, call video_pipeline_apply_llm_extract_output with outputJsonlPath="${outputJsonlPath}"`,
   ].join("\n");
 }

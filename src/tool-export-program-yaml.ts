@@ -357,7 +357,10 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
           nextStep:
             "Present reviewCandidates (path + columns + reasons) to the user. " +
             "Ask the user to edit the exported YAML aliases/canonical_title for corrections. " +
-            "Once the user confirms YAML review is done, call video_pipeline_apply_reviewed_metadata with sourceYamlPath set to this YAML path. " +
+            `Once the user confirms YAML review is done, call video_pipeline_apply_reviewed_metadata with sourceYamlPath="${outPath}". ` +
+            "IMPORTANT: Use sourceYamlPath parameter (NOT sourceJsonlPath) when passing YAML files. " +
+            "The tool reads YAML alias mappings and applies them to the source JSONL automatically. " +
+            "Do NOT copy/rename the extraction JSONL. Do NOT call exec to run scripts directly. " +
             "Do NOT ask for additional permission to call video_pipeline_apply_reviewed_metadata — proceed immediately after user confirmation.",
         });
       },
