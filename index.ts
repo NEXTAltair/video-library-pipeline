@@ -15,6 +15,7 @@ import { registerToolReextract } from "./src/tool-reextract";
 import { registerToolLlmExtract } from "./src/tool-llm-extract";
 import { registerToolLlmExtractStatus } from "./src/tool-llm-extract-status";
 import { registerToolRepairDb } from "./src/tool-repair-db";
+import { registerToolUpdateProgramTitles } from "./src/tool-update-program-titles";
 import { registerToolRun } from "./src/tool-run";
 import { registerToolStatus } from "./src/tool-status";
 import { registerToolValidate } from "./src/tool-validate";
@@ -45,6 +46,7 @@ export default function register(api: any) {
   registerToolDbBackup(api, getCfg);
   registerToolDbRestore(api, getCfg);
   registerToolRepairDb(api, getCfg);
+  registerToolUpdateProgramTitles(api, getCfg);
   registerToolReextract(api, getCfg);
   registerToolLlmExtract(api, getCfg);
   registerToolLlmExtractStatus(api, getCfg);

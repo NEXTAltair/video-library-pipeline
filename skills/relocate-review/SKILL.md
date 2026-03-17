@@ -66,6 +66,7 @@ metadata: {"openclaw":{"emoji":"📁","requires":{"plugins":["video-library-pipe
 
    - Prefer `outcomeType` / `nextActions` / `diagnostics` from the tool result when present.
    - `suspiciousProgramTitleSkipped > 0` はサブタイトル汚染 (▽/▼がprogram_titleに混入)。`already_correct` ではない。
+   | User says title is wrong / folder name ≠ program name | → Use `video_pipeline_update_program_titles` to fix title first (dryRun=true then apply), then restart from step 2 |
    - Do not describe metadata gaps as "failed" — call them "metadata preparation required".
 
 4. **Show dry-run plan to user and get confirmation**
