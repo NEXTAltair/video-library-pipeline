@@ -79,17 +79,17 @@ Tag legend used below:
 
 優先順:
 
-1. `normalized_program_key + episode_no`
-2. `normalized_program_key + normalized_subtitle`（`episode_no` 欠損時）
+1. `normalize_program_key(program_title) + episode_no` （都度計算）
+2. `normalize_program_key(program_title) + normalized_subtitle`（`episode_no` 欠損時）
 
 以下は自動重複判定しない:
 
-- `normalized_program_key` 欠損
+- `program_title` 欠損
 - `episode_no` と `subtitle` の両方が欠損
 
 注記:
 
-- `normalized_program_key` の品質は `rules/program_aliases.yaml` に依存する。
+- グルーピングキーは `epg_common.normalize_program_key(program_title)` で都度計算する（カラムとしては保存しない）。
 - 重複判定実行前に、抽出レビューに基づく `program_aliases` 更新を AIエージェント経由でユーザーが実施する。
 
 ### 4.2 自動処理対象条件 [MOSTLY CURRENT]

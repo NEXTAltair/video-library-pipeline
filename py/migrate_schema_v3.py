@@ -101,7 +101,7 @@ def _promote_path_metadata(con: sqlite3.Connection, dry_run: bool) -> int:
         program_title = data.get("program_title")
         air_date = data.get("air_date")
         needs_review = 1 if data.get("needs_review") else 0
-        normalized_program_key = data.get("normalized_program_key")
+        _unused_npk = data.get("normalized_program_key")  # legacy, no longer written
         episode_no = data.get("episode_no")
         if episode_no is not None:
             episode_no = str(episode_no)
@@ -118,14 +118,14 @@ def _promote_path_metadata(con: sqlite3.Connection, dry_run: bool) -> int:
                 """
                 UPDATE path_metadata SET
                   program_title=?, air_date=?, needs_review=?,
-                  normalized_program_key=?, episode_no=?, subtitle=?,
+                  episode_no=?, subtitle=?,
                   broadcaster=?, human_reviewed=?,
                   data_json=?
                 WHERE path_id=?
                 """,
                 (
                     program_title, air_date, needs_review,
-                    normalized_program_key, episode_no, subtitle,
+                    episode_no, subtitle,
                     broadcaster, human_reviewed,
                     new_data_json, path_id,
                 ),

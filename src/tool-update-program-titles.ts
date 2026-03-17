@@ -6,7 +6,7 @@ export function registerToolUpdateProgramTitles(api: any, getCfg: (api: any) => 
     {
       name: "video_pipeline_update_program_titles",
       description:
-        "Update program_title for specified records. Automatically syncs normalized_program_key and sets human_reviewed=1, needs_review=0. " +
+        "Update program_title for specified records. Sets human_reviewed=1, needs_review=0. " +
         "Use path_pattern (SQL LIKE) or path_id to identify target records. Always dry-run first.",
       parameters: {
         type: "object",

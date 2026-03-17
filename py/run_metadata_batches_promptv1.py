@@ -42,7 +42,7 @@ REQUIRED = {
     "needs_review",
     "model",
     "extraction_version",
-    "normalized_program_key",
+
     "evidence",
 }
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
@@ -619,7 +619,7 @@ def _get_latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | No
         row = cur.execute(
             """
             SELECT data_json, program_title, air_date, needs_review,
-                   normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
+                   episode_no, subtitle, broadcaster, human_reviewed
             FROM path_metadata
             WHERE path_id=?
             ORDER BY updated_at DESC
@@ -648,7 +648,7 @@ def _build_locked_row(existing: dict, rec: dict, model: str, extraction_version:
     row["needs_review"] = bool(row.get("needs_review"))
     row["model"] = row.get("model") or model
     row["extraction_version"] = row.get("extraction_version") or extraction_version
-    row["normalized_program_key"] = row.get("normalized_program_key") or norm_key(program_title)
+
     row["evidence"] = row.get("evidence") or {"source_name": "manual_review_lock", "raw": rec.get("name")}
     row["human_reviewed"] = True
     row.setdefault("title_architecture", ACTIVE_TITLE_ARCHITECTURE)
@@ -783,7 +783,7 @@ def main() -> int:
                 "needs_review_reason": ",".join(reasons) if reasons else None,
                 "model": args.model,
                 "extraction_version": args.extraction_version,
-                "normalized_program_key": norm_key(prog),
+
                 "title_architecture": ACTIVE_TITLE_ARCHITECTURE,
                 "title_extraction_path": title_res.get("title_extraction_path"),
                 "evidence": {"source_name": "filename", "raw": name},

@@ -33,7 +33,7 @@ def _metadata_rank(row) -> tuple[int, str]:
 def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
     src = con.execute(
         """SELECT path_id, source, data_json, updated_at,
-                  program_title, air_date, needs_review, normalized_program_key,
+                  program_title, air_date, needs_review,
                   episode_no, subtitle, broadcaster, human_reviewed
            FROM path_metadata WHERE path_id=?""",
         (src_path_id,),
@@ -42,7 +42,7 @@ def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
         return "none"
     dst = con.execute(
         """SELECT path_id, source, data_json, updated_at,
-                  program_title, air_date, needs_review, normalized_program_key,
+                  program_title, air_date, needs_review,
                   episode_no, subtitle, broadcaster, human_reviewed
            FROM path_metadata WHERE path_id=?""",
         (dst_path_id,),
@@ -63,13 +63,13 @@ def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
         promoted, data_json = split_path_metadata(src_md)
         con.execute(
             """UPDATE path_metadata SET source=?, data_json=?, updated_at=?,
-                 program_title=?, air_date=?, needs_review=?, normalized_program_key=?,
+                 program_title=?, air_date=?, needs_review=?,
                  episode_no=?, subtitle=?, broadcaster=?, human_reviewed=?
                WHERE path_id=?""",
             (
                 src["source"], data_json, src["updated_at"],
                 promoted.get("program_title"), promoted.get("air_date"),
-                promoted.get("needs_review", 0), promoted.get("normalized_program_key"),
+                promoted.get("needs_review", 0),
                 promoted.get("episode_no"), promoted.get("subtitle"),
                 promoted.get("broadcaster"), promoted.get("human_reviewed", 0),
                 dst_path_id,
@@ -81,13 +81,13 @@ def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
         promoted, data_json = split_path_metadata(dst_md)
         con.execute(
             """UPDATE path_metadata SET data_json=?, updated_at=?,
-                 program_title=?, air_date=?, needs_review=?, normalized_program_key=?,
+                 program_title=?, air_date=?, needs_review=?,
                  episode_no=?, subtitle=?, broadcaster=?, human_reviewed=?
                WHERE path_id=?""",
             (
                 data_json, dst["updated_at"],
                 promoted.get("program_title"), promoted.get("air_date"),
-                promoted.get("needs_review", 0), promoted.get("normalized_program_key"),
+                promoted.get("needs_review", 0),
                 promoted.get("episode_no"), promoted.get("subtitle"),
                 promoted.get("broadcaster"), promoted.get("human_reviewed", 0),
                 dst_path_id,

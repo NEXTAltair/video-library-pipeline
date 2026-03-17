@@ -256,7 +256,6 @@ function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, str
 
     if (canonical && canonical !== beforeTitle) {
       next.program_title = canonical;
-      next.normalized_program_key = lowerCompact(canonical);
       retitledRowsCount += 1;
       changed = true;
     }

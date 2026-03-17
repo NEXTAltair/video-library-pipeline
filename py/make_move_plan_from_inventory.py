@@ -24,7 +24,7 @@ def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
     row = cur.execute(
         """
         SELECT data_json, program_title, air_date, needs_review,
-               normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
+               episode_no, subtitle, broadcaster, human_reviewed
         FROM path_metadata
         WHERE path_id=?
         ORDER BY updated_at DESC

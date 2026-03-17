@@ -23,7 +23,7 @@ def main() -> int:
     rows = con.execute(
         """SELECT pm.path_id, pm.source, pm.data_json, p.path,
                   pm.program_title, pm.air_date, pm.needs_review,
-                  pm.normalized_program_key, pm.episode_no, pm.subtitle,
+                  pm.episode_no, pm.subtitle,
                   pm.broadcaster, pm.human_reviewed
            FROM path_metadata pm LEFT JOIN paths p ON p.path_id=pm.path_id"""
     ).fetchall()
@@ -50,7 +50,6 @@ def main() -> int:
             promoted.get("program_title"),
             promoted.get("air_date"),
             promoted.get("needs_review", 0),
-            promoted.get("normalized_program_key"),
             promoted.get("episode_no"),
             promoted.get("subtitle"),
             promoted.get("broadcaster"),
@@ -67,7 +66,7 @@ def main() -> int:
     con.executemany(
         """UPDATE path_metadata SET
              data_json=?, program_title=?, air_date=?, needs_review=?,
-             normalized_program_key=?, episode_no=?, subtitle=?,
+             episode_no=?, subtitle=?,
              broadcaster=?, human_reviewed=?
            WHERE path_id=?""",
         updates,

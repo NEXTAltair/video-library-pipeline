@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { normalizeKey, resolvePythonScript, runCmd, toToolResult, tsCompact } from "./runtime";
+import { lowerCompact, resolvePythonScript, runCmd, toToolResult, tsCompact } from "./runtime";
 import { buildReviewDiagnostics, buildYaml, readJsonlRows } from "./tool-export-program-yaml";
 import type { AnyObj } from "./types";
 
@@ -11,7 +11,7 @@ function generateReviewYaml(sourceJsonlPath: string, outDir: string, rows: AnyOb
     for (const r of rows) {
       const title = String(r.program_title || "").trim();
       if (!title || title === "UNKNOWN") continue;
-      const normalizedProgramKey = String(r.normalized_program_key || normalizeKey(title));
+      const normalizedProgramKey = lowerCompact(title);
       const key = `${title}::${normalizedProgramKey}`;
       const cur = statsMap.get(key) ?? { canonicalTitle: title, normalizedProgramKey, count: 0, needsReviewCount: 0, samplePaths: [], sampleRawNames: [] };
       cur.count += 1;

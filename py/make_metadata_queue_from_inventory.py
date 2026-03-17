@@ -17,7 +17,7 @@ def latest_llm_row(cur: sqlite3.Cursor, path_id: str):
     return cur.execute(
         """
         SELECT data_json, program_title, air_date, needs_review,
-               normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
+               episode_no, subtitle, broadcaster, human_reviewed
         FROM path_metadata
         WHERE path_id=?
         ORDER BY updated_at DESC

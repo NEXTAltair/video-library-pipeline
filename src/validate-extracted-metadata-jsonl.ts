@@ -9,7 +9,8 @@ const REQUIRED = new Set([
   "needs_review",
   "model",
   "extraction_version",
-  "normalized_program_key",
+
+
   "evidence",
 ]);
 

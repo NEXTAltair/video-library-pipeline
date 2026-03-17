@@ -235,7 +235,6 @@ DDL_STATEMENTS = [
     CREATE VIEW IF NOT EXISTS v_program_titles AS
     SELECT
       pm.program_title,
-      pm.normalized_program_key,
       COUNT(*) AS file_count,
       MIN(pm.air_date) AS first_air_date,
       MAX(pm.air_date) AS last_air_date,

@@ -151,7 +151,7 @@ def main() -> int:
         existing_row = fetchone(
             con,
             """SELECT source, data_json, program_title, air_date, needs_review,
-                      normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
+                      episode_no, subtitle, broadcaster, human_reviewed
                FROM path_metadata WHERE path_id = ?""",
             (path_id,),
         )
@@ -168,7 +168,6 @@ def main() -> int:
             promoted.get("program_title"),
             promoted.get("air_date"),
             promoted.get("needs_review", 0),
-            promoted.get("normalized_program_key"),
             promoted.get("episode_no"),
             promoted.get("subtitle"),
             promoted.get("broadcaster"),
@@ -212,9 +211,9 @@ def main() -> int:
             con.executemany(
                 """
                 INSERT INTO path_metadata (path_id, source, data_json, updated_at,
-                  program_title, air_date, needs_review, normalized_program_key,
+                  program_title, air_date, needs_review,
                   episode_no, subtitle, broadcaster, human_reviewed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(path_id) DO UPDATE SET
                   source=excluded.source,
                   data_json=excluded.data_json,
@@ -222,7 +221,6 @@ def main() -> int:
                   program_title=excluded.program_title,
                   air_date=excluded.air_date,
                   needs_review=excluded.needs_review,
-                  normalized_program_key=excluded.normalized_program_key,
                   episode_no=excluded.episode_no,
                   subtitle=excluded.subtitle,
                   broadcaster=excluded.broadcaster,
