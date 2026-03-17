@@ -172,16 +172,20 @@ def unique_dst_path(dst: Path) -> Path:
     raise RuntimeError(f"failed to resolve unique dst path: {dst}")
 
 
-def build_group_key(md: dict[str, Any]) -> tuple[str | None, str | None]:
-    key = str(md.get("normalized_program_key") or "").strip()
-    if not key:
-        return None, "missing_normalized_program_key"
+def build_group_key(md: dict[str, Any], *, program_id: str | None) -> tuple[str | None, str | None]:
+    if program_id:
+        base_key = f"pid:{program_id}"
+    else:
+        key = str(md.get("normalized_program_key") or "").strip()
+        if not key:
+            return None, "missing_program_identity"
+        base_key = f"npk:{key}"
     ep = md.get("episode_no")
     if ep is not None and str(ep).strip():
-        return f"{key}::ep::{str(ep).strip()}", None
+        return f"{base_key}::ep::{str(ep).strip()}", None
     sub = str(md.get("subtitle") or "").strip()
     if sub:
-        return f"{key}::sub::{normalize_subtitle(sub)}", None
+        return f"{base_key}::sub::{normalize_subtitle(sub)}", None
     return None, "missing_episode_and_subtitle"
 
 
@@ -359,9 +363,11 @@ def main() -> int:
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
                    pm.normalized_program_key, pm.episode_no, pm.subtitle,
-                   pm.broadcaster, pm.human_reviewed
+                   pm.broadcaster, pm.human_reviewed,
+                   pp.program_id
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
+            LEFT JOIN path_programs pp ON pp.path_id = pm.path_id
             WHERE pm.source != 'edcb_epg'
             """,
             (),
@@ -373,7 +379,10 @@ def main() -> int:
             path_id = str(r["path_id"])
             path_val = canonicalize_windows_path(str(r["path"]))
             md = reconstruct_path_metadata(r)
-            group_key, reason = build_group_key(md)
+            group_key, reason = build_group_key(
+                md,
+                program_id=str(r["program_id"]) if r["program_id"] is not None else None,
+            )
             if not group_key:
                 dropped_for_missing_key += 1
                 continue

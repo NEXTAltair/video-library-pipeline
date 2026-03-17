@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Detect rebroadcast candidates and classify with EPG rebroadcast flags.
 
-This script groups recordings of the same episode (same normalized_program_key +
-episode_no/subtitle). Classification rule priority:
+This script groups recordings of the same episode (prefer ``path_programs.program_id``
+and fallback to ``normalized_program_key``) with episode_no/subtitle/air_date.
+Classification rule priority:
 
 1) If any member has broadcasts.data_json.is_rebroadcast_flag=true, those are
    "rebroadcast" and non-true members become "original".
@@ -31,21 +32,31 @@ def safe_json(v: Any) -> str:
     return json.dumps(v, ensure_ascii=False)
 
 
-def _build_episode_key(md: dict[str, Any]) -> str | None:
-    """Build a grouping key from normalized_program_key + episode identifier."""
-    npk = str(md.get("normalized_program_key") or "").strip()
-    if not npk:
-        return None
+def _build_episode_key(
+    md: dict[str, Any],
+    *,
+    program_id: str | None,
+    fallback_air_date: str | None,
+) -> str | None:
+    """Build grouping key from canonical program identity + episode identifier."""
+    if program_id:
+        base_key = f"pid:{program_id}"
+    else:
+        npk = str(md.get("normalized_program_key") or "").strip()
+        if not npk:
+            return None
+        base_key = f"npk:{npk}"
+
     ep = md.get("episode_no")
     sub = str(md.get("subtitle") or "").strip()
     if ep is not None and str(ep).strip():
-        return f"{npk}::ep::{str(ep).strip()}"
+        return f"{base_key}::ep::{str(ep).strip()}"
     if sub:
-        return f"{npk}::sub::{sub.lower()}"
+        return f"{base_key}::sub::{sub.lower()}"
     # No episode/subtitle — use air_date to distinguish
-    air = str(md.get("air_date") or "").strip()
+    air = str(fallback_air_date or md.get("air_date") or "").strip()
     if air:
-        return f"{npk}::date::{air}"
+        return f"{base_key}::date::{air}"
     return None
 
 
@@ -136,9 +147,14 @@ def main() -> int:
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
                    pm.normalized_program_key, pm.episode_no, pm.subtitle,
-                   pm.broadcaster, pm.human_reviewed
+                   pm.broadcaster, pm.human_reviewed,
+                   pp.program_id, pp.broadcast_id,
+                   b.air_date AS broadcast_air_date,
+                   b.broadcaster AS broadcast_broadcaster
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
+            LEFT JOIN path_programs pp ON pp.path_id = pm.path_id
+            LEFT JOIN broadcasts b ON b.broadcast_id = pp.broadcast_id
             WHERE pm.source != 'edcb_epg'
             """,
             (),
@@ -150,7 +166,11 @@ def main() -> int:
         for r in md_rows:
             path_id = str(r["path_id"])
             md = reconstruct_path_metadata(r)
-            ep_key = _build_episode_key(md)
+            ep_key = _build_episode_key(
+                md,
+                program_id=str(r["program_id"]) if r["program_id"] is not None else None,
+                fallback_air_date=str(r["broadcast_air_date"]) if r["broadcast_air_date"] else None,
+            )
             if not ep_key:
                 skipped_no_key += 1
                 continue
@@ -158,11 +178,12 @@ def main() -> int:
                 "path_id": path_id,
                 "path": str(r["path"]),
                 "program_title": str(md.get("program_title") or ""),
-                "air_date": str(md.get("air_date") or ""),
-                "broadcaster": md.get("broadcaster") or md.get("channel") or None,
+                "air_date": str(r["broadcast_air_date"] or md.get("air_date") or ""),
+                "broadcaster": md.get("broadcaster") or md.get("channel") or r["broadcast_broadcaster"] or None,
                 "episode_key": ep_key,
                 "metadata": md,
                 "is_rebroadcast_flag": path_rebroadcast_flag.get(path_id),
+                "broadcast_id": r["broadcast_id"],
             }
             grouped.setdefault(ep_key, []).append(entry)
 
@@ -182,6 +203,7 @@ def main() -> int:
         if max_groups > 0:
             group_keys = group_keys[:max_groups]
 
+        prepared_groups: list[dict[str, Any]] = []
         plan_rows: list[dict[str, Any]] = []
         groups_processed = 0
         members_total = 0
@@ -205,10 +227,19 @@ def main() -> int:
                     "program_title": program_title,
                     "episode_key": ep_key,
                     "is_rebroadcast_flag": entry["is_rebroadcast_flag"],
+                    "broadcast_id": entry["broadcast_id"],
                 }
                 group_plan.append(member)
                 members_total += 1
             plan_rows.extend(group_plan)
+            prepared_groups.append(
+                {
+                    "group_id": group_id,
+                    "program_title": program_title,
+                    "episode_key": ep_key,
+                    "members": group_plan,
+                }
+            )
             groups_processed += 1
 
         # Apply to DB if requested
@@ -217,13 +248,7 @@ def main() -> int:
         if args.apply and plan_rows:
             try:
                 begin_immediate(con)
-                for ep_key in group_keys:
-                    entries = rebroadcast_groups[ep_key]
-                    entries_sorted = sorted(entries, key=lambda e: (e["air_date"] or "9999", e["path_id"]))
-                    entries_classified = _classify_group(entries_sorted)
-                    group_id = _stable_group_id(ep_key)
-                    program_title = entries_sorted[0]["program_title"]
-
+                for g in prepared_groups:
                     # Upsert group
                     con.execute(
                         """
@@ -233,18 +258,11 @@ def main() -> int:
                           program_title = excluded.program_title,
                           episode_key = excluded.episode_key
                         """,
-                        (group_id, program_title, ep_key, now_iso()),
+                        (g["group_id"], g["program_title"], g["episode_key"], now_iso()),
                     )
                     db_inserted_groups += 1
 
-                    for entry in entries_classified:
-                        # Lookup broadcast_id from path_programs
-                        bid_row = con.execute(
-                            "SELECT broadcast_id FROM path_programs WHERE path_id=? AND broadcast_id IS NOT NULL LIMIT 1",
-                            (entry["path_id"],),
-                        ).fetchone()
-                        broadcast_id = bid_row["broadcast_id"] if bid_row else None
-
+                    for entry in g["members"]:
                         con.execute(
                             """
                             INSERT INTO broadcast_group_members
@@ -258,13 +276,13 @@ def main() -> int:
                               broadcast_id = excluded.broadcast_id
                             """,
                             (
-                                group_id,
+                                g["group_id"],
                                 entry["path_id"],
                                 entry["broadcast_type"],
                                 entry["air_date"] or None,
                                 entry["broadcaster"],
                                 now_iso(),
-                                broadcast_id,
+                                entry["broadcast_id"],
                             ),
                         )
                         db_inserted_members += 1
