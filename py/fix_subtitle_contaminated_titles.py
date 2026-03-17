@@ -15,25 +15,11 @@ import argparse
 import json
 import re
 import sys
-import unicodedata
 
 from db_helpers import reconstruct_path_metadata, split_path_metadata
 from mediaops_schema import begin_immediate, connect_db
 
 SEPARATOR_RE = re.compile(r"[▽▼◇「]")
-
-# normalized_program_key 再計算用 (run_metadata_batches_promptv1.norm_key 相当)
-_BAD = re.compile(r'[<>:"/\\|?*]')
-_UND = re.compile(r"_+")
-_WS = re.compile(r"\s+")
-
-
-def _norm_key(title: str) -> str:
-    t = unicodedata.normalize("NFKC", title)
-    t = _WS.sub(" ", t).strip().replace(" ", "_")
-    t = _BAD.sub("", t)
-    t = _UND.sub("_", t).strip("_")
-    return t or "UNKNOWN"
 
 
 def clean_title(title: str) -> str:
@@ -60,9 +46,11 @@ def main() -> int:
     con = connect_db(args.db)
     rows = con.execute(
         """SELECT path_id, source, data_json, program_title, air_date, needs_review,
-                  normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
+                  episode_no, subtitle, broadcaster, human_reviewed
            FROM path_metadata"""
     ).fetchall()
+
+
 
     updates: list[tuple] = []
     for r in rows:
@@ -89,7 +77,6 @@ def main() -> int:
         # Reconstruct full dict, modify, then split
         md = reconstruct_path_metadata(r)
         md["program_title"] = cleaned
-        md["normalized_program_key"] = _norm_key(cleaned)
 
         # needs_review をクリア (タイトル起因の reason のみ残っている場合)
         if md.get("needs_review") is True:
@@ -107,7 +94,6 @@ def main() -> int:
         updates.append((
             data_json,
             promoted.get("program_title"),
-            promoted.get("normalized_program_key"),
             promoted.get("needs_review", 0),
             str(r["path_id"]),
         ))
@@ -133,7 +119,7 @@ def main() -> int:
     begin_immediate(con)
     con.executemany(
         """UPDATE path_metadata SET
-             data_json=?, program_title=?, normalized_program_key=?,
+             data_json=?, program_title=?,
              needs_review=?, updated_at=datetime('now')
            WHERE path_id=?""",
         updates,

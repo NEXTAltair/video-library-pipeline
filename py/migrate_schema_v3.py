@@ -43,7 +43,8 @@ _PATH_METADATA_NEW_COLUMNS = [
     ("program_title", "TEXT", ""),
     ("air_date", "TEXT", ""),
     ("needs_review", "INTEGER NOT NULL DEFAULT 0", ""),
-    ("normalized_program_key", "TEXT", ""),
+
+
     ("episode_no", "TEXT", ""),
     ("subtitle", "TEXT", ""),
     ("broadcaster", "TEXT", ""),
@@ -101,7 +102,7 @@ def _promote_path_metadata(con: sqlite3.Connection, dry_run: bool) -> int:
         program_title = data.get("program_title")
         air_date = data.get("air_date")
         needs_review = 1 if data.get("needs_review") else 0
-        normalized_program_key = data.get("normalized_program_key")
+        _unused_npk = data.get("normalized_program_key")  # legacy, no longer written
         episode_no = data.get("episode_no")
         if episode_no is not None:
             episode_no = str(episode_no)
@@ -118,14 +119,14 @@ def _promote_path_metadata(con: sqlite3.Connection, dry_run: bool) -> int:
                 """
                 UPDATE path_metadata SET
                   program_title=?, air_date=?, needs_review=?,
-                  normalized_program_key=?, episode_no=?, subtitle=?,
+                  episode_no=?, subtitle=?,
                   broadcaster=?, human_reviewed=?,
                   data_json=?
                 WHERE path_id=?
                 """,
                 (
                     program_title, air_date, needs_review,
-                    normalized_program_key, episode_no, subtitle,
+                    episode_no, subtitle,
                     broadcaster, human_reviewed,
                     new_data_json, path_id,
                 ),
@@ -461,7 +462,8 @@ def main() -> int:
         # Step 8: Create indexes
         v3_indexes = [
             "CREATE INDEX IF NOT EXISTS idx_path_metadata_program_title ON path_metadata(program_title)",
-            "CREATE INDEX IF NOT EXISTS idx_path_metadata_npk ON path_metadata(normalized_program_key)",
+
+
             "CREATE INDEX IF NOT EXISTS idx_path_metadata_air_date ON path_metadata(air_date)",
             "CREATE INDEX IF NOT EXISTS idx_path_metadata_needs_review ON path_metadata(needs_review)",
             "CREATE INDEX IF NOT EXISTS idx_broadcasts_official_title ON broadcasts(official_title)",

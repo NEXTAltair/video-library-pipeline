@@ -52,7 +52,7 @@ def main() -> int:
 
     con = connect_db(args.db)
 
-    updates: list[tuple[str, str, str]] = []  # (new_title, new_npk, path_id)
+    updates: list[tuple[str, str]] = []  # (new_title, path_id)
     errors: list[dict] = []
 
     for i, instr in enumerate(instructions):
@@ -65,7 +65,6 @@ def main() -> int:
             errors.append({"index": i, "error": "missing new_title"})
             continue
 
-        new_npk = normalize_program_key(new_title)
         path_id = str(instr.get("path_id") or "").strip()
         path_pattern = str(instr.get("path_pattern") or "").strip()
 
@@ -77,7 +76,7 @@ def main() -> int:
             if not row:
                 errors.append({"index": i, "error": f"path_id not found: {path_id[:16]}..."})
                 continue
-            updates.append((new_title, new_npk, path_id))
+            updates.append((new_title, path_id))
 
         elif path_pattern:
             rows = con.execute(
@@ -91,7 +90,7 @@ def main() -> int:
                 errors.append({"index": i, "error": f"no matches for pattern: {path_pattern}"})
                 continue
             for r in rows:
-                updates.append((new_title, new_npk, r["path_id"]))
+                updates.append((new_title, r["path_id"]))
 
         else:
             errors.append({"index": i, "error": "need path_id or path_pattern"})
@@ -107,7 +106,7 @@ def main() -> int:
         # Show what would change
         preview: list[dict] = []
         seen: set[str] = set()
-        for new_title, _, pid in updates:
+        for new_title, pid in updates:
             if pid in seen:
                 continue
             seen.add(pid)
@@ -135,7 +134,6 @@ def main() -> int:
     con.executemany(
         """UPDATE path_metadata
            SET program_title = ?,
-               normalized_program_key = ?,
                human_reviewed = 1,
                needs_review = 0
            WHERE path_id = ?""",

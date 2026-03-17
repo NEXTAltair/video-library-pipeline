@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Detect rebroadcast candidates and classify with EPG rebroadcast flags.
 
-This script groups recordings of the same episode (same normalized_program_key +
+This script groups recordings of the same episode (same program_title normalized key +
 episode_no/subtitle). Classification rule priority:
 
 1) If any member has broadcasts.data_json.is_rebroadcast_flag=true, those are
@@ -32,9 +32,10 @@ def safe_json(v: Any) -> str:
 
 
 def _build_episode_key(md: dict[str, Any]) -> str | None:
-    """Build a grouping key from normalized_program_key + episode identifier."""
-    npk = str(md.get("normalized_program_key") or "").strip()
-    if not npk:
+    """Build a grouping key from program_title (normalized) + episode identifier."""
+    from epg_common import normalize_program_key
+    npk = normalize_program_key(str(md.get("program_title") or ""))
+    if not npk or npk == "unknown":
         return None
     ep = md.get("episode_no")
     sub = str(md.get("subtitle") or "").strip()
@@ -135,7 +136,7 @@ def main() -> int:
             """
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
-                   pm.normalized_program_key, pm.episode_no, pm.subtitle,
+                   pm.episode_no, pm.subtitle,
                    pm.broadcaster, pm.human_reviewed
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id

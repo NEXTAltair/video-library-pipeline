@@ -56,7 +56,7 @@ def latest_metadata_for_path(con, path_id: str) -> tuple[dict[str, Any] | None, 
         con,
         """
         SELECT source, data_json, program_title, air_date, needs_review,
-               normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed
+               episode_no, subtitle, broadcaster, human_reviewed
         FROM path_metadata
         WHERE path_id=?
         ORDER BY updated_at DESC

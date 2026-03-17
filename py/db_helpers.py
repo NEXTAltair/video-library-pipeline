@@ -14,7 +14,7 @@ PROMOTED_PATH_METADATA_KEYS = {
     "program_title",
     "air_date",
     "needs_review",
-    "normalized_program_key",
+
     "episode_no",
     "subtitle",
     "broadcaster",
@@ -36,7 +36,7 @@ def split_path_metadata(merged: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
     Returns (promoted_columns, data_json_string).
     promoted_columns keys: program_title, air_date, needs_review,
-      normalized_program_key, episode_no, subtitle, broadcaster, human_reviewed.
+      episode_no, subtitle, broadcaster, human_reviewed.
     """
     promoted: dict[str, Any] = {}
     residual: dict[str, Any] = {}

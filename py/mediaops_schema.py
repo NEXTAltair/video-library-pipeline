@@ -131,7 +131,6 @@ DDL_STATEMENTS = [
       program_title TEXT,
       air_date TEXT,
       needs_review INTEGER NOT NULL DEFAULT 0,
-      normalized_program_key TEXT,
       episode_no TEXT,
       subtitle TEXT,
       broadcaster TEXT,
@@ -140,7 +139,8 @@ DDL_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_path_metadata_program_title ON path_metadata(program_title)",
-    "CREATE INDEX IF NOT EXISTS idx_path_metadata_npk ON path_metadata(normalized_program_key)",
+
+
     "CREATE INDEX IF NOT EXISTS idx_path_metadata_air_date ON path_metadata(air_date)",
     "CREATE INDEX IF NOT EXISTS idx_path_metadata_needs_review ON path_metadata(needs_review)",
     """
@@ -235,7 +235,6 @@ DDL_STATEMENTS = [
     CREATE VIEW IF NOT EXISTS v_program_titles AS
     SELECT
       pm.program_title,
-      pm.normalized_program_key,
       COUNT(*) AS file_count,
       MIN(pm.air_date) AS first_air_date,
       MAX(pm.air_date) AS last_air_date,
@@ -283,7 +282,8 @@ _PATH_METADATA_NEW_COLUMNS: list[tuple[str, str, str]] = [
     ("program_title", "TEXT", ""),
     ("air_date", "TEXT", ""),
     ("needs_review", "INTEGER NOT NULL DEFAULT 0", ""),
-    ("normalized_program_key", "TEXT", ""),
+
+
     ("episode_no", "TEXT", ""),
     ("subtitle", "TEXT", ""),
     ("broadcaster", "TEXT", ""),
@@ -366,7 +366,8 @@ def _migrate_to_v3(con: sqlite3.Connection) -> None:
     # Create new indexes (IF NOT EXISTS is safe)
     _v3_indexes = [
         "CREATE INDEX IF NOT EXISTS idx_path_metadata_program_title ON path_metadata(program_title)",
-        "CREATE INDEX IF NOT EXISTS idx_path_metadata_npk ON path_metadata(normalized_program_key)",
+
+
         "CREATE INDEX IF NOT EXISTS idx_path_metadata_air_date ON path_metadata(air_date)",
         "CREATE INDEX IF NOT EXISTS idx_path_metadata_needs_review ON path_metadata(needs_review)",
         "CREATE INDEX IF NOT EXISTS idx_broadcasts_official_title ON broadcasts(official_title)",
@@ -396,10 +397,19 @@ def connect_db(db_path: str) -> sqlite3.Connection:
 
 
 def _ensure_triggers(con: sqlite3.Connection) -> None:
-    """Create normalized_program_key auto-sync triggers if missing."""
+    """Create triggers if missing."""
     for stmt in DDL_STATEMENTS:
         if "CREATE TRIGGER" in stmt:
             con.execute(stmt)
+
+
+def _drop_normalized_program_key(con: sqlite3.Connection) -> None:
+    """Drop the deprecated normalized_program_key column if it still exists."""
+    cols = [r["name"] for r in con.execute("PRAGMA table_info(path_metadata)").fetchall()]
+    if "normalized_program_key" not in cols:
+        return
+    con.execute("ALTER TABLE path_metadata DROP COLUMN normalized_program_key")
+    con.execute("DROP INDEX IF EXISTS idx_path_metadata_npk")
 
 
 def create_schema_if_needed(con: sqlite3.Connection) -> None:
@@ -408,6 +418,7 @@ def create_schema_if_needed(con: sqlite3.Connection) -> None:
     _migrate_files_columns(con)
     _migrate_to_v3(con)
     _ensure_triggers(con)
+    _drop_normalized_program_key(con)
 
 
 def begin_immediate(con: sqlite3.Connection) -> None:

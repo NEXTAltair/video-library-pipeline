@@ -173,9 +173,10 @@ def unique_dst_path(dst: Path) -> Path:
 
 
 def build_group_key(md: dict[str, Any]) -> tuple[str | None, str | None]:
-    key = str(md.get("normalized_program_key") or "").strip()
-    if not key:
-        return None, "missing_normalized_program_key"
+    from epg_common import normalize_program_key
+    key = normalize_program_key(str(md.get("program_title") or ""))
+    if not key or key == "unknown":
+        return None, "missing_program_title"
     ep = md.get("episode_no")
     if ep is not None and str(ep).strip():
         return f"{key}::ep::{str(ep).strip()}", None
@@ -358,7 +359,7 @@ def main() -> int:
             """
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
-                   pm.normalized_program_key, pm.episode_no, pm.subtitle,
+                   pm.episode_no, pm.subtitle,
                    pm.broadcaster, pm.human_reviewed
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id

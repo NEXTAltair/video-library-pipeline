@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { byProgramGroupFromPath, chooseSourceJsonl, looksSwallowedProgramTitle, lowerCompact, normalizeKey, toToolResult, tsCompact } from "./runtime";
+import { byProgramGroupFromPath, chooseSourceJsonl, looksSwallowedProgramTitle, lowerCompact, toToolResult, tsCompact } from "./runtime";
 import type { AnyObj } from "./types";
 
 type ProgramStat = {
@@ -25,7 +25,7 @@ type ReviewCandidate = {
     subtitle?: string;
     needs_review?: boolean;
     needs_review_reason?: string;
-    normalized_program_key?: string;
+
   };
   evidence?: {
     raw?: string;
@@ -152,7 +152,7 @@ export function buildReviewDiagnostics(rows: AnyObj[]): {
           subtitle: previewText(r.subtitle),
           needs_review: typeof r.needs_review === "boolean" ? r.needs_review : undefined,
           needs_review_reason: previewText(r.needs_review_reason),
-          normalized_program_key: previewText(r.normalized_program_key),
+
         },
         evidence: {
           raw: previewText((r.evidence as AnyObj | undefined)?.raw),
@@ -282,7 +282,7 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
           if (!includeUnknown && title === "UNKNOWN") continue;
           const needsReview = r.needs_review === true;
           if (!includeNeedsReview && needsReview) continue;
-          const normalizedProgramKey = String(r.normalized_program_key || normalizeKey(title));
+          const normalizedProgramKey = lowerCompact(title);
           const key = `${title}::${normalizedProgramKey}`;
           const cur = statsMap.get(key) ?? {
             canonicalTitle: title,
@@ -338,7 +338,8 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
               "air_date",
               "needs_review",
               "needs_review_reason",
-              "normalized_program_key",
+
+
               "aliases_in_yaml",
             ],
             reviewColumnsOutOfScope: [

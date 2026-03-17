@@ -89,22 +89,21 @@ def main() -> int:
 
     rows = con.execute(
         f"""
-        SELECT pm.path_id, pm.program_title, pm.normalized_program_key
+        SELECT pm.path_id, pm.program_title
         FROM path_metadata pm
         {where}
         """,
         params,
     ).fetchall()
 
-    updates: list[tuple[str, str, str]] = []  # (new_title, new_key, path_id)
+    updates: list[tuple[str, str]] = []  # (new_title, path_id)
     fix_counts: Counter[str] = Counter()
 
     for r in rows:
         pt = r["program_title"]
         new_pt = _fix_title(pt, alias_map, known_titles)
         if new_pt and new_pt != pt:
-            new_key = normalize_program_key(new_pt)
-            updates.append((new_pt, new_key, r["path_id"]))
+            updates.append((new_pt, r["path_id"]))
             fix_counts[new_pt] += 1
 
     result = {
@@ -125,7 +124,7 @@ def main() -> int:
     con.executemany(
         """
         UPDATE path_metadata
-        SET program_title = ?, normalized_program_key = ?
+        SET program_title = ?
         WHERE path_id = ?
         """,
         updates,

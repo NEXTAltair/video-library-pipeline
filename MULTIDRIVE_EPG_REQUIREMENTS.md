@@ -287,9 +287,9 @@ CREATE TABLE broadcast_group_members (
 ### グルーピングキー
 
 優先順:
-1. `normalized_program_key + episode_no` → `"番組名::ep::1"`
-2. `normalized_program_key + subtitle` → `"番組名::sub::サブタイ"`
-3. `normalized_program_key + air_date` → `"番組名::date::2025-01-15"` (ep/sub欠損時)
+1. `normalize_program_key(program_title) + episode_no` → `"番組名::ep::1"` （都度計算）
+2. `normalize_program_key(program_title) + subtitle` → `"番組名::sub::サブタイ"`
+3. `normalize_program_key(program_title) + air_date` → `"番組名::date::2025-01-15"` (ep/sub欠損時)
 
 ### 再放送判定ロジック
 
