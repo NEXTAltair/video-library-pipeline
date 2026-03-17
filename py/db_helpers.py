@@ -58,6 +58,10 @@ def reconstruct_path_metadata(row) -> dict[str, Any]:
 
     Works with sqlite3.Row or any dict-like object.
     """
+    if isinstance(row, tuple) and not hasattr(row, 'keys'):
+        # If it's a plain tuple, we can't reconstruct by name. Return empty.
+        return {}
+
     try:
         data = json.loads(str(row["data_json"])) if row["data_json"] else {}
     except Exception:
@@ -68,8 +72,14 @@ def reconstruct_path_metadata(row) -> dict[str, Any]:
     # Overlay promoted columns onto data dict
     for key in PROMOTED_PATH_METADATA_KEYS:
         try:
-            val = row[key]
-        except (KeyError, IndexError):
+            if hasattr(row, 'keys'):
+                val = row[key]
+            elif hasattr(row, '__getitem__') and hasattr(row, 'keys'):
+                 val = row[key]
+            else:
+                # If it's a tuple we need to know the index, but we can't do that generically here
+                continue
+        except (KeyError, IndexError, TypeError):
             continue
         if val is not None:
             if key == "needs_review":

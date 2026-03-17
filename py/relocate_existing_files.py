@@ -561,7 +561,7 @@ def main() -> int:
                 continue
 
             dst = canonicalize_windows_path(dst)
-            if sf.win_path == dst:
+            if sf.win_path.lower() == dst.lower():
                 already_correct += 1
                 rows_for_plan.append(
                     {
