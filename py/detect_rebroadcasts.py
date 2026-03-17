@@ -32,9 +32,8 @@ def safe_json(v: Any) -> str:
 
 
 def _build_episode_key(md: dict[str, Any]) -> str | None:
-    """Build a grouping key from program_title (normalized) + episode identifier."""
-    from epg_common import normalize_program_key
-    npk = normalize_program_key(str(md.get("program_title") or ""))
+    """Build a grouping key from program_title (normalized via SQL) + episode identifier."""
+    npk = str(md.get("normalized_program_key") or "").strip()
     if not npk or npk == "unknown":
         return None
     ep = md.get("episode_no")
@@ -136,6 +135,7 @@ def main() -> int:
             """
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
+                   normalize_program_key(pm.program_title) AS normalized_program_key,
                    pm.episode_no, pm.subtitle,
                    pm.broadcaster, pm.human_reviewed
             FROM path_metadata pm

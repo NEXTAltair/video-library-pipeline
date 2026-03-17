@@ -246,6 +246,13 @@ DDL_STATEMENTS = [
     ORDER BY pm.program_title
     """,
     """
+    CREATE VIEW IF NOT EXISTS v_path_metadata_npk AS
+    SELECT *,
+      normalize_program_key(program_title) AS normalized_program_key
+    FROM path_metadata
+    WHERE program_title IS NOT NULL
+    """,
+    """
     CREATE VIEW IF NOT EXISTS v_titles_needs_review AS
     SELECT
       pm.path_id,
