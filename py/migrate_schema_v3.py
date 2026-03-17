@@ -43,7 +43,8 @@ _PATH_METADATA_NEW_COLUMNS = [
     ("program_title", "TEXT", ""),
     ("air_date", "TEXT", ""),
     ("needs_review", "INTEGER NOT NULL DEFAULT 0", ""),
-    ("normalized_program_key", "TEXT", ""),
+
+
     ("episode_no", "TEXT", ""),
     ("subtitle", "TEXT", ""),
     ("broadcaster", "TEXT", ""),
@@ -461,7 +462,8 @@ def main() -> int:
         # Step 8: Create indexes
         v3_indexes = [
             "CREATE INDEX IF NOT EXISTS idx_path_metadata_program_title ON path_metadata(program_title)",
-            "CREATE INDEX IF NOT EXISTS idx_path_metadata_npk ON path_metadata(normalized_program_key)",
+
+
             "CREATE INDEX IF NOT EXISTS idx_path_metadata_air_date ON path_metadata(air_date)",
             "CREATE INDEX IF NOT EXISTS idx_path_metadata_needs_review ON path_metadata(needs_review)",
             "CREATE INDEX IF NOT EXISTS idx_broadcasts_official_title ON broadcasts(official_title)",
