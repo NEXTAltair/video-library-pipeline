@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Detect rebroadcast candidates and classify with EPG rebroadcast flags.
 
-This script groups recordings of the same episode (same normalized_program_key +
+This script groups recordings of the same episode (program_id/title +
 episode_no/subtitle). Classification rule priority:
 
 1) If any member has broadcasts.data_json.is_rebroadcast_flag=true, those are
@@ -23,6 +23,7 @@ import json
 from typing import Any
 
 from db_helpers import reconstruct_path_metadata
+from episode_grouping import build_episode_group_key
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
 from pathscan_common import now_iso
 
@@ -31,50 +32,18 @@ def safe_json(v: Any) -> str:
     return json.dumps(v, ensure_ascii=False)
 
 
-def _build_episode_key(md: dict[str, Any]) -> str | None:
-    """Build a grouping key from normalized_program_key + episode identifier."""
-    npk = str(md.get("normalized_program_key") or "").strip()
-    if not npk:
-        return None
-    ep = md.get("episode_no")
-    sub = str(md.get("subtitle") or "").strip()
-    if ep is not None and str(ep).strip():
-        return f"{npk}::ep::{str(ep).strip()}"
-    if sub:
-        return f"{npk}::sub::{sub.lower()}"
-    # No episode/subtitle — use air_date to distinguish
-    air = str(md.get("air_date") or "").strip()
-    if air:
-        return f"{npk}::date::{air}"
-    return None
+def _build_episode_key(md: dict[str, Any], linked_program_id: str | None) -> str | None:
+    key, _ = build_episode_group_key(
+        md,
+        linked_program_id=linked_program_id,
+        allow_air_date_fallback=True,
+    )
+    return key
 
 
 def _stable_group_id(episode_key: str) -> str:
     """Deterministic group_id from episode_key for idempotency."""
     return hashlib.sha256(episode_key.encode("utf-8")).hexdigest()[:16]
-
-
-def _extract_rebroadcast_flag(data_json_raw: Any) -> bool | None:
-    if not data_json_raw:
-        return None
-    try:
-        obj = json.loads(str(data_json_raw))
-    except Exception:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    v = obj.get("is_rebroadcast_flag")
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in {"true", "1", "yes"}:
-            return True
-        if s in {"false", "0", "no"}:
-            return False
-    return None
 
 
 def _classify_group(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -135,8 +104,16 @@ def main() -> int:
             """
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
-                   pm.normalized_program_key, pm.episode_no, pm.subtitle,
-                   pm.broadcaster, pm.human_reviewed
+                   pm.episode_no, pm.subtitle,
+                   pm.broadcaster, pm.human_reviewed,
+                   (
+                     SELECT COALESCE(pp.program_id, b.program_id)
+                     FROM path_programs pp
+                     LEFT JOIN broadcasts b ON b.broadcast_id = pp.broadcast_id
+                     WHERE pp.path_id = pm.path_id
+                     ORDER BY CASE WHEN pp.broadcast_id IS NOT NULL THEN 0 ELSE 1 END, pp.updated_at DESC
+                     LIMIT 1
+                   ) AS linked_program_id
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
             WHERE pm.source != 'edcb_epg'
@@ -150,7 +127,8 @@ def main() -> int:
         for r in md_rows:
             path_id = str(r["path_id"])
             md = reconstruct_path_metadata(r)
-            ep_key = _build_episode_key(md)
+            linked_program_id = str(r["linked_program_id"] or "").strip() or None
+            ep_key = _build_episode_key(md, linked_program_id)
             if not ep_key:
                 skipped_no_key += 1
                 continue

@@ -17,6 +17,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from db_helpers import reconstruct_path_metadata
+from episode_grouping import build_episode_group_key
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
 from move_apply_stats import aggregate_move_apply
 from pathscan_common import (
@@ -34,10 +35,6 @@ from windows_pwsh_bridge import run_pwsh_json
 
 
 FILE_NAMESPACE = uuid.UUID("88e78892-867e-4e54-b432-2f251e75ac9f")
-
-
-def normalize_subtitle(s: str) -> str:
-    return re.sub(r"\s+", " ", str(s or "").strip().lower())
 
 
 def parse_confidence(v: Any) -> float:
@@ -172,17 +169,12 @@ def unique_dst_path(dst: Path) -> Path:
     raise RuntimeError(f"failed to resolve unique dst path: {dst}")
 
 
-def build_group_key(md: dict[str, Any]) -> tuple[str | None, str | None]:
-    key = str(md.get("normalized_program_key") or "").strip()
-    if not key:
-        return None, "missing_normalized_program_key"
-    ep = md.get("episode_no")
-    if ep is not None and str(ep).strip():
-        return f"{key}::ep::{str(ep).strip()}", None
-    sub = str(md.get("subtitle") or "").strip()
-    if sub:
-        return f"{key}::sub::{normalize_subtitle(sub)}", None
-    return None, "missing_episode_and_subtitle"
+def build_group_key(md: dict[str, Any], linked_program_id: str | None) -> tuple[str | None, str | None]:
+    return build_episode_group_key(
+        md,
+        linked_program_id=linked_program_id,
+        allow_air_date_fallback=False,
+    )
 
 
 def load_hash_groups(path: str) -> list[frozenset[str]]:
@@ -358,8 +350,16 @@ def main() -> int:
             """
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
-                   pm.normalized_program_key, pm.episode_no, pm.subtitle,
-                   pm.broadcaster, pm.human_reviewed
+                   pm.episode_no, pm.subtitle,
+                   pm.broadcaster, pm.human_reviewed,
+                   (
+                     SELECT COALESCE(pp.program_id, b.program_id)
+                     FROM path_programs pp
+                     LEFT JOIN broadcasts b ON b.broadcast_id = pp.broadcast_id
+                     WHERE pp.path_id = pm.path_id
+                     ORDER BY CASE WHEN pp.broadcast_id IS NOT NULL THEN 0 ELSE 1 END, pp.updated_at DESC
+                     LIMIT 1
+                   ) AS linked_program_id
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
             WHERE pm.source != 'edcb_epg'
@@ -373,7 +373,8 @@ def main() -> int:
             path_id = str(r["path_id"])
             path_val = canonicalize_windows_path(str(r["path"]))
             md = reconstruct_path_metadata(r)
-            group_key, reason = build_group_key(md)
+            linked_program_id = str(r["linked_program_id"] or "").strip() or None
+            group_key, _ = build_group_key(md, linked_program_id)
             if not group_key:
                 dropped_for_missing_key += 1
                 continue
