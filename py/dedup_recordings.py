@@ -17,6 +17,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from db_helpers import reconstruct_path_metadata
+from epg_common import build_episode_group_key
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
 from move_apply_stats import aggregate_move_apply
 from pathscan_common import (
@@ -34,10 +35,6 @@ from windows_pwsh_bridge import run_pwsh_json
 
 
 FILE_NAMESPACE = uuid.UUID("88e78892-867e-4e54-b432-2f251e75ac9f")
-
-
-def normalize_subtitle(s: str) -> str:
-    return re.sub(r"\s+", " ", str(s or "").strip().lower())
 
 
 def parse_confidence(v: Any) -> float:
@@ -173,15 +170,13 @@ def unique_dst_path(dst: Path) -> Path:
 
 
 def build_group_key(md: dict[str, Any]) -> tuple[str | None, str | None]:
-    key = str(md.get("normalized_program_key") or "").strip()
-    if not key:
-        return None, "missing_normalized_program_key"
-    ep = md.get("episode_no")
-    if ep is not None and str(ep).strip():
-        return f"{key}::ep::{str(ep).strip()}", None
-    sub = str(md.get("subtitle") or "").strip()
-    if sub:
-        return f"{key}::sub::{normalize_subtitle(sub)}", None
+    key = build_episode_group_key(
+        str(md.get("program_title") or ""),
+        md.get("episode_no"),
+        str(md.get("subtitle") or ""),
+    )
+    if key:
+        return key, None
     return None, "missing_episode_and_subtitle"
 
 
@@ -358,8 +353,7 @@ def main() -> int:
             """
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
-                   pm.normalized_program_key, pm.episode_no, pm.subtitle,
-                   pm.broadcaster, pm.human_reviewed
+                   pm.episode_no, pm.subtitle, pm.broadcaster, pm.human_reviewed
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
             WHERE pm.source != 'edcb_epg'

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Detect rebroadcast candidates and classify with EPG rebroadcast flags.
 
-This script groups recordings of the same episode (same normalized_program_key +
+This script groups recordings of the same episode (same normalized program title +
 episode_no/subtitle). Classification rule priority:
 
 1) If any member has broadcasts.data_json.is_rebroadcast_flag=true, those are
@@ -23,6 +23,7 @@ import json
 from typing import Any
 
 from db_helpers import reconstruct_path_metadata
+from epg_common import build_episode_group_key
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
 from pathscan_common import now_iso
 
@@ -32,21 +33,14 @@ def safe_json(v: Any) -> str:
 
 
 def _build_episode_key(md: dict[str, Any]) -> str | None:
-    """Build a grouping key from normalized_program_key + episode identifier."""
-    npk = str(md.get("normalized_program_key") or "").strip()
-    if not npk:
-        return None
-    ep = md.get("episode_no")
-    sub = str(md.get("subtitle") or "").strip()
-    if ep is not None and str(ep).strip():
-        return f"{npk}::ep::{str(ep).strip()}"
-    if sub:
-        return f"{npk}::sub::{sub.lower()}"
-    # No episode/subtitle — use air_date to distinguish
-    air = str(md.get("air_date") or "").strip()
-    if air:
-        return f"{npk}::date::{air}"
-    return None
+    """Build a grouping key from normalized program title + episode identifier."""
+    return build_episode_group_key(
+        str(md.get("program_title") or ""),
+        md.get("episode_no"),
+        str(md.get("subtitle") or ""),
+        air_date=str(md.get("air_date") or ""),
+        include_air_date_fallback=True,
+    )
 
 
 def _stable_group_id(episode_key: str) -> str:
@@ -135,8 +129,7 @@ def main() -> int:
             """
             SELECT pm.path_id, pm.data_json, p.path,
                    pm.program_title, pm.air_date, pm.needs_review,
-                   pm.normalized_program_key, pm.episode_no, pm.subtitle,
-                   pm.broadcaster, pm.human_reviewed
+                   pm.episode_no, pm.subtitle, pm.broadcaster, pm.human_reviewed
             FROM path_metadata pm
             JOIN paths p ON p.path_id = pm.path_id
             WHERE pm.source != 'edcb_epg'
