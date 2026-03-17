@@ -40,5 +40,5 @@ metadata: {"openclaw":{"emoji":"📋","requires":{"plugins":["video-library-pipe
 ## Handoff
 
 - Report `inventory` and `queue` pointers to the user.
-- Pass `queue` path as `queuePath` to Stage 2.
+- Pass **`queue`** path (NOT `inventory`) as `queuePath` to Stage 2. The `inventory` file is a raw file listing without `path_id`; passing it to reextract will fail.
 - Ask user whether to proceed to Stage 2: `/extract-review` (Extraction + YAML review).

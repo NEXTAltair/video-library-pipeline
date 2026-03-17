@@ -62,7 +62,7 @@ See main `video-library-pipeline` SKILL.md for definitions of `machine_extracted
 
 1. Call `video_pipeline_validate` with `{"checkWindowsInterop": true, "intent": "extract"}`. Follow the `nextStep` field in the result.
 2. Call `video_pipeline_reextract` with:
-   - `queuePath` from Stage 1 summary (`queue`)
+   - `queuePath` from Stage 1 summary — use the **`queue`** field, NOT `inventory`. The queue file contains `path_id` for each record; the inventory file does not and will cause a KeyError.
    - optional `batchSize` / `maxBatches`
    - optional `hintsYamlPath`: path to a previously reviewed `program_aliases_review_*.yaml` if available
    - keep default `preserveHumanReviewed=true` (reviewed rows are protected from overwrite)

@@ -574,6 +574,7 @@ def enforce_db_contract(row: dict) -> None:
 
 
 def load_queue(path: str):
+    first_data_row = True
     with open(path, "r", encoding="utf-8-sig") as f:
         for i, line in enumerate(f):
             if not line.strip():
@@ -581,6 +582,16 @@ def load_queue(path: str):
             obj = json.loads(line)
             if i == 0 and isinstance(obj, dict) and "_meta" in obj:
                 continue
+            # Validate that queue rows have required fields
+            if first_data_row:
+                first_data_row = False
+                if isinstance(obj, dict) and not obj.get("path_id"):
+                    raise SystemExit(
+                        f"ERROR: queue file does not contain 'path_id' field (row 1). "
+                        f"This looks like an inventory file, not a metadata queue. "
+                        f"Use the 'queue' path from Stage 1 output, not 'inventory'. "
+                        f"File: {path}"
+                    )
             yield obj
 
 
@@ -678,9 +689,8 @@ def main() -> int:
     preserved_human_reviewed = 0
     generated_input_jsonl_paths: list[str] = []
     generated_output_jsonl_paths: list[str] = []
-    from mediaops_schema import register_custom_functions
-    db_con = sqlite3.connect(args.db)
-    register_custom_functions(db_con)
+    from mediaops_schema import connect_db
+    db_con = connect_db(args.db)
     epg_cache = _EpgCache(db_con)
 
     def flush():
