@@ -11,6 +11,7 @@ import { registerToolDetectRebroadcasts } from "./src/tool-detect-rebroadcasts";
 import { registerToolIngestEpg } from "./src/tool-ingest-epg";
 import { registerToolPrepareRelocateMetadata } from "./src/tool-prepare-relocate-metadata";
 import { registerToolRelocate } from "./src/tool-relocate";
+import { registerToolRelocateNormalizeCase } from "./src/tool-relocate-normalize-case";
 import { registerToolReextract } from "./src/tool-reextract";
 import { registerToolLlmExtract } from "./src/tool-llm-extract";
 import { registerToolLlmExtractStatus } from "./src/tool-llm-extract-status";
@@ -39,6 +40,7 @@ export default function register(api: any) {
   registerToolBackfill(api, getCfg);
   registerToolDedup(api, getCfg);
   registerToolRelocate(api, getCfg);
+  registerToolRelocateNormalizeCase(api, getCfg);
   registerToolPrepareRelocateMetadata(api, getCfg);
   registerToolStatus(api, getCfg);
   registerToolValidate(api, getCfg);

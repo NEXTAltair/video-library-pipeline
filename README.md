@@ -334,6 +334,23 @@ sourceRoot (未視聴フォルダ) のファイルを正規化・棚卸し、メ
 
 ---
 
+#### `video_pipeline_relocate_normalize_case` — relocateケース正規化
+
+`video_pipeline_relocate_existing_files` の dry-run 結果 (`relocate_plan_*.jsonl`) を入力に、
+`reason=already_correct` かつ `src.lower()==dst.lower()` なケース違いのみを抽出して
+フォルダ名を2段階リネーム (`old -> __tmp__ -> new`) で正規化する。
+
+| パラメータ | 型      | 説明 |
+| ---------- | ------- | ---- |
+| `planPath` | string  | relocate dry-run が返した `planPath` (必須) |
+| `apply`    | boolean | `false`=dry-run, `true`=実リネーム |
+| `limit`    | integer | 実行上限 (任意) |
+
+主な用途:
+- `program_title` の大小文字修正後に、Windows の case-insensitive 制約で relocate が `already_correct` になる場合の後処理。
+
+---
+
 #### `video_pipeline_prepare_relocate_metadata` — relocate用メタデータ一括準備
 
 relocateフロー専用の複合オーケストレーター。内部で relocate dry-run (キュー生成付き) → reextract を連続実行する。
