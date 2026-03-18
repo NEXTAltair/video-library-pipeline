@@ -9,17 +9,19 @@ export function registerToolNormalizeFolderCase(api: any, getCfg: (api: any) => 
     {
       name: "video_pipeline_normalize_folder_case",
       description:
-        "Normalize folder-name casing based on DB program_title and placement rules. Dry-run first, then apply with planPath.",
+        "Fix case-only folder name differences between the filesystem and DB program_title. " +
+        "Use after video_pipeline_relocate_existing_files dry-run shows already_correct entries caused by Windows case-insensitive paths (e.g. 'vs' vs 'VS', 'bs11' vs 'Bs11'). " +
+        "Step 1: apply=false (dry-run) — queries DB to detect mismatches and writes a rename plan. " +
+        "Step 2: review the plan, then apply=true + planPath — executes two-step renames and updates DB paths atomically.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           apply: { type: "boolean", default: false },
-          planPath: { type: "string", description: "Required when apply=true. Use plan_path from dry-run." },
-          roots: { type: "array", items: { type: "string" }, description: "Scan roots (Windows style paths)." },
-          rootsFilePath: { type: "string", description: "Path to YAML/text file listing roots." },
-          extensions: { type: "array", items: { type: "string" }, default: [".mp4"] },
-          limit: { type: "integer", minimum: 1, maximum: 100000 },
+          planPath: { type: "string", description: "Required when apply=true. Use plan_path returned by dry-run." },
+          roots: { type: "array", items: { type: "string" }, description: "Windows-style root paths to limit scope. Defaults to all is_current=1 DB entries." },
+          rootsFilePath: { type: "string", description: "Path to YAML file with 'roots' list (e.g. relocate_roots.yaml). Used when roots is omitted." },
+          limit: { type: "integer", minimum: 1, maximum: 100000, description: "Max files to process from DB (dry-run only)." },
           allowNeedsReview: { type: "boolean", default: false },
           allowUnreviewedMetadata: { type: "boolean", default: false },
         },
@@ -82,17 +84,12 @@ export function registerToolNormalizeFolderCase(api: any, getCfg: (api: any) => 
         }
         if (params.apply === true) {
           args.push("--apply");
-          args.push("--roots-json", "[]");
-          args.push("--extensions-json", "[]");
           if (typeof params.planPath === "string") {
             args.push("--plan-path", String(params.planPath));
           }
         } else {
           if (Array.isArray(params.roots) && params.roots.length > 0) {
             args.push("--roots-json", JSON.stringify(params.roots));
-          }
-          if (Array.isArray(params.extensions) && params.extensions.length > 0) {
-            args.push("--extensions-json", JSON.stringify(params.extensions));
           }
           if (typeof params.limit === "number" && Number.isFinite(params.limit)) {
             args.push("--limit", String(Math.trunc(params.limit)));

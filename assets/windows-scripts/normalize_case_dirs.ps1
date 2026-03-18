@@ -2,8 +2,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$PlanJsonl,
   [Parameter(Mandatory = $true)]
-  [string]$OpsRoot,
-  [switch]$DryRun
+  [string]$OpsRoot
 )
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
@@ -25,7 +24,7 @@ function J([hashtable]$h) { ([pscustomobject]$h | ConvertTo-Json -Compress -Dept
 
 $sw = New-Object System.IO.StreamWriter($out, $false, (New-Object System.Text.UTF8Encoding($false)))
 try {
-  $sw.WriteLine((J @{ _meta = @{ kind='case_normalize_apply'; run_id=$runId; plan=$PlanJsonl; dry_run=[bool]$DryRun; generated_at=(Get-Date).ToString('o') } }))
+  $sw.WriteLine((J @{ _meta = @{ kind='case_normalize_apply'; run_id=$runId; plan=$PlanJsonl; generated_at=(Get-Date).ToString('o') } }))
 
   Get-Content -LiteralPath $PlanJsonl -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
@@ -61,25 +60,27 @@ try {
       return
     }
 
-    if ($DryRun) {
-      $sw.WriteLine((J @{ op='rename_dir_case'; ts=$ts; src=$src; dst=$dst; ok=$true; dry_run=$true }))
+    $parent = Split-Path -Parent $src
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+      $sw.WriteLine((J @{ op='rename_dir_case'; ts=$ts; src=$src; dst=$dst; ok=$false; error='invalid_src_parent' }))
       return
     }
+    $leaf = Split-Path -Leaf $src
+    $tmpLeaf = "${leaf}.__case_tmp__" + ([Guid]::NewGuid().ToString('N'))
+    $tmp = Join-Path -Path $parent -ChildPath $tmpLeaf
 
     try {
-      $parent = Split-Path -Parent $src
-      if ([string]::IsNullOrWhiteSpace($parent)) {
-        throw "invalid_src_parent"
-      }
-      $leaf = Split-Path -Leaf $src
-      $tmpLeaf = "${leaf}.__case_tmp__" + ([Guid]::NewGuid().ToString('N'))
-      $tmp = Join-Path -Path $parent -ChildPath $tmpLeaf
-
       [System.IO.Directory]::Move((Convert-ToLongPathLiteral $src), (Convert-ToLongPathLiteral $tmp))
       [System.IO.Directory]::Move((Convert-ToLongPathLiteral $tmp), (Convert-ToLongPathLiteral $dst))
       $sw.WriteLine((J @{ op='rename_dir_case'; ts=$ts; src=$src; dst=$dst; ok=$true }))
     }
     catch {
+      # Best-effort rollback: if tmp exists (2nd Move failed), rename back to src
+      try {
+        if ((Test-PathDirLong $tmp) -and -not (Test-PathDirLong $dst)) {
+          [System.IO.Directory]::Move((Convert-ToLongPathLiteral $tmp), (Convert-ToLongPathLiteral $src))
+        }
+      } catch {}
       $sw.WriteLine((J @{ op='rename_dir_case'; ts=$ts; src=$src; dst=$dst; ok=$false; error=$_.Exception.Message }))
     }
   }

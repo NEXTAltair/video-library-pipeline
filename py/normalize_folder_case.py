@@ -6,23 +6,20 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
 from db_helpers import reconstruct_path_metadata
-from mediaops_schema import connect_db, create_schema_if_needed, fetchone
+from mediaops_schema import connect_db, create_schema_if_needed, fetchall
 from path_placement_rules import build_expected_dest_path, build_routed_dest_path, has_required_db_contract, load_drive_routes
 from pathscan_common import (
-    DEFAULT_EXTENSIONS,
     as_bool,
     canonicalize_windows_path,
-    ensure_exts,
     iter_jsonl,
     now_iso,
     parse_json_arg,
     parse_simple_yaml_lists,
     safe_json,
-    scan_files,
     split_win,
     ts_compact,
     windows_to_wsl_path,
@@ -36,23 +33,49 @@ class CaseRenameOp:
     dst_dir: str
 
 
-def latest_metadata_for_path(con, path_id: str) -> tuple[dict[str, Any] | None, str | None]:
-    row = fetchone(
+def _path_in_roots(win_path: str, roots_win: list[str]) -> bool:
+    """Return True if win_path is under any of roots_win (or roots_win is empty)."""
+    if not roots_win:
+        return True
+    p_lower = win_path.lower()
+    for root in roots_win:
+        root_lower = root.rstrip("\\").lower()
+        if p_lower == root_lower or p_lower.startswith(root_lower + "\\"):
+            return True
+    return False
+
+
+def _query_current_paths_with_metadata(con) -> list:
+    """Single CTE JOIN query: replaces per-file N+1 DB lookups."""
+    return fetchall(
         con,
         """
-        SELECT source, data_json, program_title, air_date, needs_review,
-               episode_no, subtitle, broadcaster, human_reviewed
-        FROM path_metadata
-        WHERE path_id=?
-        ORDER BY updated_at DESC
-        LIMIT 1
+        WITH latest AS (
+            SELECT path_id, MAX(updated_at) AS max_ts
+            FROM path_metadata
+            WHERE program_title IS NOT NULL AND program_title != ''
+            GROUP BY path_id
+        )
+        SELECT
+            p.path_id,
+            p.path,
+            pm.source,
+            pm.program_title,
+            pm.air_date,
+            pm.needs_review,
+            pm.episode_no,
+            pm.subtitle,
+            pm.broadcaster,
+            pm.human_reviewed,
+            pm.data_json
+        FROM file_paths fp
+        JOIN paths p ON p.path_id = fp.path_id
+        JOIN latest lm ON lm.path_id = p.path_id
+        JOIN path_metadata pm
+          ON pm.path_id = lm.path_id AND pm.updated_at = lm.max_ts
+        WHERE fp.is_current = 1
         """,
-        (path_id,),
     )
-    if not row:
-        return None, None
-    md = reconstruct_path_metadata(row)
-    return md if md else None, str(row["source"]) if row["source"] is not None else None
 
 
 def split_parts(win_path: str) -> tuple[str, list[str]]:
@@ -60,7 +83,7 @@ def split_parts(win_path: str) -> tuple[str, list[str]]:
     drive, _dir, _name, _ext = split_win(p)
     if not drive:
         return "", []
-    rest = p[len(drive) :]
+    rest = p[len(drive):]
     parts = [seg for seg in rest.split("\\") if seg]
     return drive.upper(), parts
 
@@ -158,13 +181,19 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--roots-json", default="")
     ap.add_argument("--roots-file-path", default="")
-    ap.add_argument("--extensions-json", default="")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--plan-path", default="")
     ap.add_argument("--allow-needs-review", default="false")
     ap.add_argument("--allow-unreviewed-metadata", default="false")
     ap.add_argument("--drive-routes", default="", help="Path to drive_routes.yaml for multi-dest routing")
     args = ap.parse_args()
+
+    # --apply requires --plan-path to enforce the dry-run → review → apply workflow
+    if args.apply and not (args.plan_path or "").strip():
+        raise SystemExit(
+            "--plan-path is required when --apply is set. "
+            "Run without --apply first to generate a plan, review it, then pass it with --apply."
+        )
 
     db_path = windows_to_wsl_path(args.db)
     if not os.path.exists(db_path):
@@ -175,42 +204,12 @@ def main() -> int:
     scripts_dir = ops_root / "scripts"
     move_dir.mkdir(parents=True, exist_ok=True)
 
-    allow_needs_review = as_bool(args.allow_needs_review)
-    allow_unreviewed_metadata = as_bool(args.allow_unreviewed_metadata)
-
-    roots: list[str] = []
-    extensions = list(DEFAULT_EXTENSIONS)
-    scanned = []
-    scan_warnings: list[str] = []
-    scan_errors: list[str] = []
+    allow_needs_review = as_bool(args.allow_needs_review, False)
+    allow_unreviewed_metadata = as_bool(args.allow_unreviewed_metadata, False)
 
     plan_path_arg = canonicalize_windows_path(str(args.plan_path or "").strip())
+    # When --apply is set, --plan-path is guaranteed non-empty (validated above)
     use_existing_plan = bool(args.apply and plan_path_arg)
-
-    if not use_existing_plan:
-        roots = parse_json_arg(args.roots_json)
-        roots_file_path = windows_to_wsl_path(args.roots_file_path or "")
-        if not isinstance(roots, list) or len(roots) == 0:
-            roots = parse_simple_yaml_lists(roots_file_path) if roots_file_path else []
-        roots = [canonicalize_windows_path(r) for r in roots if isinstance(r, str) and r.strip()]
-        if not roots:
-            raise SystemExit("roots is required: pass --roots-json or --roots-file-path")
-
-        exts = parse_json_arg(args.extensions_json)
-        if not isinstance(exts, list) or not exts:
-            exts = list(DEFAULT_EXTENSIONS)
-        extensions = ensure_exts(exts)
-
-        scanned, scan_warnings, scan_errors, _fallback_stats = scan_files(
-            roots=roots,
-            exts=set(extensions),
-            detect_corruption=False,
-            read_bytes=4096,
-            scan_retry_count=1,
-            windows_ops_root=str(ops_root),
-        )
-        if args.limit > 0:
-            scanned = scanned[: args.limit]
 
     con = connect_db(db_path)
     create_schema_if_needed(con)
@@ -219,72 +218,96 @@ def main() -> int:
     if args.drive_routes and os.path.exists(args.drive_routes):
         routes = load_drive_routes(args.drive_routes)
 
-    plan_path = Path(windows_to_wsl_path(plan_path_arg)) if use_existing_plan else (move_dir / f"case_normalize_plan_{ts_compact()}.jsonl")
+    plan_path = (
+        Path(windows_to_wsl_path(plan_path_arg))
+        if use_existing_plan
+        else (move_dir / f"case_normalize_plan_{ts_compact()}.jsonl")
+    )
     if use_existing_plan and not plan_path.exists():
         raise SystemExit(f"plan file not found: {plan_path_arg}")
 
-    rows_for_plan: list[dict[str, Any]] = []
     case_ops: dict[tuple[str, str], CaseRenameOp] = {}
     metadata_skipped = 0
     already_correct = 0
     case_mismatch_files = 0
+    db_queried_files = 0
 
-    for sf in scanned:
-        path_row = fetchone(con, "SELECT path_id FROM paths WHERE path = ?", (sf.win_path,))
-        if not path_row:
-            continue
-
-        path_id = str(path_row["path_id"])
-        md, md_source = latest_metadata_for_path(con, path_id)
-        if md is None or not has_required_db_contract(md):
-            metadata_skipped += 1
-            continue
-        if bool(md.get("needs_review")) and not allow_needs_review:
-            metadata_skipped += 1
-            continue
-
-        source_norm = str(md_source or "").strip().lower()
-        is_human_reviewed = source_norm == "human_reviewed"
-        is_llm = source_norm in {"llm", "llm_subagent"}
-        if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
-            metadata_skipped += 1
-            continue
-
-        if routes:
-            dst, _genre, dst_err = build_routed_dest_path(routes, sf.win_path, md)
+    if not use_existing_plan:
+        # Resolve roots for filtering (DB-first: no filesystem scan needed)
+        roots_win: list[str] = []
+        roots_param = parse_json_arg(args.roots_json, None)
+        if roots_param is not None:
+            if not isinstance(roots_param, list):
+                raise SystemExit("--roots-json must be a JSON array")
+            roots_win = [canonicalize_windows_path(str(r)) for r in roots_param if str(r).strip()]
         else:
-            dst, dst_err = build_expected_dest_path(args.dest_root, sf.win_path, md)
-        if not dst or dst_err:
-            continue
+            rfp = str(args.roots_file_path or "").strip()
+            if rfp:
+                parsed = parse_simple_yaml_lists(Path(windows_to_wsl_path(rfp)))
+                roots_yaml = parsed.get("roots", [])
+                if not isinstance(roots_yaml, list):
+                    raise SystemExit("rootsFilePath must contain list key 'roots'")
+                roots_win = [canonicalize_windows_path(str(r)) for r in roots_yaml if str(r).strip()]
 
-        src = canonicalize_windows_path(sf.win_path)
-        dst = canonicalize_windows_path(dst)
+        # Single JOIN query replaces per-file N+1 lookups
+        db_rows = _query_current_paths_with_metadata(con)
 
-        if src == dst:
-            already_correct += 1
-            continue
-        if src.lower() != dst.lower():
-            continue
+        processed = 0
+        for row in db_rows:
+            win_path = canonicalize_windows_path(str(row["path"] or ""))
+            if not win_path:
+                continue
+            if not _path_in_roots(win_path, roots_win):
+                continue
 
-        case_mismatch_files += 1
-        src_dir = str(PureWindowsPath(src).parent)
-        dst_dir = str(PureWindowsPath(dst).parent)
-        ops = derive_case_ops(src_dir, dst_dir)
-        for op in ops:
-            case_ops[(op.src_dir.lower(), op.dst_dir.lower())] = op
-        rows_for_plan.append(
-            {
-                "path_id": path_id,
-                "src": src,
-                "dst": dst,
-                "status": "planned",
-                "reason": "case_only_path_mismatch",
-                "program_title": md.get("program_title"),
-                "air_date": md.get("air_date"),
-                "metadata_source": md_source,
-                "ts": now_iso(),
-            }
-        )
+            db_queried_files += 1
+
+            md = reconstruct_path_metadata(row)
+            md_source = str(row["source"]) if row["source"] is not None else None
+
+            if md is None or not has_required_db_contract(md):
+                metadata_skipped += 1
+                continue
+            if bool(md.get("needs_review")) and not allow_needs_review:
+                metadata_skipped += 1
+                continue
+
+            source_norm = str(md_source or "").strip().lower()
+            is_human_reviewed = source_norm == "human_reviewed"
+            is_llm = source_norm in {"llm", "llm_subagent"}
+            if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
+                metadata_skipped += 1
+                continue
+
+            if routes:
+                dst, _genre, dst_err = build_routed_dest_path(routes, win_path, md)
+            else:
+                dst, dst_err = build_expected_dest_path(args.dest_root, win_path, md)
+            if not dst or dst_err:
+                continue
+
+            src = win_path
+            dst = canonicalize_windows_path(dst)
+
+            if src == dst:
+                already_correct += 1
+                continue
+            if src.lower() != dst.lower():
+                continue
+
+            case_mismatch_files += 1
+            # Extract the directory portion of src and dst paths
+            src_drive, src_parts = split_parts(src)
+            dst_drive, dst_parts = split_parts(dst)
+            if src_parts and dst_parts:
+                src_dir = join_parts(src_drive, src_parts[:-1]) if len(src_parts) > 1 else src_drive
+                dst_dir = join_parts(dst_drive, dst_parts[:-1]) if len(dst_parts) > 1 else dst_drive
+                for op in derive_case_ops(src_dir, dst_dir):
+                    case_ops[(op.src_dir.lower(), op.dst_dir.lower())] = op
+
+            processed += 1
+            if args.limit > 0 and processed >= args.limit:
+                break
 
     sorted_ops = sorted(case_ops.values(), key=lambda x: (x.src_dir.count("\\"), x.src_dir.lower()))
 
@@ -297,10 +320,8 @@ def main() -> int:
                             "kind": "case_normalize_plan",
                             "generated_at": now_iso(),
                             "db": db_path,
-                            "roots": roots,
+                            "roots": roots_win,
                             "dest_root": args.dest_root,
-                            "apply": bool(args.apply),
-                            "extensions": extensions,
                             "allow_needs_review": allow_needs_review,
                             "allow_unreviewed_metadata": allow_unreviewed_metadata,
                         }
@@ -351,15 +372,14 @@ def main() -> int:
             con.commit()
 
     out = {
-        "ok": failed_ops == 0 and len(scan_errors) == 0,
+        "ok": failed_ops == 0,
         "mode": "apply" if args.apply else "dry_run",
         "plan_path": str(plan_path),
+        "dbQueriedFiles": db_queried_files,
         "plannedCaseMismatchFiles": case_mismatch_files,
         "plannedRenameDirs": len(sorted_ops),
         "alreadyCorrect": already_correct,
         "metadataSkipped": metadata_skipped,
-        "scanWarnings": scan_warnings,
-        "scanErrors": scan_errors,
         "appliedRenameDirs": applied_ops,
         "failedRenameDirs": failed_ops,
         "dbUpdatedRows": db_updated_rows,
