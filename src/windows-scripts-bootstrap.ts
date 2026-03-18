@@ -5,6 +5,7 @@ import { getExtensionRootDir } from "./runtime";
 export const REQUIRED_WINDOWS_SCRIPTS = [
   "unwatched_inventory.ps1",
   "apply_move_plan.ps1",
+  "normalize_case_dirs.ps1",
 ] as const;
 
 export const INTERNAL_WINDOWS_SCRIPTS = ["_long_path_utils.ps1", "enumerate_files_jsonl.ps1"] as const;
