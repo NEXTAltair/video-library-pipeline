@@ -137,6 +137,7 @@ def main() -> int:
                   broadcaster=excluded.broadcaster,
                   human_reviewed=excluded.human_reviewed
                 WHERE path_metadata.human_reviewed IS NOT 1
+                   OR excluded.source = 'human_reviewed'
                 """,
                 to_upsert,
             )
