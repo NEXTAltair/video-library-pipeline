@@ -285,7 +285,8 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
       description:
         "Apply reviewed extracted metadata to DB and mark rows as human-reviewed. " +
         "Pass sourceYamlPath (preferred, from video_pipeline_export_program_yaml) or sourceJsonlPath (legacy). " +
-        "If video_pipeline_apply_llm_extract_output returned needsReviewFlagRows=0, do NOT call this tool — records are already in DB; proceed to video_pipeline_relocate_existing_files instead.",
+        "If video_pipeline_apply_llm_extract_output returned needsReviewFlagRows=0, do NOT call this tool — records are already in DB; proceed to video_pipeline_relocate_existing_files instead. " +
+        "When no content changes are detected and no review-risk rows exist (needsReviewRows=0, suspiciousProgramTitleRows=0), the tool auto-allows without requiring allowNoContentChanges=true.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -379,7 +380,9 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         // Gate 2: 変更なしチェック (allowNoContentChanges で合法的にバイパス可能)
         // YAML フローでは yamlDerived の変更数で判定
         const effectiveChangedRows = sourceIsYaml && yamlDerived ? yamlDerived.changedRowsCount : (diff?.comparable ? diff.changedRowsCount : null);
-        if (markHumanReviewed && !allowNoContentChanges) {
+        // 変更 0 件かつリスク行 0 件なら「本当に修正不要」→ 自動パス
+        const noRiskRows = reviewRiskSummary.needsReviewRows === 0 && reviewRiskSummary.suspiciousProgramTitleRows === 0;
+        if (markHumanReviewed && !allowNoContentChanges && !noRiskRows) {
           if (effectiveChangedRows === 0) {
             return toToolResult({
               ok: false,
@@ -391,7 +394,8 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
               reviewBaselineExists,
               sourceLooksRawExtractionOutput: false,
               reviewDiff: diff,
-              hint: "Edit the reviewed JSONL content first, or set allowNoContentChanges=true if the human intentionally accepted all rows unchanged.",
+              reviewRiskSummary,
+              hint: "Review-risk rows remain but no edits were made. Fix the flagged rows first, or set allowNoContentChanges=true if intentionally accepting all rows unchanged.",
             });
           }
         }

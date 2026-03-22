@@ -190,50 +190,55 @@ def main() -> int:
     plan_out_path = str(plan_out.get("out") or "") if isinstance(plan_out, dict) else ""
     plan = Path(plan_out_path).resolve() if plan_out_path else latest(move_dir, "move_plan_from_inventory_*.jsonl")
 
-    apply_args = ["-PlanJsonl", wsl_to_win(plan), "-OpsRoot", ops_root_win]
-    if not args.apply:
-        apply_args.append("-DryRun")
-    apply_meta = run_pwsh_json(scripts_root_win + r"\apply_move_plan.ps1", apply_args)
-    applied_out = str(apply_meta.get("out_jsonl") or "")
-    applied = Path(win_to_wsl(applied_out)).resolve() if applied_out else latest(move_dir, "move_apply_*.jsonl")
-
-    run_py_uv(
-        here / "update_db_paths_from_move_apply.py",
-        ["--db", args.db, "--applied", str(applied)],
-        cwd=str(here),
-    )
-
-    run_py_uv(
-        here / "rotate_move_audit_logs.py",
-        [
-            "--move-dir",
-            str(move_dir),
-            "--llm-dir",
-            str(llm_dir),
-            "--keep-batches",
-            str(args.keep_batches),
-            "--ttl-days",
-            str(args.ttl_days),
-        ],
-        cwd=str(here),
-    )
-
     inv_count = sum(1 for ln in inv.read_text(encoding="utf-8", errors="ignore").splitlines() if ln.strip())
-    move_stats = aggregate_move_apply(str(applied))
-    applied_ok = move_stats["succeeded"]
-    remaining = max(inv_count - applied_ok, 0)
-    summary = {
+    plan_stats = plan_out if isinstance(plan_out, dict) else {}
+    planned = int(plan_stats.get("planned", 0))
+
+    summary: dict = {
         "inventory": str(inv),
         "queue": str(queue),
         "plan": str(plan),
         "plan_stats": plan_out,
-        "applied": str(applied),
         "apply": bool(args.apply),
-        "remaining_files": remaining,
         "windows_ops_root": str(ops_root),
         "max_files_per_run": int(args.max_files_per_run),
-        "moveApplyStats": move_stats,
     }
+
+    if args.apply and planned > 0:
+        # Stage 3: 実際にファイルを移動
+        apply_args = ["-PlanJsonl", wsl_to_win(plan), "-OpsRoot", ops_root_win]
+        apply_meta = run_pwsh_json(scripts_root_win + r"\apply_move_plan.ps1", apply_args)
+        applied_out = str(apply_meta.get("out_jsonl") or "")
+        applied = Path(win_to_wsl(applied_out)).resolve() if applied_out else latest(move_dir, "move_apply_*.jsonl")
+
+        run_py_uv(
+            here / "update_db_paths_from_move_apply.py",
+            ["--db", args.db, "--applied", str(applied)],
+            cwd=str(here),
+        )
+
+        run_py_uv(
+            here / "rotate_move_audit_logs.py",
+            [
+                "--move-dir",
+                str(move_dir),
+                "--llm-dir",
+                str(llm_dir),
+                "--keep-batches",
+                str(args.keep_batches),
+                "--ttl-days",
+                str(args.ttl_days),
+            ],
+            cwd=str(here),
+        )
+
+        move_stats = aggregate_move_apply(str(applied))
+        summary["applied"] = str(applied)
+        summary["moveApplyStats"] = move_stats
+        summary["remaining_files"] = max(inv_count - move_stats["succeeded"], 0)
+    else:
+        # Dry-run: plan のみ。apply は実行しない。
+        summary["remaining_files"] = inv_count
 
     print(
         json.dumps(summary, ensure_ascii=False)

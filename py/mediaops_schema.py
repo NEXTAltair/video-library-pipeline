@@ -404,12 +404,44 @@ def _ensure_triggers(con: sqlite3.Connection) -> None:
 
 
 def _drop_normalized_program_key(con: sqlite3.Connection) -> None:
-    """Drop the deprecated normalized_program_key column if it still exists."""
+    """Drop the deprecated normalized_program_key column if it still exists.
+
+    依存オブジェクトを先に除去してからカラムを落とす。
+    順序: views → triggers → index → column → views 再作成
+    """
     cols = [r["name"] for r in con.execute("PRAGMA table_info(path_metadata)").fetchall()]
     if "normalized_program_key" not in cols:
         return
-    con.execute("ALTER TABLE path_metadata DROP COLUMN normalized_program_key")
+    # 1. 旧 view を除去 (旧定義が normalized_program_key を参照している場合)
+    views = [
+        r[0]
+        for r in con.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='view' "
+            "AND sql LIKE '%normalized_program_key%'"
+        ).fetchall()
+    ]
+    for v in views:
+        con.execute(f"DROP VIEW IF EXISTS {v}")
+    # 2. 旧 trigger を除去 (trg_path_metadata_npk_* など)
+    triggers = [
+        r[0]
+        for r in con.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name='path_metadata' "
+            "AND sql LIKE '%normalized_program_key%'"
+        ).fetchall()
+    ]
+    for trg in triggers:
+        con.execute(f"DROP TRIGGER IF EXISTS {trg}")
+    # 3. 旧 index を除去
     con.execute("DROP INDEX IF EXISTS idx_path_metadata_npk")
+    # 4. カラムを除去
+    con.execute("ALTER TABLE path_metadata DROP COLUMN normalized_program_key")
+    # 5. 落とした view を新定義で再作成
+    for stmt in DDL_STATEMENTS:
+        if "CREATE VIEW" in stmt:
+            con.execute(stmt)
 
 
 def create_schema_if_needed(con: sqlite3.Connection) -> None:

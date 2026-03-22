@@ -71,6 +71,9 @@ See main `video-library-pipeline` SKILL.md for definitions of `machine_extracted
    - `sourceJsonlPath` omitted (latest extraction output auto-detected), or explicit path
    - optional `outputPath` if user wants a fixed location
    - default is `${windowsOpsRoot}/llm/program_aliases_review_YYYYMMDD_HHMMSS.yaml`
+4. Check the export result's `reviewCandidates` count:
+   - **`reviewCandidates > 0`**: Present review candidates to the user. Continue to "Continuing after extraction" below.
+   - **`reviewCandidates == 0`** (and `needsReviewFlagRows == 0`): All extracted metadata is clean — no human corrections needed. Call `video_pipeline_apply_reviewed_metadata` with `sourceYamlPath` to mark rows as `human_reviewed`. The tool auto-allows the no-change case when no review-risk rows exist. Then proceed directly to Stage 3 (`video_pipeline_relocate_existing_files`).
 
 ## Tool sequence (LLM subagent extraction — useLlmExtract=true)
 
@@ -136,7 +139,8 @@ If a sessions_spawn call fails, times out, or the subagent doesn't produce outpu
   - YAML path: use `sourceYamlPath` parameter (recommended)
   - JSONL path: use `sourceJsonlPath` parameter (legacy, for air_date fixes etc.)
 - Confirm `video_pipeline_apply_reviewed_metadata` actually applied reviewed edits:
-  - do not treat it as successful review apply if the tool reports "no content edits detected"
+  - If the tool reports "no content edits detected" **with** review-risk rows remaining (`needsReviewRows > 0` or `suspiciousProgramTitleRows > 0`): do not treat as success. Ask for actual edits or explicit override.
+  - If the tool reports no content edits **without** review-risk rows: this is normal (nothing needed fixing). The tool auto-allows this case.
   - YAML flow: if `yamlReviewApplied.changedRowsCount == 0`, the YAML aliases did not match any rows — check that aliases are correctly spelled
 
 ## Review reporting rule (required)

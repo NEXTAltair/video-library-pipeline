@@ -231,18 +231,23 @@ export function registerToolReextract(api: any, getCfg: (api: any) => any) {
         }
 
         // Rule-based extraction path (default)
-        const outputJsonlPath =
-          (typeof parsedResult?.latestOutputJsonlPath === "string" && parsedResult.latestOutputJsonlPath) ||
-          (Array.isArray(parsedResult?.outputJsonlPaths) && (parsedResult.outputJsonlPaths as string[]).length
-            ? String((parsedResult.outputJsonlPaths as string[])[(parsedResult.outputJsonlPaths as string[]).length - 1])
-            : null);
+        const allOutputJsonlPaths: string[] = Array.isArray(parsedResult?.outputJsonlPaths)
+          ? (parsedResult.outputJsonlPaths as string[]).filter((p): p is string => typeof p === "string" && !!p.trim())
+          : [];
+        const outputJsonlPath = allOutputJsonlPaths.length > 0
+          ? allOutputJsonlPaths[allOutputJsonlPaths.length - 1]
+          : (typeof parsedResult?.latestOutputJsonlPath === "string" && parsedResult.latestOutputJsonlPath) || null;
 
-        if (r.ok && outputJsonlPath) {
-          followUpToolCalls.push({
-            tool: "video_pipeline_export_program_yaml",
-            reason: "export_human_review_yaml_from_reextract_output",
-            params: { sourceJsonlPath: outputJsonlPath, outputPath: outputJsonlPath.replace(/\.jsonl$/i, "_review.yaml") },
-          });
+        if (r.ok) {
+          // 全バッチの JSONL を export 対象にする (outputPath 未指定 → デフォルト日付名)
+          const batchPaths = allOutputJsonlPaths.length > 0 ? allOutputJsonlPaths : (outputJsonlPath ? [outputJsonlPath] : []);
+          for (const jp of batchPaths) {
+            followUpToolCalls.push({
+              tool: "video_pipeline_export_program_yaml",
+              reason: "export_human_review_yaml_from_reextract_output",
+              params: { sourceJsonlPath: jp },
+            });
+          }
         }
 
         return toToolResult({
