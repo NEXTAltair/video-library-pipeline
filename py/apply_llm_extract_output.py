@@ -88,6 +88,10 @@ def validate_and_coerce(rec: dict) -> tuple[bool, str]:
             rec["needs_review"] = True
             _append_reason(rec, "invalid_confidence")
 
+    # Normalize: needs_review=false must not coexist with non-empty needs_review_reason
+    if not rec.get("needs_review"):
+        rec["needs_review_reason"] = ""
+
     return True, ""
 
 

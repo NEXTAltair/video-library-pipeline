@@ -94,13 +94,18 @@ export function registerToolRun(api: any, getCfg: (api: any) => any) {
         if (r.ok && parsed) {
           const planStats = (parsed.plan_stats ?? {}) as Record<string, unknown>;
           const skippedNeedsReview = Number(planStats.skipped_needs_review || 0);
+          const skippedSubtitleSeparator = Number(planStats.skipped_subtitle_separator || 0);
           const planned = Number(planStats.planned || 0);
           const apply = params.apply === true;
           const queuePath = String(parsed.queue || "");
 
-          if (!apply && skippedNeedsReview > 0) {
+          const skipParts: string[] = [];
+          if (skippedNeedsReview > 0) skipParts.push(`${skippedNeedsReview} needs_review`);
+          if (skippedSubtitleSeparator > 0) skipParts.push(`${skippedSubtitleSeparator} subtitle_separator`);
+
+          if (!apply && (skippedNeedsReview > 0 || skippedSubtitleSeparator > 0)) {
             out.nextStep =
-              `Dry-run complete. ${planned} files planned for move, ${skippedNeedsReview} files skipped (needs_review). ` +
+              `Dry-run complete. ${planned} files planned for move, ${skipParts.join(" + ")} files skipped. ` +
               `Proceed to Stage 2: call video_pipeline_reextract with the queue path to extract metadata for review. ` +
               `Do NOT call this tool with apply=true until Stage 2 review is complete.`;
             out.followUpToolCalls = [

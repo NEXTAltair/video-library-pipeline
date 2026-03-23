@@ -10,20 +10,23 @@ import os
 import sqlite3
 from pathlib import Path, PureWindowsPath
 
+from db_helpers import reconstruct_path_metadata
 from mediaops_schema import connect_db
 from path_placement_rules import (
     build_expected_dest_path,
     build_routed_dest_path,
+    detect_subtitle_in_program_title,
     has_required_db_contract,
     load_drive_routes,
 )
 
 
-def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
+def latest_metadata(con: sqlite3.Connection, path_id: str) -> tuple[dict | None, str | None]:
+    """Get latest metadata for a path_id, returning (metadata_dict, source)."""
     cur = con.cursor()
     row = cur.execute(
         """
-        SELECT data_json, program_title, air_date, needs_review,
+        SELECT source, data_json, program_title, air_date, needs_review,
                episode_no, subtitle, broadcaster, human_reviewed
         FROM path_metadata
         WHERE path_id=?
@@ -33,9 +36,9 @@ def latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
         (path_id,),
     ).fetchone()
     if not row:
-        return None
-    from db_helpers import reconstruct_path_metadata
-    return reconstruct_path_metadata(row)
+        return None, None
+    md = reconstruct_path_metadata(row)
+    return md if md else None, str(row[0]) if row[0] is not None else None
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
@@ -74,6 +77,7 @@ def main() -> int:
     skipped_missing_fields = 0
     skipped_outside = 0
     skipped_invalid_contract = 0
+    skipped_subtitle_separator = 0
     genre_counts: dict[str, int] = {}
 
     meta_info: dict = {
@@ -109,7 +113,7 @@ def main() -> int:
                     skipped_no_path += 1
                     continue
                 pid = row[0]
-                md = latest_llm_metadata(con, pid)
+                md, md_source = latest_metadata(con, pid)
                 if not md:
                     skipped_no_md += 1
                     continue
@@ -123,6 +127,12 @@ def main() -> int:
                 prog = md.get("program_title")
                 if not air or not prog:
                     skipped_missing_fields += 1
+                    continue
+
+                # Subtitle separator check (▽▼◇) — same defense as relocate flow.
+                # These characters almost never appear in legitimate program titles.
+                if detect_subtitle_in_program_title(str(prog)):
+                    skipped_subtitle_separator += 1
                     continue
 
                 # Build destination path: use drive routes if available, else single dest
@@ -142,6 +152,7 @@ def main() -> int:
                     "dst": dst,
                     "program_title": prog,
                     "air_date": air,
+                    "metadata_source": md_source,
                 }
                 if genre_route:
                     plan_row["genre_route"] = genre_route
@@ -168,6 +179,7 @@ def main() -> int:
                 "skipped_missing_fields": skipped_missing_fields,
                 "skipped_outside": skipped_outside,
                 "skipped_invalid_contract": skipped_invalid_contract,
+                "skipped_subtitle_separator": skipped_subtitle_separator,
                 "genre_route_counts": genre_counts if genre_counts else None,
             },
             ensure_ascii=False,

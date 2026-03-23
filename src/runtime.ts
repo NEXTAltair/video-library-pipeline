@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -81,6 +82,16 @@ export function parseJsonObject(input: unknown): Record<string, any> | null {
 export function tsCompact(d = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+// ミリ秒精度のタイムスタンプ (例: 20260304_153042_789)。同一秒内の衝突を防止。
+export function tsCompactMs(d = new Date()): string {
+  return `${tsCompact(d)}_${String(d.getMilliseconds()).padStart(3, "0")}`;
+}
+
+// コンテンツの短縮 SHA256 ハッシュ (先頭 length hex 文字)。
+export function sha256Short(content: string, length = 16): string {
+  return crypto.createHash("sha256").update(content, "utf-8").digest("hex").slice(0, length);
 }
 
 // LLM抽出出力のJSONLファイルを選択する。明示パス優先、なければ最新を自動選択。

@@ -96,6 +96,9 @@ def main() -> int:
                 existing = reconstruct_path_metadata(prior)
 
             merged = merge_data(existing, rec, args.source)
+            # Normalize: needs_review=false must not coexist with non-empty needs_review_reason
+            if not merged.get("needs_review"):
+                merged["needs_review_reason"] = ""
             merged["genre"] = resolve_genre(merged)
             merged["franchise"] = resolve_franchise(merged, args.franchise_rules or None)
 

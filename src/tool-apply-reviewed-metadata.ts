@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { byProgramGroupFromPath, chooseSourceJsonl, getExtensionRootDir, latestJsonlFile, looksSwallowedProgramTitle, lowerCompact, resolvePythonScript, runCmd, toToolResult, tsCompact } from "./runtime";
+import { byProgramGroupFromPath, chooseSourceJsonl, getExtensionRootDir, latestJsonlFile, looksSwallowedProgramTitle, lowerCompact, resolvePythonScript, runCmd, sha256Short, toToolResult, tsCompact, tsCompactMs } from "./runtime";
 import type { AnyObj } from "./types";
 
 function isRawExtractOutputJsonl(p: string): boolean {
@@ -170,22 +170,46 @@ function parseJsonStringLiteral(s: string): string {
   }
 }
 
+type YamlCohort = {
+  sourceJsonlSha256?: string;
+  pathIdCount?: number;
+  pathIdSetHash?: string;
+};
+
 function parseAliasMappingsFromYaml(yamlPath: string): {
   sourceJsonlPath?: string;
   aliasToCanonical: Map<string, string>;
+  cohort?: YamlCohort;
 } {
   const lines = fs.readFileSync(yamlPath, "utf-8").split(/\r?\n/);
   const aliasToCanonical = new Map<string, string>();
   let sourceJsonlPath: string | undefined;
   let currentCanonical = "";
   let inAliases = false;
+  let inCohort = false;
+  const cohort: YamlCohort = {};
 
   for (const line of lines) {
     const sourceMatch = line.match(/^source_jsonl:\s*(".*")\s*$/);
     if (sourceMatch) {
       const p = parseJsonStringLiteral(sourceMatch[1]);
       sourceJsonlPath = p || sourceJsonlPath;
+      inCohort = false;
       continue;
+    }
+
+    if (/^cohort:\s*$/.test(line)) {
+      inCohort = true;
+      continue;
+    }
+    if (inCohort) {
+      const sha256Match = line.match(/^\s+source_jsonl_sha256:\s*(".*")\s*$/);
+      if (sha256Match) { cohort.sourceJsonlSha256 = parseJsonStringLiteral(sha256Match[1]); continue; }
+      const pidCountMatch = line.match(/^\s+path_id_count:\s*(\d+)\s*$/);
+      if (pidCountMatch) { cohort.pathIdCount = Number(pidCountMatch[1]); continue; }
+      const pidHashMatch = line.match(/^\s+path_id_set_hash:\s*(".*")\s*$/);
+      if (pidHashMatch) { cohort.pathIdSetHash = parseJsonStringLiteral(pidHashMatch[1]); continue; }
+      if (/^\S/.test(line)) inCohort = false;
     }
 
     const canonicalMatch = line.match(/^\s*-\s+canonical_title:\s*(".*")\s*$/);
@@ -215,7 +239,8 @@ function parseAliasMappingsFromYaml(yamlPath: string): {
     }
   }
 
-  return { sourceJsonlPath, aliasToCanonical };
+  const hasCohort = cohort.sourceJsonlSha256 || cohort.pathIdCount != null || cohort.pathIdSetHash;
+  return { sourceJsonlPath, aliasToCanonical, cohort: hasCohort ? cohort : undefined };
 }
 
 function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, string>): {
@@ -346,9 +371,14 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         let effectiveSourceJsonlPath = source.path;
         let yamlDerived: ReturnType<typeof applyYamlReviewToRows> | null = null;
         let yamlAliasCount = 0;
+        let yamlCohort: YamlCohort | undefined;
+        let sourceJsonlDrifted = false;
+        let currentSourceJsonlSha256: string | undefined;
+        let currentPathIdSetHash: string | undefined;
         if (sourceIsYaml) {
           const yamlParsed = parseAliasMappingsFromYaml(source.path);
           yamlAliasCount = yamlParsed.aliasToCanonical.size;
+          yamlCohort = yamlParsed.cohort;
           if (!yamlParsed.sourceJsonlPath || !fs.existsSync(yamlParsed.sourceJsonlPath)) {
             return toToolResult({
               ok: false,
@@ -359,8 +389,23 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
             });
           }
           effectiveSourceJsonlPath = yamlParsed.sourceJsonlPath;
+
+          // Drift detection: compare current source JSONL hash against YAML export time
+          const currentContent = fs.readFileSync(effectiveSourceJsonlPath, "utf-8");
+          currentSourceJsonlSha256 = sha256Short(currentContent);
+          if (yamlCohort?.sourceJsonlSha256 && currentSourceJsonlSha256 !== yamlCohort.sourceJsonlSha256) {
+            sourceJsonlDrifted = true;
+          }
+
           const baseRows = readComparableRows(effectiveSourceJsonlPath);
           yamlDerived = applyYamlReviewToRows(baseRows.rows, yamlParsed.aliasToCanonical);
+
+          // Compute current path_id set hash for cohort verification
+          const currentPathIds = baseRows.rows
+            .map((r) => (typeof r.path_id === "string" ? r.path_id : ""))
+            .filter(Boolean)
+            .sort();
+          currentPathIdSetHash = sha256Short(currentPathIds.join("\n"));
         }
 
         const sourceLooksRawExtractionOutput = isRawExtractOutputJsonl(effectiveSourceJsonlPath);
@@ -394,6 +439,15 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
         const noRiskRows = reviewRiskSummary.needsReviewRows === 0 && reviewRiskSummary.suspiciousProgramTitleRows === 0;
         if (markHumanReviewed && !allowNoContentChanges && !noRiskRows) {
           if (effectiveChangedRows === 0) {
+            // Determine why no changes were detected for diagnostic clarity
+            let noChangeDetail: string | undefined;
+            if (sourceIsYaml && sourceJsonlDrifted) {
+              noChangeDetail = "source_rewritten_after_yaml_export: The source JSONL was modified after this YAML was exported. Titles may already match the YAML aliases due to re-extraction with updated hints.";
+            } else if (sourceIsYaml && yamlAliasCount === 0) {
+              noChangeDetail = "no_alias_mappings_in_yaml: The YAML file contains no alias mappings.";
+            } else if (sourceIsYaml && yamlDerived && yamlDerived.retitledRowsCount === 0 && yamlAliasCount > 0) {
+              noChangeDetail = "aliases_already_materialized_in_source: All YAML aliases already match current source JSONL titles — no retitling needed.";
+            }
             return toToolResult({
               ok: false,
               tool: "video_pipeline_apply_reviewed_metadata",
@@ -405,7 +459,11 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
               sourceLooksRawExtractionOutput: false,
               reviewDiff: diff,
               reviewRiskSummary,
-              hint: "Review-risk rows remain but no edits were made. Fix the flagged rows first, or set allowNoContentChanges=true if intentionally accepting all rows unchanged.",
+              sourceJsonlDrifted,
+              noChangeDetail,
+              hint: sourceJsonlDrifted
+                ? "Source JSONL was rewritten since YAML export. If titles are already correct, set allowNoContentChanges=true to accept."
+                : "Review-risk rows remain but no edits were made. Fix the flagged rows first, or set allowNoContentChanges=true if intentionally accepting all rows unchanged.",
             });
           }
         }
@@ -455,7 +513,7 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           });
         }
 
-        const outputStampedJsonlPath = path.join(os.tmpdir(), `video_pipeline_apply_reviewed_${tsCompact()}_${process.pid}.jsonl`);
+        const outputStampedJsonlPath = path.join(os.tmpdir(), `video_pipeline_apply_reviewed_${tsCompactMs()}_${process.pid}.jsonl`);
         writeJsonlRows(outputStampedJsonlPath, stamped.rows);
 
         // --- auto backup before DB write ---
@@ -533,6 +591,93 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           }
         }
 
+        // --- Detailed no-op reason classification ---
+        const effectiveChangedFinal = sourceIsYaml && yamlDerived ? yamlDerived.changedRowsCount : (diff?.comparable ? diff.changedRowsCount : null);
+        let noChangeReason: string | null = null;
+        if (effectiveChangedFinal === 0 && sourceIsYaml) {
+          if (sourceJsonlDrifted) {
+            noChangeReason = "source_rewritten_after_yaml_export";
+          } else if (yamlAliasCount === 0) {
+            noChangeReason = "no_alias_mappings_in_yaml";
+          } else if (yamlDerived && yamlDerived.retitledRowsCount === 0 && yamlAliasCount > 0) {
+            noChangeReason = "aliases_already_materialized_in_source";
+          } else {
+            noChangeReason = "no_matching_aliases_found";
+          }
+        }
+        // Stale review flag warning (even when changes > 0)
+        const staleReviewFlagsDetected = reviewRiskSummary.needsReviewRows > 0 && effectiveChangedFinal === 0;
+
+        // --- Cohort summary for traceability ---
+        const cohortSummary = sourceIsYaml ? {
+          sourceYamlPath: source.path,
+          sourceJsonlPath: effectiveSourceJsonlPath,
+          yamlCohort: yamlCohort ?? null,
+          currentSourceJsonlSha256: currentSourceJsonlSha256 ?? null,
+          currentPathIdSetHash: currentPathIdSetHash ?? null,
+          sourceJsonlDrifted,
+          pathIdSetDrifted: yamlCohort?.pathIdSetHash && currentPathIdSetHash
+            ? yamlCohort.pathIdSetHash !== currentPathIdSetHash
+            : null,
+          retitledRowsCount: yamlDerived?.retitledRowsCount ?? 0,
+          reviewClearedRowsCount: yamlDerived?.reviewClearedRowsCount ?? 0,
+        } : null;
+
+        // --- Write review manifest for downstream cohort tracking ---
+        let reviewManifestPath: string | null = null;
+        if (r.ok && sourceIsYaml && yamlDerived) {
+          const manifestPathIds = sourceComparable.rows
+            .map((row) => (typeof row.path_id === "string" ? row.path_id : ""))
+            .filter(Boolean);
+          if (manifestPathIds.length > 0) {
+            const manifest = {
+              generated_at: new Date().toISOString(),
+              source_yaml_path: source.path,
+              source_jsonl_path: effectiveSourceJsonlPath,
+              path_ids: manifestPathIds,
+              path_id_count: manifestPathIds.length,
+              retitled_count: yamlDerived.retitledRowsCount,
+              review_cleared_count: yamlDerived.reviewClearedRowsCount,
+              changed_rows_count: yamlDerived.changedRowsCount,
+              cohort_hash: currentPathIdSetHash ?? null,
+            };
+            try {
+              reviewManifestPath = path.join(llmDir, `review_manifest_${tsCompactMs()}.json`);
+              fs.mkdirSync(path.dirname(reviewManifestPath), { recursive: true });
+              fs.writeFileSync(reviewManifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+            } catch {
+              reviewManifestPath = null;
+            }
+          }
+        }
+
+        // --- followUpToolCalls: route to next stage based on cohort origin ---
+        const followUpToolCalls: AnyObj[] = [];
+        if (r.ok) {
+          const sourceRootNorm = String(cfg.sourceRoot || "").replace(/[\\/]+$/, "").toLowerCase();
+          const destRootNorm = String(cfg.destRoot || "").replace(/[\\/]+$/, "").toLowerCase();
+          const samplePaths = sourceComparable.rows
+            .slice(0, 10)
+            .map((row) => (typeof row.path === "string" ? row.path.toLowerCase() : ""))
+            .filter(Boolean);
+          const isUnwatchedCohort = sourceRootNorm && samplePaths.some((p) => p.startsWith(sourceRootNorm));
+          const isLibraryCohort = destRootNorm && samplePaths.some((p) => p.startsWith(destRootNorm));
+
+          if (isUnwatchedCohort) {
+            followUpToolCalls.push({
+              tool: "video_pipeline_analyze_and_move_videos",
+              reason: "reviewed_unwatched_cohort_ready_for_move",
+              params: { apply: false },
+            });
+          } else if (isLibraryCohort) {
+            followUpToolCalls.push({
+              tool: "video_pipeline_relocate_existing_files",
+              reason: "reviewed_library_cohort_ready_for_relocate",
+              params: { apply: false },
+            });
+          }
+        }
+
         return toToolResult({
           ok: r.ok,
           tool: "video_pipeline_apply_reviewed_metadata",
@@ -560,6 +705,24 @@ export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) =
           reviewRiskSummary,
           sourceParseErrors: sourceComparable.parseErrors,
           archivedFiles,
+          // Cohort & drift diagnostics
+          noChangeReason,
+          sourceJsonlDrifted,
+          staleReviewFlagsDetected,
+          cohortSummary,
+          reviewManifestPath,
+          // Next step routing
+          followUpToolCalls: followUpToolCalls.length > 0 ? followUpToolCalls : [],
+          hasFollowUpToolCalls: followUpToolCalls.length > 0,
+          nextStep: r.ok
+            ? followUpToolCalls.length > 0
+              ? `Review metadata applied. ${yamlDerived?.changedRowsCount ?? 0} rows changed, ${yamlDerived?.retitledRowsCount ?? 0} retitled, ${yamlDerived?.reviewClearedRowsCount ?? 0} review flags cleared. ` +
+                `Proceed with followUpToolCalls. ` +
+                (sourceJsonlDrifted ? "WARNING: Source JSONL was rewritten since YAML export — review results may differ from expectations. " : "") +
+                (reviewManifestPath ? `Review manifest: ${reviewManifestPath}` : "")
+              : `Review metadata applied. ${yamlDerived?.changedRowsCount ?? 0} rows changed. No follow-up action needed.` +
+                (noChangeReason ? ` (noChangeReason: ${noChangeReason})` : "")
+            : undefined,
         });
       },
     }

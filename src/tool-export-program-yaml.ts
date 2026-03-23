@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { byProgramGroupFromPath, chooseSourceJsonl, looksSwallowedProgramTitle, lowerCompact, toToolResult, tsCompact } from "./runtime";
+import { byProgramGroupFromPath, chooseSourceJsonl, looksSwallowedProgramTitle, lowerCompact, sha256Short, toToolResult, tsCompactMs } from "./runtime";
 import type { AnyObj } from "./types";
 
 type ProgramStat = {
@@ -195,6 +195,12 @@ export function readJsonlRows(sourceJsonlPath: string): AnyObj[] {
   return rows;
 }
 
+export type CohortMeta = {
+  sourceJsonlSha256: string;
+  pathIdCount: number;
+  pathIdSetHash: string;
+};
+
 export function buildYaml(
   sourceJsonlPath: string,
   rowsTotal: number,
@@ -202,6 +208,7 @@ export function buildYaml(
   includeNeedsReview: boolean,
   includeUnknown: boolean,
   stats: ProgramStat[],
+  cohort?: CohortMeta,
 ): string {
   const lines: string[] = [];
   lines.push("# Auto-generated candidate YAML from extraction output.");
@@ -210,6 +217,12 @@ export function buildYaml(
   lines.push(`source_jsonl: ${jsonScalar(sourceJsonlPath)}`);
   lines.push(`rows_total: ${rowsTotal}`);
   lines.push(`rows_used: ${rowsUsed}`);
+  if (cohort) {
+    lines.push("cohort:");
+    lines.push(`  source_jsonl_sha256: ${jsonScalar(cohort.sourceJsonlSha256)}`);
+    lines.push(`  path_id_count: ${cohort.pathIdCount}`);
+    lines.push(`  path_id_set_hash: ${jsonScalar(cohort.pathIdSetHash)}`);
+  }
   lines.push("filters:");
   lines.push(`  include_needs_review: ${includeNeedsReview ? "true" : "false"}`);
   lines.push(`  include_unknown: ${includeUnknown ? "true" : "false"}`);
@@ -271,8 +284,16 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
           });
         }
 
-        const outPath = String(params.outputPath || path.join(llmDir, `program_aliases_review_${tsCompact()}.yaml`));
+        const outPath = String(params.outputPath || path.join(llmDir, `program_aliases_review_${tsCompactMs()}.yaml`));
         const rows = readJsonlRows(source.path);
+
+        // Compute cohort identity for traceability across stages
+        const sourceContent = fs.readFileSync(source.path, "utf-8");
+        const sourceJsonlSha256 = sha256Short(sourceContent);
+        const pathIds = rows.map((r) => (typeof r.path_id === "string" ? r.path_id : "")).filter(Boolean);
+        const pathIdSetHash = sha256Short([...pathIds].sort().join("\n"));
+        const cohort: CohortMeta = { sourceJsonlSha256, pathIdCount: pathIds.length, pathIdSetHash };
+
         const statsMap = new Map<string, ProgramStat>();
         let rowsUsed = 0;
 
@@ -309,7 +330,7 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
           a.canonicalTitle.localeCompare(b.canonicalTitle, "ja"),
         );
         const review = buildReviewDiagnostics(rows);
-        const yaml = buildYaml(source.path, rows.length, rowsUsed, includeNeedsReview, includeUnknown, stats);
+        const yaml = buildYaml(source.path, rows.length, rowsUsed, includeNeedsReview, includeUnknown, stats, cohort);
 
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
         fs.writeFileSync(outPath, yaml, "utf-8");
@@ -325,6 +346,7 @@ export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => an
           includeNeedsReview,
           includeUnknown,
           maxSamplesPerProgram,
+          cohort,
           reviewSummary: review.summary,
           reviewCandidates: review.candidates,
           reviewCandidatesTruncated: review.truncated,

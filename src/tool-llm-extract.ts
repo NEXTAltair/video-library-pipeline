@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { lowerCompact, resolvePythonScript, runCmd, toToolResult, tsCompact } from "./runtime";
-import { buildReviewDiagnostics, buildYaml, readJsonlRows } from "./tool-export-program-yaml";
+import { lowerCompact, resolvePythonScript, runCmd, sha256Short, toToolResult, tsCompactMs } from "./runtime";
+import { buildReviewDiagnostics, buildYaml, type CohortMeta, readJsonlRows } from "./tool-export-program-yaml";
 import type { AnyObj } from "./types";
 
 function generateReviewYaml(sourceJsonlPath: string, outDir: string, rows: AnyObj[]): { yamlPath: string | null; error?: string } {
@@ -22,9 +22,18 @@ function generateReviewYaml(sourceJsonlPath: string, outDir: string, rows: AnyOb
       statsMap.set(key, cur);
     }
 
+    // Compute cohort identity for traceability
+    const sourceContent = fs.readFileSync(sourceJsonlPath, "utf-8");
+    const pathIds = rows.map((r) => (typeof r.path_id === "string" ? r.path_id : "")).filter(Boolean);
+    const cohort: CohortMeta = {
+      sourceJsonlSha256: sha256Short(sourceContent),
+      pathIdCount: pathIds.length,
+      pathIdSetHash: sha256Short([...pathIds].sort().join("\n")),
+    };
+
     const stats = Array.from(statsMap.values()).sort((a, b) => a.canonicalTitle.localeCompare(b.canonicalTitle, "ja"));
-    const yaml = buildYaml(sourceJsonlPath, rows.length, stats.reduce((s, x) => s + x.count, 0), true, false, stats);
-    const yamlPath = path.join(outDir, `program_aliases_review_${tsCompact()}.yaml`);
+    const yaml = buildYaml(sourceJsonlPath, rows.length, stats.reduce((s, x) => s + x.count, 0), true, false, stats, cohort);
+    const yamlPath = path.join(outDir, `program_aliases_review_${tsCompactMs()}.yaml`);
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(yamlPath, yaml, "utf-8");
     return { yamlPath };
