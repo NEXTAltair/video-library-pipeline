@@ -372,6 +372,83 @@ def parse_program_and_subtitle(base: str) -> tuple[str, str | None]:
     return prog[:80], parse_quoted_subtitle(b)
 
 
+class _ProgramDictionary:
+    """Known program titles loaded from programs table for dictionary-first matching.
+
+    Entries are sorted by normalized length (longest first) so that specific
+    matches like "NHKスペシャル" are preferred over shorter "NHK".
+    """
+
+    def __init__(self, con: sqlite3.Connection):
+        self._entries: list[tuple[str, str]] = []  # (normalized, canonical_title)
+        try:
+            rows = con.execute("SELECT DISTINCT canonical_title FROM programs").fetchall()
+        except sqlite3.OperationalError:
+            return
+        seen: set[str] = set()
+        for row in rows:
+            title = str(row[0] or "").strip()
+            if not title or title == "UNKNOWN":
+                continue
+            norm = _normalize_title_compare(title)
+            if norm and norm not in seen and len(norm) >= 2:
+                seen.add(norm)
+                self._entries.append((norm, title))
+        self._entries.sort(key=lambda x: len(x[0]), reverse=True)
+
+    @property
+    def count(self) -> int:
+        return len(self._entries)
+
+    def match(self, base_norm: str) -> str | None:
+        """Find the longest known program title contained in base_norm."""
+        if not base_norm:
+            return None
+        for norm, canonical in self._entries:
+            if norm in base_norm:
+                return canonical
+        return None
+
+
+def _match_from_known_programs(
+    base: str,
+    program_dict: _ProgramDictionary | None,
+    alias_hints: HintSet,
+) -> str | None:
+    """Dictionary-first match: search known programs in raw filename base.
+
+    Returns canonical_title if found, None otherwise.
+    Priority: regex rules > programs table (longest match) > alias map (substring).
+    """
+    # 1. Alias regex rules (highest specificity — human-curated patterns)
+    for pattern, canonical, field in alias_hints.regex_rules:
+        target = base
+        m = pattern.search(target)
+        if m:
+            try:
+                return m.expand(canonical)
+            except re.error:
+                return canonical
+
+    base_norm = _normalize_title_compare(base)
+    if not base_norm:
+        return None
+
+    # 2. Programs table (longest match first)
+    if program_dict:
+        result = program_dict.match(base_norm)
+        if result:
+            return result
+
+    # 3. Alias YAML substring match
+    alias_norm = _normalize_alias_key(base)
+    for alias_key, canonical in alias_hints.alias_map.items():
+        if alias_key and alias_key in alias_norm:
+            return canonical
+
+    return None
+
+
 def _choose_epg_title_candidate(base: str, epg_candidates: list[dict]) -> str | None:
     """Pick the best-matching EPG title from candidates.
 
@@ -396,14 +473,33 @@ def _choose_epg_title_candidate(base: str, epg_candidates: list[dict]) -> str | 
     return best_title
 
 
-def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet, epg_candidates: list[dict] | None = None) -> dict:
-    # Architecture A: AI-primary path with optional alias guardrails.
+def extract_title_ai_primary(
+    name: str,
+    base: str,
+    alias_hints: HintSet,
+    epg_candidates: list[dict] | None = None,
+    program_dict: _ProgramDictionary | None = None,
+) -> dict:
+    # Phase 1: Dictionary match — known programs (programs table + alias YAML)
+    dict_match = _match_from_known_programs(base, program_dict, alias_hints)
+    if dict_match:
+        return {
+            "program_title": dict_match,
+            "subtitle": parse_quoted_subtitle(base),
+            "episode_no": parse_episode(base),
+            "air_date": extract_air_date(name),
+            "title_extraction_path": "dictionary_match",
+        }
+
+    # Phase 2: Rule-based parsing (fallback for unknown programs)
     prog, sub = parse_program_and_subtitle(base)
+    source = "rule_based_fallback"
     canonical = _canonicalize_title_from_hints(base=base, parsed_program_title=prog, alias_map=alias_hints)
-    source = "ai_primary_policy"
     if canonical != prog:
         prog = canonical
-        source = "ai_primary_policy+hints"
+        source = "rule_based_fallback+hints"
+
+    # Phase 3: EPG hint (conservative — only for genuinely bad parses)
     epg_title_raw = _choose_epg_title_candidate(base, epg_candidates or [])
     if epg_title_raw:
         # EPG official_title is almost always "番組名+サブタイトル+説明" — NOT a clean program name.
@@ -421,7 +517,8 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet, epg_can
         )
         if should_take_epg and epg_norm and prog_norm != epg_norm:
             prog = epg_prog
-            source = "ai_primary_policy+epg_hint"
+            source = "rule_based_fallback+epg_hint"
+
     return {
         "program_title": prog,
         "subtitle": sub,
@@ -668,6 +765,8 @@ def main() -> int:
     from mediaops_schema import connect_db
     db_con = connect_db(args.db)
     epg_cache = _EpgCache(db_con)
+    program_dict = _ProgramDictionary(db_con)
+    print(f"INFO program_dictionary_count={program_dict.count}")
 
     def flush():
         nonlocal batch, batch_idx, processed, preserved_human_reviewed
@@ -699,7 +798,10 @@ def main() -> int:
             mk = match_key_from_filename(name)
             dk = datetime_key_from_filename(name)
             epg_candidates = epg_cache.candidates(mk, dk)
-            title_res = extract_title_ai_primary(name=name, base=base, alias_hints=alias_hints, epg_candidates=epg_candidates)
+            title_res = extract_title_ai_primary(
+                name=name, base=base, alias_hints=alias_hints,
+                epg_candidates=epg_candidates, program_dict=program_dict,
+            )
             air = title_res.get("air_date")
             prog = str(title_res.get("program_title") or "")
             sub = title_res.get("subtitle")
@@ -707,7 +809,9 @@ def main() -> int:
 
             needs = False
             reasons: list[str] = []
-            conf = 0.78
+            # Dictionary match → high confidence; rule-based fallback → baseline
+            extraction_path = title_res.get("title_extraction_path") or ""
+            conf = 0.92 if extraction_path == "dictionary_match" else 0.78
             if air is None:
                 mtime = rec.get("mtime_utc") or rec.get("mtimeUtc")
                 if isinstance(mtime, str) and len(mtime) >= 10 and mtime[4] == "-" and mtime[7] == "-":

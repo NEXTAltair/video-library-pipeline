@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 
-from epg_common import normalize_program_key
+from epg_common import normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db
+from pathscan_common import now_iso
 
 
 def main() -> int:
@@ -139,10 +141,34 @@ def main() -> int:
            WHERE path_id = ?""",
         updates,
     )
+
+    # Feedback: ensure corrected titles exist in programs table
+    # so that future dictionary-match extraction picks them up.
+    registered_titles: list[str] = []
+    seen_titles: set[str] = set()
+    for new_title, _ in updates:
+        if new_title in seen_titles:
+            continue
+        seen_titles.add(new_title)
+        pkey = normalize_program_key(new_title)
+        pid = program_id_for(pkey)
+        try:
+            con.execute(
+                """INSERT INTO programs (program_id, program_key, canonical_title, created_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(program_id) DO UPDATE SET
+                     canonical_title = excluded.canonical_title""",
+                (pid, pkey, new_title, now_iso()),
+            )
+            registered_titles.append(new_title)
+        except sqlite3.OperationalError:
+            pass  # programs table may not exist yet
+
     con.commit()
     con.close()
 
     result["updated"] = len(updates)
+    result["programs_registered"] = registered_titles
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
