@@ -11,7 +11,8 @@
     "./skills/inventory-review",
     "./skills/extract-review",
     "./skills/move-review",
-    "./skills/relocate-review"
+    "./skills/relocate-review",
+    "./skills/folder-cleanup"
   ],
   "configSchema": {
     "type": "object",

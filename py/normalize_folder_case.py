@@ -273,7 +273,10 @@ def main() -> int:
                 continue
 
             source_norm = str(md_source or "").strip().lower()
-            is_human_reviewed = source_norm == "human_reviewed"
+            is_human_reviewed = (
+                source_norm == "human_reviewed"
+                or bool(isinstance(md, dict) and md.get("human_reviewed"))
+            )
             is_llm = source_norm in {"llm", "llm_subagent"}
             if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
                 metadata_skipped += 1

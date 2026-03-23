@@ -137,7 +137,9 @@ def main() -> int:
         """UPDATE path_metadata
            SET program_title = ?,
                human_reviewed = 1,
-               needs_review = 0
+               needs_review = 0,
+               source = 'human_reviewed',
+               updated_at = datetime('now')
            WHERE path_id = ?""",
         updates,
     )

@@ -7,6 +7,7 @@ import { registerToolBackfill } from "./src/tool-backfill";
 import { registerToolDedup } from "./src/tool-dedup";
 import { registerToolLogs } from "./src/tool-logs";
 import { registerToolExportProgramYaml } from "./src/tool-export-program-yaml";
+import { registerToolDetectFolderContamination } from "./src/tool-detect-folder-contamination";
 import { registerToolDetectRebroadcasts } from "./src/tool-detect-rebroadcasts";
 import { registerToolIngestEpg } from "./src/tool-ingest-epg";
 import { registerToolPrepareRelocateMetadata } from "./src/tool-prepare-relocate-metadata";
@@ -54,6 +55,7 @@ export default function register(api: any) {
   registerToolLlmExtractStatus(api, getCfg);
   registerToolExportProgramYaml(api, getCfg);
   registerToolIngestEpg(api, getCfg);
+  registerToolDetectFolderContamination(api, getCfg);
   registerToolDetectRebroadcasts(api, getCfg);
   registerToolLogs(api, getCfg);
   registerPluginHooks(api, getCfg);
