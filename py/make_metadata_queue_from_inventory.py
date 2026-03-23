@@ -5,26 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 from pathlib import PureWindowsPath
 
+from db_helpers import latest_path_metadata
+from mediaops_schema import connect_db
 from pathscan_common import now_iso
-
-DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
-
-
-def latest_llm_row(cur: sqlite3.Cursor, path_id: str):
-    return cur.execute(
-        """
-        SELECT data_json, program_title, air_date, needs_review,
-               episode_no, subtitle, broadcaster, human_reviewed
-        FROM path_metadata
-        WHERE path_id=?
-        ORDER BY updated_at DESC
-        LIMIT 1
-        """,
-        (path_id,),
-    ).fetchone()
 
 
 def main() -> int:
@@ -40,8 +25,7 @@ def main() -> int:
         raise SystemExit("db is required: pass --db or configure plugin db")
     if not args.source_root:
         raise SystemExit("sourceRoot is required: pass --source-root")
-    con = sqlite3.connect(args.db)
-    cur = con.cursor()
+    con = connect_db(args.db)
     root = args.source_root.rstrip("\\")
     picked = 0
 
@@ -81,23 +65,19 @@ def main() -> int:
                 if PureWindowsPath(path).suffix.lower() != ".mp4":
                     continue
 
-                row = cur.execute("SELECT path_id FROM paths WHERE path=?", (path,)).fetchone()
+                row = con.execute("SELECT path_id FROM paths WHERE path=?", (path,)).fetchone()
                 if not row:
                     continue
-                pid = row[0]
+                pid = row["path_id"]
 
-                md_row = latest_llm_row(cur, pid)
-                if md_row is None:
+                md, _ = latest_path_metadata(con, pid)
+                if md is None:
                     pick = True
                 else:
-                    # Use promoted columns if available
-                    program_title = md_row[1]  # program_title
-                    air_date = md_row[2]        # air_date
-                    needs_review = md_row[3]    # needs_review
                     pick = (
-                        not program_title
-                        or air_date is None
-                        or bool(needs_review)
+                        not md.get("program_title")
+                        or md.get("air_date") is None
+                        or bool(md.get("needs_review"))
                     )
 
                 if not pick:

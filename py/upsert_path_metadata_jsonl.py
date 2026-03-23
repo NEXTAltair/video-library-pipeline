@@ -26,10 +26,9 @@ from db_helpers import reconstruct_path_metadata, split_path_metadata
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
+from path_placement_rules import DB_CONTRACT_REQUIRED
 from pathscan_common import iter_jsonl, now_iso
 from source_history import merge_data
-
-DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 
 def validate_db_contract(rec: dict) -> tuple[bool, str]:

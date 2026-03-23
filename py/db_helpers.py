@@ -92,6 +92,41 @@ def reconstruct_path_metadata(row) -> dict[str, Any]:
     return data
 
 
+def latest_path_metadata(con, path_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Get latest metadata for a path_id, returning (metadata_dict, source).
+
+    Expects a connection with row_factory=sqlite3.Row (as returned by connect_db).
+    """
+    row = con.execute(
+        """
+        SELECT source, data_json, program_title, air_date, needs_review,
+               episode_no, subtitle, broadcaster, human_reviewed
+        FROM path_metadata
+        WHERE path_id=?
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        (path_id,),
+    ).fetchone()
+    if not row:
+        return None, None
+    md = reconstruct_path_metadata(row)
+    return md if md else None, str(row["source"]) if row["source"] is not None else None
+
+
+def latest_path_metadata_by_path(con, path: str) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    """Get latest metadata by resolving path->path_id first.
+
+    Returns (metadata_dict, source, path_id).
+    """
+    path_row = con.execute("SELECT path_id FROM paths WHERE path=?", (path,)).fetchone()
+    if not path_row:
+        return None, None, None
+    pid = str(path_row["path_id"])
+    md, source = latest_path_metadata(con, pid)
+    return md, source, pid
+
+
 def split_broadcast_data(data: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """Split broadcast data into promoted column values and residual data_json.
 

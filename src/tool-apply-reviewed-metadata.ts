@@ -288,6 +288,7 @@ function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, str
     // かつ、タイトル以外の理由（missing_air_date 等）が残っていない場合のみ
     if (canonical && canonical !== beforeTitle && next.needs_review === true) {
       const reason = typeof next.needs_review_reason === "string" ? next.needs_review_reason.trim() : "";
+      // Sync: py/path_placement_rules.py TITLE_RELATED_REASONS
       const titleRelatedReasons = [
         "needs_review_flagged",
         "program_title_may_include_description",

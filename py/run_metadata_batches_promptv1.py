@@ -12,9 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from edcb_program_parser import match_key_from_filename, datetime_key_from_filename
-from db_helpers import reconstruct_broadcast_data, reconstruct_path_metadata
+from db_helpers import latest_path_metadata, reconstruct_broadcast_data
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
+from path_placement_rules import DB_CONTRACT_REQUIRED
+from plan_validation import detect_swallowed_program_title
 from source_history import make_entry
 from pathscan_common import now_iso
 
@@ -45,7 +47,6 @@ REQUIRED = {
 
     "evidence",
 }
-DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 ACTIVE_TITLE_ARCHITECTURE = "A_AI_PRIMARY_WITH_GUARDRAILS"
 DEFERRED_TITLE_ARCHITECTURES = (
     "B_FULL_AI_MIN_RULES",
@@ -131,30 +132,6 @@ def _score_title_overlap(base: str, candidate: str) -> int:
             score += len(t)
     return score
 
-
-def _by_program_group_name_from_path(win_path: str) -> str | None:
-    parts = str(win_path or "").split("\\")
-    for i, seg in enumerate(parts[:-1]):
-        if str(seg).lower() == "by_program" and i + 1 < len(parts):
-            return parts[i + 1]
-    return None
-
-
-def _looks_swallowed_program_title(win_path: str, program_title: str) -> bool:
-    group = _by_program_group_name_from_path(win_path)
-    if not group:
-        return False
-    p = str(program_title or "").strip()
-    if not p:
-        return False
-    g_norm = _normalize_title_compare(group)
-    p_norm = _normalize_title_compare(p)
-    if not g_norm or not p_norm or p_norm == g_norm:
-        return False
-    if not p_norm.startswith(g_norm):
-        return False
-    # Require a meaningful tail to avoid flagging minor punctuation variants.
-    return len(p_norm) >= len(g_norm) + 8
 
 
 def drop_label_words(s: str) -> str:
@@ -614,24 +591,8 @@ def _build_llm_input_rows(batch: list[dict], epg_cache: _EpgCache) -> list[dict]
 
 
 def _get_latest_llm_metadata(con: sqlite3.Connection, path_id: str) -> dict | None:
-    cur = con.cursor()
-    try:
-        row = cur.execute(
-            """
-            SELECT data_json, program_title, air_date, needs_review,
-                   episode_no, subtitle, broadcaster, human_reviewed
-            FROM path_metadata
-            WHERE path_id=?
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (path_id,),
-        ).fetchone()
-    except sqlite3.Error:
-        return None
-    if not row:
-        return None
-    return reconstruct_path_metadata(row)
+    md, _ = latest_path_metadata(con, path_id)
+    return md
 
 
 def _build_locked_row(existing: dict, rec: dict, model: str, extraction_version: str) -> dict:
@@ -756,7 +717,7 @@ def main() -> int:
                 needs = True
                 reasons.append("program_title_too_long")
                 conf = min(conf, 0.7)
-            if _looks_swallowed_program_title(str(rec.get("path") or ""), prog):
+            if detect_swallowed_program_title(str(rec.get("path") or ""), {"program_title": prog}):
                 needs = True
                 if "program_title_may_include_description" not in reasons:
                     reasons.append("program_title_may_include_description")

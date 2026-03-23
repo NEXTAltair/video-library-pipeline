@@ -19,23 +19,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 
 from mediaops_schema import begin_immediate, connect_db
-
-SEPARATOR_RE = re.compile(r"[▽▼◇]")
-
-TITLE_RELATED_REASONS = {
-    "needs_review_flagged",
-    "program_title_may_include_description",
-    "suspicious_program_title",
-    "relocate_suspicious_program_title",
-    "suspicious_program_title_shortened",
-    "relocate_suspicious_program_title_shortened",
-    "subtitle_separator_in_program_title",
-    "relocate_subtitle_separator_in_program_title",
-}
+from path_placement_rules import SUBTITLE_SEPARATORS, TITLE_RELATED_REASONS
 
 
 def main() -> int:
@@ -56,7 +43,7 @@ def main() -> int:
     for r in rows:
         pt = r["program_title"] or ""
         # Title still contains separators → not yet fixed, skip
-        if SEPARATOR_RE.search(pt):
+        if SUBTITLE_SEPARATORS.search(pt):
             continue
 
         # Check needs_review_reason from data_json

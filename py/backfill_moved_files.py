@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall, fetchone
+from path_placement_rules import DB_CONTRACT_REQUIRED
 from pathscan_common import (
     DEFAULT_EXTENSIONS,
     DEFAULT_SCAN_RETRY_COUNT,

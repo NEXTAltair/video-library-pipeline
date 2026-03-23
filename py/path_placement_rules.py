@@ -12,14 +12,31 @@ CTRL = re.compile(r"[\x00-\x1f]")
 TRAIL = re.compile(r"[\. ]+$")
 WS = re.compile(r"[\s\u3000]+")
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
+SWALLOWED_TITLE_THRESHOLD = 8
 
 # ▽/▼/◇ がprogram_titleに含まれる場合、サブタイトル混入の可能性が高い
 SUBTITLE_SEPARATORS = re.compile(r"[▽▼◇]")
+
+TITLE_RELATED_REASONS = {
+    "needs_review_flagged",
+    "program_title_may_include_description",
+    "suspicious_program_title",
+    "relocate_suspicious_program_title",
+    "suspicious_program_title_shortened",
+    "relocate_suspicious_program_title_shortened",
+    "subtitle_separator_in_program_title",
+    "relocate_subtitle_separator_in_program_title",
+}
 
 
 def detect_subtitle_in_program_title(program_title: str) -> bool:
     """program_titleにサブタイトル区切り文字(▽▼◇)が含まれるかチェック"""
     return bool(SUBTITLE_SEPARATORS.search(program_title or ""))
+
+
+def normalize_title_for_comparison(s: str) -> str:
+    """Normalize a title for comparison (casefold + NFKC)."""
+    return unicodedata.normalize("NFKC", str(s or "")).casefold().strip()
 
 
 def safe_dir_name(name: str, maxlen: int = 60) -> str:

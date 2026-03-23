@@ -7,38 +7,12 @@ import argparse
 import datetime as dt
 import json
 import os
-import sqlite3
 from pathlib import Path, PureWindowsPath
 
-from db_helpers import reconstruct_path_metadata
+from db_helpers import latest_path_metadata
 from mediaops_schema import connect_db
-from path_placement_rules import (
-    build_expected_dest_path,
-    build_routed_dest_path,
-    detect_subtitle_in_program_title,
-    has_required_db_contract,
-    load_drive_routes,
-)
-
-
-def latest_metadata(con: sqlite3.Connection, path_id: str) -> tuple[dict | None, str | None]:
-    """Get latest metadata for a path_id, returning (metadata_dict, source)."""
-    cur = con.cursor()
-    row = cur.execute(
-        """
-        SELECT source, data_json, program_title, air_date, needs_review,
-               episode_no, subtitle, broadcaster, human_reviewed
-        FROM path_metadata
-        WHERE path_id=?
-        ORDER BY updated_at DESC
-        LIMIT 1
-        """,
-        (path_id,),
-    ).fetchone()
-    if not row:
-        return None, None
-    md = reconstruct_path_metadata(row)
-    return md if md else None, str(row[0]) if row[0] is not None else None
+from path_placement_rules import load_drive_routes
+from plan_validation import validate_move_candidate
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
@@ -113,38 +87,35 @@ def main() -> int:
                     skipped_no_path += 1
                     continue
                 pid = row[0]
-                md, md_source = latest_metadata(con, pid)
+                md, md_source = latest_path_metadata(con, pid)
                 if not md:
                     skipped_no_md += 1
                     continue
-                if not has_required_db_contract(md):
-                    skipped_invalid_contract += 1
+
+                result = validate_move_candidate(
+                    src, md,
+                    allow_needs_review=args.allow_needs_review,
+                    routes=routes,
+                    dest_root=args.dest_root if not routes else None,
+                )
+                if not result.ok:
+                    reason = result.skip_reason or "unknown"
+                    if reason == "needs_review":
+                        skipped_needs_review += 1
+                    elif reason == "invalid_metadata_contract":
+                        skipped_invalid_contract += 1
+                    elif reason in ("subtitle_separator_in_program_title",
+                                    "suspicious_program_title",
+                                    "suspicious_program_title_shortened"):
+                        skipped_subtitle_separator += 1
+                    else:
+                        skipped_missing_fields += 1
                     continue
-                if md.get("needs_review") and not args.allow_needs_review:
-                    skipped_needs_review += 1
-                    continue
-                air = md.get("air_date")
+
+                dst = result.dst
+                genre_route = result.genre_route
                 prog = md.get("program_title")
-                if not air or not prog:
-                    skipped_missing_fields += 1
-                    continue
-
-                # Subtitle separator check (▽▼◇) — same defense as relocate flow.
-                # These characters almost never appear in legitimate program titles.
-                if detect_subtitle_in_program_title(str(prog)):
-                    skipped_subtitle_separator += 1
-                    continue
-
-                # Build destination path: use drive routes if available, else single dest
-                genre_route = None
-                if routes:
-                    dst, genre_route, dst_err = build_routed_dest_path(routes, src, md)
-                else:
-                    dst, dst_err = build_expected_dest_path(args.dest_root, src, md)
-
-                if not dst or dst_err:
-                    skipped_missing_fields += 1
-                    continue
+                air = md.get("air_date")
 
                 plan_row: dict = {
                     "path_id": pid,

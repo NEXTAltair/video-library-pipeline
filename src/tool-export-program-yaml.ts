@@ -178,7 +178,8 @@ export function buildReviewDiagnostics(rows: AnyObj[]): {
 
 export function readJsonlRows(sourceJsonlPath: string): AnyObj[] {
   const rows: AnyObj[] = [];
-  const text = fs.readFileSync(sourceJsonlPath, "utf-8");
+  const raw = fs.readFileSync(sourceJsonlPath, "utf-8");
+  const text = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
   for (const line of text.split(/\r?\n/)) {
     const s = line.trim();
     if (!s) continue;

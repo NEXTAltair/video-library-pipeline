@@ -143,6 +143,9 @@ export function byProgramGroupFromPath(
     .filter(Boolean);
   const idx = parts.findIndex((p) => p.toLowerCase() === "by_program");
   if (idx >= 0 && idx + 1 < parts.length) return parts[idx + 1];
+  // Fallback: VideoLibrary\<title>\... pattern
+  const vlIdx = parts.findIndex((p) => p.toLowerCase() === "videolibrary");
+  if (vlIdx >= 0 && vlIdx + 1 < parts.length) return parts[vlIdx + 1];
   return undefined;
 }
 

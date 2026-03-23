@@ -11,20 +11,20 @@ import argparse
 import json
 import os
 import subprocess
-import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any
 
-from db_helpers import reconstruct_path_metadata
+from db_helpers import latest_path_metadata
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from move_apply_stats import aggregate_move_apply
 from path_placement_rules import (
-    build_expected_dest_path,
-    build_routed_dest_path,
-    detect_subtitle_in_program_title,
     has_required_db_contract,
     load_drive_routes,
+)
+from plan_validation import (
+    folder_title_from_path,
+    validate_move_candidate,
 )
 from pathscan_common import (
     DEFAULT_EXTENSIONS,
@@ -51,25 +51,6 @@ from windows_pwsh_bridge import run_pwsh_json
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
 
 
-def latest_metadata_for_path(con, path_id: str) -> tuple[dict[str, Any] | None, str | None]:
-    row = fetchone(
-        con,
-        """
-        SELECT source, data_json, program_title, air_date, needs_review,
-               episode_no, subtitle, broadcaster, human_reviewed
-        FROM path_metadata
-        WHERE path_id=?
-        ORDER BY updated_at DESC
-        LIMIT 1
-        """,
-        (path_id,),
-    )
-    if not row:
-        return None, None
-    md = reconstruct_path_metadata(row)
-    return md if md else None, str(row["source"]) if row["source"] is not None else None
-
-
 def metadata_needs_queue(md: dict[str, Any] | None) -> bool:
     if not md or not isinstance(md, dict):
         return True
@@ -80,79 +61,6 @@ def metadata_needs_queue(md: dict[str, Any] | None) -> bool:
     if not md.get("program_title"):
         return True
     if not md.get("air_date"):
-        return True
-    return False
-
-
-def _normalize_title_compare(s: str) -> str:
-    return unicodedata.normalize("NFKC", str(s or "")).casefold().strip()
-
-
-def by_program_group_name(src_path_win: str) -> str | None:
-    parts = str(src_path_win or "").split("\\")
-    # by_program may appear at different depths (arbitrary cleanup roots).
-    for i, seg in enumerate(parts[:-1]):
-        if str(seg).lower() == "by_program" and i + 1 < len(parts):
-            return parts[i + 1]
-    return None
-
-
-def _folder_title_from_path(src_path_win: str) -> str | None:
-    """パスからプログラムタイトルらしきフォルダ名を抽出。
-    by_program\\ があればその直下、なければ VideoLibrary\\ 直下のフォルダ名を返す。"""
-    # 1. by_program\ パターン (既存)
-    group = by_program_group_name(src_path_win)
-    if group:
-        return group
-    # 2. 汎用: VideoLibrary\<title>\... パターン
-    parts = str(src_path_win or "").split("\\")
-    for i, seg in enumerate(parts[:-1]):
-        if seg.lower() == "videolibrary" and i + 1 < len(parts):
-            return parts[i + 1]
-    return None
-
-
-def looks_like_swallowed_program_title(src_path_win: str, md: dict[str, Any] | None) -> bool:
-    if not isinstance(md, dict):
-        return False
-    group = _folder_title_from_path(src_path_win)
-    title = md.get("program_title")
-    if not group or not isinstance(title, str):
-        return False
-    title = title.strip()
-    if not title:
-        return False
-    g = _normalize_title_compare(group)
-    t = _normalize_title_compare(title)
-    if not g or not t or t == g:
-        return False
-    # Main failure mode: LLM copies episode title/body and keeps the folder's program name as a prefix.
-    if t.startswith(g) and len(t) >= len(g) + 3:
-        return True
-    return False
-
-
-def looks_like_shortened_program_title(src_path_win: str, md: dict[str, Any] | None) -> bool:
-    """現在フォルダ名より program_title が不自然に短い場合を検出。
-
-    例: folder=RNC_news_every, program_title=RNC
-    """
-    if not isinstance(md, dict):
-        return False
-    group = _folder_title_from_path(src_path_win)
-    title = md.get("program_title")
-    if not group or not isinstance(title, str):
-        return False
-    title = title.strip()
-    if not title:
-        return False
-    g = _normalize_title_compare(group)
-    t = _normalize_title_compare(title)
-    if not g or not t or t == g:
-        return False
-    # Reverse failure mode: LLM extracts only a short prefix of current folder title.
-    # Require a meaningful gap to avoid flagging tiny spelling differences.
-    if g.startswith(t) and len(g) >= len(t) + 3:
         return True
     return False
 
@@ -396,47 +304,11 @@ def main() -> int:
 
             registered_files += 1
             path_id = str(path_row["path_id"])
-            md, md_source = latest_metadata_for_path(con, path_id)
+            md, md_source = latest_path_metadata(con, path_id)
             if md is None:
                 metadata_missing_skipped += 1
                 rows_for_plan.append(
                     {"path_id": path_id, "src": sf.win_path, "status": "skipped", "reason": "missing_metadata", "ts": ts_row}
-                )
-                if queue_missing_metadata:
-                    queue_candidates.append(
-                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
-                    )
-                continue
-
-            if not has_required_db_contract(md):
-                invalid_contract_skipped += 1
-                rows_for_plan.append(
-                    {
-                        "path_id": path_id,
-                        "src": sf.win_path,
-                        "status": "skipped",
-                        "reason": "invalid_metadata_contract",
-                        "metadata_source": md_source,
-                        "ts": ts_row,
-                    }
-                )
-                if queue_missing_metadata:
-                    queue_candidates.append(
-                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
-                    )
-                continue
-
-            if bool(md.get("needs_review")) and not allow_needs_review:
-                needs_review_skipped += 1
-                rows_for_plan.append(
-                    {
-                        "path_id": path_id,
-                        "src": sf.win_path,
-                        "status": "skipped",
-                        "reason": "needs_review",
-                        "metadata_source": md_source,
-                        "ts": ts_row,
-                    }
                 )
                 if queue_missing_metadata:
                     queue_candidates.append(
@@ -466,101 +338,59 @@ def main() -> int:
                     )
                 continue
 
-            run_suspicious_title_check = not skip_suspicious_title_check and not is_human_reviewed
-            # サブタイトル区切り検出は source に関係なく常に実行
-            # (▽▼◇ は正当な番組タイトルにほぼ使われない)
-            run_subtitle_separator_check = not skip_suspicious_title_check
-
-            if run_suspicious_title_check and looks_like_swallowed_program_title(sf.win_path, md):
-                suspicious_program_title_skipped += 1
-                if is_llm and args.apply:
-                    mark_metadata_needs_review(con, path_id, md, md_source, "relocate_suspicious_program_title")
-                rows_for_plan.append(
-                    {
-                        "path_id": path_id,
-                        "src": sf.win_path,
-                        "status": "skipped",
-                        "reason": "suspicious_program_title",
-                        "metadata_source": md_source,
-                        "program_title": md.get("program_title"),
-                        "folderTitle": _folder_title_from_path(sf.win_path),
-                        "ts": ts_row,
-                    }
-                )
+            vr = validate_move_candidate(
+                sf.win_path, md,
+                allow_needs_review=allow_needs_review,
+                check_swallowed_title=not skip_suspicious_title_check and not is_human_reviewed,
+                check_subtitle_separator=not skip_suspicious_title_check,
+                routes=routes,
+                dest_root=dest_root_win if not routes else None,
+            )
+            if not vr.ok:
+                skip_reason = vr.skip_reason or "unknown"
+                # Counter increments
+                if skip_reason == "needs_review":
+                    needs_review_skipped += 1
+                elif skip_reason in ("suspicious_program_title", "suspicious_program_title_shortened",
+                                     "subtitle_separator_in_program_title"):
+                    suspicious_program_title_skipped += 1
+                else:
+                    invalid_contract_skipped += 1
+                # Mark for review in apply mode
+                if args.apply and skip_reason in ("suspicious_program_title", "suspicious_program_title_shortened"):
+                    if is_llm:
+                        mark_metadata_needs_review(con, path_id, md, md_source, f"relocate_{skip_reason}")
+                elif args.apply and skip_reason == "subtitle_separator_in_program_title":
+                    mark_metadata_needs_review(con, path_id, md, md_source, f"relocate_{skip_reason}")
+                # Plan row
+                plan_row_skip: dict[str, Any] = {
+                    "path_id": path_id,
+                    "src": sf.win_path,
+                    "status": "skipped",
+                    "reason": skip_reason,
+                    "metadata_source": md_source,
+                    "ts": ts_row,
+                }
+                if skip_reason in ("suspicious_program_title", "suspicious_program_title_shortened",
+                                   "subtitle_separator_in_program_title"):
+                    plan_row_skip["program_title"] = md.get("program_title")
+                    plan_row_skip["folderTitle"] = folder_title_from_path(sf.win_path)
+                rows_for_plan.append(plan_row_skip)
+                # Queue candidates
                 if queue_missing_metadata:
-                    queue_candidates.append(
-                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
-                    )
+                    # For dest-build errors, only queue if metadata actually needs reprocessing
+                    should_queue = skip_reason in (
+                        "invalid_metadata_contract", "needs_review", "missing_required_fields",
+                        "suspicious_program_title", "suspicious_program_title_shortened",
+                        "subtitle_separator_in_program_title",
+                    ) or metadata_needs_queue(md)
+                    if should_queue:
+                        queue_candidates.append(
+                            {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
+                        )
                 continue
 
-            if run_suspicious_title_check and looks_like_shortened_program_title(sf.win_path, md):
-                suspicious_program_title_skipped += 1
-                if is_llm and args.apply:
-                    mark_metadata_needs_review(con, path_id, md, md_source, "relocate_suspicious_program_title_shortened")
-                rows_for_plan.append(
-                    {
-                        "path_id": path_id,
-                        "src": sf.win_path,
-                        "status": "skipped",
-                        "reason": "suspicious_program_title_shortened",
-                        "metadata_source": md_source,
-                        "program_title": md.get("program_title"),
-                        "folderTitle": _folder_title_from_path(sf.win_path),
-                        "ts": ts_row,
-                    }
-                )
-                if queue_missing_metadata:
-                    queue_candidates.append(
-                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
-                    )
-                continue
-
-            if run_subtitle_separator_check and detect_subtitle_in_program_title(str(md.get("program_title", ""))):
-                suspicious_program_title_skipped += 1
-                if args.apply:
-                    mark_metadata_needs_review(con, path_id, md, md_source, "relocate_subtitle_separator_in_program_title")
-                rows_for_plan.append(
-                    {
-                        "path_id": path_id,
-                        "src": sf.win_path,
-                        "status": "skipped",
-                        "reason": "subtitle_separator_in_program_title",
-                        "metadata_source": md_source,
-                        "program_title": md.get("program_title"),
-                        "folderTitle": _folder_title_from_path(sf.win_path),
-                        "ts": ts_row,
-                    }
-                )
-                if queue_missing_metadata:
-                    queue_candidates.append(
-                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
-                    )
-                continue
-
-            genre_route = None
-            if routes:
-                dst, genre_route, dst_err = build_routed_dest_path(routes, sf.win_path, md)
-            else:
-                dst, dst_err = build_expected_dest_path(dest_root_win, sf.win_path, md)
-            if not dst or dst_err:
-                invalid_contract_skipped += 1
-                rows_for_plan.append(
-                    {
-                        "path_id": path_id,
-                        "src": sf.win_path,
-                        "status": "skipped",
-                        "reason": dst_err or "build_expected_dest_failed",
-                        "metadata_source": md_source,
-                        "ts": ts_row,
-                    }
-                )
-                if queue_missing_metadata and metadata_needs_queue(md):
-                    queue_candidates.append(
-                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
-                    )
-                continue
-
-            dst = canonicalize_windows_path(dst)
+            dst = canonicalize_windows_path(vr.dst)
             if sf.win_path.lower() == dst.lower():
                 already_correct += 1
                 rows_for_plan.append(
@@ -589,8 +419,8 @@ def main() -> int:
                 "air_date": md.get("air_date"),
                 "ts": ts_row,
             }
-            if genre_route:
-                plan_row["genre_route"] = genre_route
+            if vr.genre_route:
+                plan_row["genre_route"] = vr.genre_route
             rows_for_plan.append(plan_row)
             row_move = {"path_id": path_id, "src": sf.win_path, "dst": dst}
             rows_for_move.append(row_move)
