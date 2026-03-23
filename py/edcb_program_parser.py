@@ -76,6 +76,8 @@ def _parse_title_line(line: str) -> dict[str, Any]:
         annotations.append(m.group(1))
     clean_title = _RE_ANNOTATIONS.sub("", line_h).strip()
     is_rebroadcast = "再" in annotations
+    # NOTE: "official_title" is the full EPG title line (番組名+サブタイトル+説明 etc.)
+    # — it is NOT a clean program name. Consumers must parse out the program portion.
     return {
         "official_title": clean_title,
         "title_raw": line.strip(),

@@ -373,6 +373,13 @@ def parse_program_and_subtitle(base: str) -> tuple[str, str | None]:
 
 
 def _choose_epg_title_candidate(base: str, epg_candidates: list[dict]) -> str | None:
+    """Pick the best-matching EPG title from candidates.
+
+    Returns the raw EPG ``official_title`` string — this is an episode-level
+    title (番組名+サブタイトル+説明), NOT a clean program name.  Callers must
+    run ``parse_program_and_subtitle()`` on the result before using it as a
+    program title.
+    """
     if not epg_candidates:
         return None
     ranked = sorted(
@@ -397,19 +404,23 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet, epg_can
     if canonical != prog:
         prog = canonical
         source = "ai_primary_policy+hints"
-    epg_title = _choose_epg_title_candidate(base, epg_candidates or [])
-    if epg_title:
+    epg_title_raw = _choose_epg_title_candidate(base, epg_candidates or [])
+    if epg_title_raw:
+        # EPG official_title is almost always "番組名+サブタイトル+説明" — NOT a clean program name.
+        # Extract the program name portion before using it as a candidate.
+        epg_prog, _ = parse_program_and_subtitle(epg_title_raw)
         prog_norm = _normalize_title_compare(prog)
-        epg_norm = _normalize_title_compare(epg_title)
+        epg_norm = _normalize_title_compare(epg_prog)
+        # Only adopt EPG program name when the parsed title is genuinely bad.
+        # Never override a valid short title with a longer EPG string.
         should_take_epg = (
             not prog_norm
             or prog in ("UNKNOWN", "")
             or SUBTITLE_SEPARATORS.search(prog) is not None
             or len(prog) > 80
-            or _score_title_overlap(base, epg_title) > _score_title_overlap(base, prog)
         )
-        if should_take_epg and prog_norm != epg_norm:
-            prog = epg_title
+        if should_take_epg and epg_norm and prog_norm != epg_norm:
+            prog = epg_prog
             source = "ai_primary_policy+epg_hint"
     return {
         "program_title": prog,
@@ -421,7 +432,11 @@ def extract_title_ai_primary(name: str, base: str, alias_hints: HintSet, epg_can
 
 
 class _EpgCache:
-    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key."""
+    """Pre-loaded EPG metadata cache for fast lookup by match_key / datetime_key.
+
+    ``official_title`` in each record is the full EPG episode-level title
+    (番組名+サブタイトル+説明), not a clean program name.
+    """
 
     def __init__(self, con: sqlite3.Connection):
         self._by_match_key: dict[str, dict] = {}
