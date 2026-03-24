@@ -23,10 +23,82 @@ import argparse
 import json
 import sqlite3
 import sys
+from pathlib import PureWindowsPath
 
 from epg_common import normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db
+from path_placement_rules import safe_dir_name
 from pathscan_common import now_iso
+
+
+def _normalize_win_parts(path: str) -> list[str]:
+    p = str(path or "").replace("/", "\\").strip()
+    if not p:
+        return []
+    return [seg for seg in p.split("\\") if seg]
+
+
+def _join_win_parts(parts: list[str]) -> str:
+    if not parts:
+        return ""
+    if len(parts) == 1 and parts[0].endswith(":"):
+        return parts[0] + "\\"
+    head = parts[0]
+    tail = parts[1:]
+    if head.endswith(":"):
+        return head + ("\\" + "\\".join(tail) if tail else "\\")
+    return "\\".join(parts)
+
+
+def _looks_like_year(seg: str) -> bool:
+    return len(seg) == 4 and seg.isdigit()
+
+
+def _looks_like_month(seg: str) -> bool:
+    if len(seg) != 2 or not seg.isdigit():
+        return False
+    m = int(seg)
+    return 1 <= m <= 12
+
+
+def _infer_root_by_layout(path: str) -> str | None:
+    parts = _normalize_win_parts(path)
+    if len(parts) < 5:
+        return None
+    file_name = PureWindowsPath(path).name
+    if not file_name:
+        return None
+    if parts[-1] != file_name:
+        return None
+    if not _looks_like_year(parts[-3]) or not _looks_like_month(parts[-2]):
+        return None
+    root_parts = parts[:-4]
+    if not root_parts:
+        return None
+    return _join_win_parts(root_parts)
+
+
+def _infer_root_by_old_title(path: str, old_title: str) -> str | None:
+    title = str(old_title or "").strip()
+    if not title:
+        return None
+    parts = _normalize_win_parts(path)
+    if len(parts) < 2:
+        return None
+    candidates = {title, safe_dir_name(title)}
+    for i, seg in enumerate(parts):
+        if seg in candidates and i > 0:
+            return _join_win_parts(parts[:i])
+    return None
+
+
+def _drive_root(path: str) -> str | None:
+    parts = _normalize_win_parts(path)
+    if not parts:
+        return None
+    if parts[0].endswith(":"):
+        return parts[0].upper() + "\\"
+    return None
 
 
 def main() -> int:
@@ -110,32 +182,26 @@ def main() -> int:
 
     affected_roots: list[str] = []
     if updated_path_ids:
-        # Collect old program_titles (current folder names) for path-based root detection
         placeholders = ",".join("?" for _ in updated_path_ids)
-        title_rows = con.execute(
-            f"SELECT DISTINCT program_title FROM path_metadata WHERE path_id IN ({placeholders})",
+        rows = con.execute(
+            f"""SELECT p.path, pm.program_title
+                FROM paths p
+                JOIN path_metadata pm ON pm.path_id = p.path_id
+                WHERE p.path_id IN ({placeholders})""",
             updated_path_ids,
         ).fetchall()
-        old_titles = {str(r["program_title"]).strip() for r in title_rows if r["program_title"]}
 
-        path_rows = con.execute(
-            f"SELECT DISTINCT path FROM paths WHERE path_id IN ({placeholders})",
-            updated_path_ids,
-        ).fetchall()
         roots: set[str] = set()
-        for row in path_rows:
+        for row in rows:
             path = str(row["path"] or "")
-            # Find dest_root: parent directory of the program_title folder segment
-            # e.g. B:\VideoLibrary\番組名\2026\03\file.ts → B:\VideoLibrary
-            parts = path.replace("/", "\\").split("\\")
-            for i, seg in enumerate(parts):
-                if seg in old_titles and i > 0:
-                    roots.add("\\".join(parts[:i]))
-                    break
-            else:
-                # Fallback: drive letter root
-                if len(path) >= 3 and path[1:3] == ":\\":
-                    roots.add(path[:3].upper())
+            old_title = str(row["program_title"] or "")
+            root = (
+                _infer_root_by_layout(path)
+                or _infer_root_by_old_title(path, old_title)
+                or _drive_root(path)
+            )
+            if root:
+                roots.add(root)
         affected_roots = sorted(roots)
     result["affectedRoots"] = affected_roots
 
