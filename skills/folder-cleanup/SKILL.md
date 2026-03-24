@@ -124,7 +124,14 @@ video_pipeline_update_program_titles {
 ### Step 5: Relocate dry-run
 
 After title correction, run relocate to move files to correct folders.
-Use `affectedRoots` returned by `video_pipeline_update_program_titles` as the default `roots` value (fallback: parent directory of affected folders):
+Use `affectedRoots` returned by `video_pipeline_update_program_titles` as the default `roots` value.
+`affectedRoots` is computed as:
+
+1. Structural inference from managed layout (`...\\<program_folder>\\<YYYY>\\<MM>\\<file>`) → return parent before `<program_folder>`
+2. Fallback: old-title folder-segment match
+3. Last resort: drive root
+
+So it remains stable even when metadata title is already corrected but the physical path still has old/contaminated folder names.
 
 ```
 video_pipeline_relocate_existing_files {
