@@ -33,16 +33,45 @@ def main() -> int:
     ap.add_argument("--db", required=True)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--min-extra-chars", type=int, default=MIN_EXTRA_CHARS_DEFAULT)
+    ap.add_argument(
+        "--program-title",
+        default="",
+        help="Only inspect this exact current program_title (user-specified cleanup mode).",
+    )
+    ap.add_argument(
+        "--path-contains",
+        default="",
+        help="Only inspect rows where file path contains this substring (SQL LIKE %%value%%).",
+    )
     args = ap.parse_args()
 
     con = connect_db(args.db)
     sources = load_canonical_title_sources(con)
 
-    # Query all distinct program_title values with their path_ids
+    where = ["pm.program_title IS NOT NULL", "pm.program_title != ''"]
+    q_params: list[str] = []
+    joins = ""
+    mode = "auto_detect"
+
+    program_title_filter = str(args.program_title or "").strip()
+    path_contains_filter = str(args.path_contains or "").strip()
+    if program_title_filter:
+        where.append("pm.program_title = ?")
+        q_params.append(program_title_filter)
+        mode = "user_specified"
+    if path_contains_filter:
+        joins = "JOIN paths p ON p.path_id = pm.path_id"
+        where.append("p.path LIKE ?")
+        q_params.append(f"%{path_contains_filter}%")
+        mode = "user_specified"
+
+    # Query program_title values with their path_ids in requested scope
     rows = con.execute(
-        """SELECT pm.path_id, pm.program_title
-           FROM path_metadata pm
-           WHERE pm.program_title IS NOT NULL AND pm.program_title != ''"""
+        f"""SELECT pm.path_id, pm.program_title
+            FROM path_metadata pm
+            {joins}
+            WHERE {" AND ".join(where)}""",
+        q_params,
     ).fetchall()
 
     # Group path_ids by program_title
@@ -103,6 +132,11 @@ def main() -> int:
     result: dict[str, Any] = {
         "ok": True,
         "dryRun": args.dry_run,
+        "mode": mode,
+        "filters": {
+            "programTitle": program_title_filter or None,
+            "pathContains": path_contains_filter or None,
+        },
         "totalContaminatedTitles": len(contaminated_titles),
         "totalAffectedFiles": total_affected,
         "contaminatedTitles": contaminated_titles,

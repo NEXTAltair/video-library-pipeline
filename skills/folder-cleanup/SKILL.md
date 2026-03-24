@@ -4,7 +4,7 @@ description: Detect and fix contaminated folder names under by_program/. Use whe
 metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipeline"]}}}
 ---
 
-# Folder contamination cleanup
+# Folder contamination cleanup (user-specified primary)
 
 ## !! Critical rules !!
 
@@ -34,7 +34,27 @@ Stop and report if `ok=false`.
 
 From the result, extract **`windowsOpsRoot`** (e.g. `B:\_AI_WORK`). The WSL-equivalent path is needed for file writes — convert by replacing the drive letter: `B:\...` → `/mnt/b/...`. The `llm/` subdirectory under this path is where all review YAML files go (same location as `program_aliases_review_*.yaml` from extract-review).
 
-### Step 2: Detect contamination
+### Step 2: Resolve target titles (user-specified first, detect second)
+
+Primary path (recommended):
+- If user provided a concrete wrong folder/path, call:
+
+```
+video_pipeline_detect_folder_contamination {
+  "pathContains": "<representative wrong folder/path substring>"
+}
+```
+
+- If user provided the current wrong title directly, call:
+
+```
+video_pipeline_detect_folder_contamination {
+  "programTitle": "<current wrong program_title>"
+}
+```
+
+Fallback audit path (optional):
+- When the user does **not** provide a concrete target, run full detect:
 
 ```
 video_pipeline_detect_folder_contamination {}
@@ -50,39 +70,41 @@ Branch on result:
 
 Example: if `windowsOpsRoot` = `B:\_AI_WORK`, write to `/mnt/b/_AI_WORK/llm/folder_contamination_review_20260323_211200.yaml`.
 
+Use the **same review YAML shape as extract-review** (`hints[].canonical_title + aliases[]`).
 The YAML is **for human editing only** — keep it minimal:
 
 ```yaml
 # Folder contamination review
-# - approved_title 空欄 → suggested_title を採用
-# - approved_title 記入 → そちらを採用
-# - 行ごと削除 → スキップ
-candidates:
-  - program_title: "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
-    suggested_title: "ヒューマニエンス"
-    approved_title:
+# extract-review と同じ hints 形式:
+# - canonical_title を確定/修正
+# - aliases は現在の汚染タイトル (通常 1 件)
+# - ブロックごと削除でスキップ
+hints:
+  - canonical_title: "ヒューマニエンス"
+    aliases:
+      - "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
 ```
 
 Map from the detection result's `contaminatedTitles` array:
-- `program_title` ← `programTitle`
-- `suggested_title` ← `suggestedTitle`
-- `approved_title` ← always empty
+- `hints[].canonical_title` ← `suggestedTitle`
+- `hints[].aliases[0]` ← `programTitle`
 
 Do NOT include `pathIds`, `confidence`, `matchSource`, `affectedFiles`, or other machine data in the YAML. The agent already has this from the step 2 result.
 
 Present the file path to the user and wait for them to finish editing.
 
 **[User review gate]** — User edits the YAML:
-- Entry kept, `approved_title` empty → use `suggested_title`
-- Entry kept, `approved_title` filled → use that title
-- Entry deleted → skip
+- ブロックを残す → 採用
+- `canonical_title` を編集 → その値を採用
+- ブロック削除 → スキップ
 
 ### Step 4: Read YAML and build title updates
 
 After user signals completion, read the edited YAML. For each remaining entry:
 
-1. Determine `new_title`: use `approved_title` when non-empty; otherwise `suggested_title`
-2. Look up `pathIds` from the **step 2 detection result** by matching `programTitle`
+1. Determine `new_title`: `hints[].canonical_title`
+2. Determine original contaminated title: `hints[].aliases[0]` (or first alias)
+3. Look up `pathIds` from the **step 2 detection result** by matching `programTitle`
 3. Build one `{ "path_id": "<id>", "new_title": "<new_title>" }` per path_id
 
 Then dry-run:

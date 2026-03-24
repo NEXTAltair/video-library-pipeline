@@ -8,11 +8,23 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
       description:
         "Detect by_program folder names contaminated with subtitle/episode info. " +
         "Cross-references programs table for suggested corrections. " +
+        "Supports user-specified scoping by current title or representative path substring. " +
         "Returns updateInstructions array compatible with video_pipeline_update_program_titles.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
+          programTitle: {
+            type: "string",
+            description:
+              "Optional explicit current program_title to inspect (user-specified cleanup entry point).",
+          },
+          pathContains: {
+            type: "string",
+            description:
+              "Optional path substring to scope detection (matched as SQL LIKE %value%). " +
+              "Useful when user provides a representative wrong folder/path.",
+          },
           minExtraChars: {
             type: "integer",
             minimum: 1,
@@ -37,6 +49,12 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
 
         if (typeof params.minExtraChars === "number" && Number.isFinite(params.minExtraChars)) {
           args.push("--min-extra-chars", String(Math.trunc(params.minExtraChars)));
+        }
+        if (typeof params.programTitle === "string" && params.programTitle.trim()) {
+          args.push("--program-title", params.programTitle.trim());
+        }
+        if (typeof params.pathContains === "string" && params.pathContains.trim()) {
+          args.push("--path-contains", params.pathContains.trim());
         }
 
         const r = runCmd("uv", args, resolved.cwd);
