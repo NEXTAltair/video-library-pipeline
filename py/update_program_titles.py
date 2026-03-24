@@ -23,10 +23,81 @@ import argparse
 import json
 import sqlite3
 import sys
+from pathlib import PureWindowsPath
 
 from epg_common import normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db
+from path_placement_rules import safe_dir_name
 from pathscan_common import now_iso
+
+
+def _is_year_month_layout(parts: tuple[str, ...], index: int) -> bool:
+    """Return True when parts[index:] matches <program>/<year>/<month>/<filename>."""
+    # Need at least: program, year, month, file
+    if len(parts) - index < 4:
+        return False
+    year = parts[index + 1]
+    month = parts[index + 2]
+    filename = parts[index + 3]
+    if not (len(year) == 4 and year.isdigit()):
+        return False
+    if not (len(month) == 2 and month.isdigit() and 1 <= int(month) <= 12):
+        return False
+    return bool(filename)
+
+
+def _infer_root_by_structure(path: str) -> str | None:
+    """Infer library root from canonical layout: <root>\\<program>\\<year>\\<month>\\<file>."""
+    p = PureWindowsPath(str(path or ""))
+    parts = p.parts
+    if len(parts) < 5:
+        return None
+
+    # Assume the program folder is 4th from the end in canonical shape.
+    prog_index = len(parts) - 4
+    if prog_index <= 0:
+        return None
+    if not _is_year_month_layout(parts, prog_index):
+        return None
+    return str(PureWindowsPath(*parts[:prog_index]))
+
+
+def _infer_root_by_old_title(path: str, old_title: str) -> str | None:
+    """Infer library root by locating old title folder in current path segments."""
+    p = PureWindowsPath(str(path or ""))
+    parts = p.parts
+    if len(parts) < 2:
+        return None
+
+    normalized_candidates = {
+        old_title.strip(),
+        safe_dir_name(old_title),
+    }
+    for i, seg in enumerate(parts):
+        if i == 0:
+            continue
+        if seg in normalized_candidates:
+            return str(PureWindowsPath(*parts[:i]))
+    return None
+
+
+def infer_affected_root(path: str, old_title: str) -> str | None:
+    """Resolve relocate root with explicit precedence.
+
+    1) Structural inference from canonical layout
+    2) Old-title segment inference
+    3) Drive/anchor fallback
+    """
+    root = _infer_root_by_structure(path)
+    if root:
+        return root
+
+    root = _infer_root_by_old_title(path, old_title)
+    if root:
+        return root
+
+    anchor = PureWindowsPath(str(path or "")).anchor
+    return anchor or None
 
 
 def main() -> int:
@@ -110,32 +181,22 @@ def main() -> int:
 
     affected_roots: list[str] = []
     if updated_path_ids:
-        # Collect old program_titles (current folder names) for path-based root detection
         placeholders = ",".join("?" for _ in updated_path_ids)
-        title_rows = con.execute(
-            f"SELECT DISTINCT program_title FROM path_metadata WHERE path_id IN ({placeholders})",
-            updated_path_ids,
-        ).fetchall()
-        old_titles = {str(r["program_title"]).strip() for r in title_rows if r["program_title"]}
-
         path_rows = con.execute(
-            f"SELECT DISTINCT path FROM paths WHERE path_id IN ({placeholders})",
+            f"""SELECT p.path, pm.program_title
+                FROM paths p
+                JOIN path_metadata pm ON pm.path_id = p.path_id
+                WHERE p.path_id IN ({placeholders})""",
             updated_path_ids,
         ).fetchall()
+
         roots: set[str] = set()
         for row in path_rows:
             path = str(row["path"] or "")
-            # Find dest_root: parent directory of the program_title folder segment
-            # e.g. B:\VideoLibrary\番組名\2026\03\file.ts → B:\VideoLibrary
-            parts = path.replace("/", "\\").split("\\")
-            for i, seg in enumerate(parts):
-                if seg in old_titles and i > 0:
-                    roots.add("\\".join(parts[:i]))
-                    break
-            else:
-                # Fallback: drive letter root
-                if len(path) >= 3 and path[1:3] == ":\\":
-                    roots.add(path[:3].upper())
+            old_title = str(row["program_title"] or "").strip()
+            root = infer_affected_root(path, old_title)
+            if root:
+                roots.add(root)
         affected_roots = sorted(roots)
     result["affectedRoots"] = affected_roots
 
