@@ -127,6 +127,16 @@ def latest_path_metadata_by_path(con, path: str) -> tuple[dict[str, Any] | None,
     return md, source, pid
 
 
+def is_human_reviewed_metadata(source: str | None, md: dict[str, Any] | None) -> bool:
+    """Return whether metadata should be treated as human-reviewed."""
+    source_norm = str(source or "").strip().lower()
+    if source_norm == "human_reviewed":
+        return True
+    if isinstance(md, dict):
+        return bool(md.get("human_reviewed"))
+    return False
+
+
 def split_broadcast_data(data: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """Split broadcast data into promoted column values and residual data_json.
 

@@ -19,20 +19,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sqlite3
 from typing import Any
 
 from mediaops_schema import connect_db
-from path_placement_rules import normalize_title_for_comparison
+from path_placement_rules import SUBTITLE_SEPARATORS, clean_program_title, normalize_title_for_comparison
 
-SEPARATOR_RE = re.compile(r"[▽▼◇「]")
 MIN_EXTRA_CHARS_DEFAULT = 4
-
-
-def clean_title(title: str) -> str:
-    """Split at first separator and return the prefix."""
-    return SEPARATOR_RE.split(title, maxsplit=1)[0].strip()
 
 
 def load_human_reviewed_titles(con: sqlite3.Connection) -> set[str]:
@@ -133,7 +126,7 @@ def main() -> int:
     update_instructions: list[dict[str, str]] = []
 
     for program_title, path_ids in sorted(title_to_path_ids.items()):
-        has_separator = bool(SEPARATOR_RE.search(program_title))
+        has_separator = bool(SUBTITLE_SEPARATORS.search(program_title))
         pt_norm = normalize_title_for_comparison(program_title)
 
         # Exact match against human-reviewed titles → NOT contaminated
@@ -155,7 +148,7 @@ def main() -> int:
 
         # Priority 3: separator split fallback
         if suggested_title is None and has_separator:
-            cleaned = clean_title(program_title)
+            cleaned = clean_program_title(program_title)
             if cleaned and cleaned != program_title:
                 suggested_title = cleaned
                 match_source = "separator_split"
@@ -178,7 +171,7 @@ def main() -> int:
             "suggestedTitle": suggested_title,
             "matchSource": match_source,
             "confidence": confidence,
-            "separatorFound": SEPARATOR_RE.search(program_title).group() if has_separator else None,
+            "separatorFound": SUBTITLE_SEPARATORS.search(program_title).group() if has_separator else None,
             "affectedFiles": len(path_ids),
             "pathIds": path_ids,
         }

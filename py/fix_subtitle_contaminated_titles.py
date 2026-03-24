@@ -13,18 +13,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 
 from db_helpers import reconstruct_path_metadata, split_path_metadata
 from mediaops_schema import begin_immediate, connect_db
-
-SEPARATOR_RE = re.compile(r"[▽▼◇「]")
-
-
-def clean_title(title: str) -> str:
-    """最初のサブタイトル区切り文字で分割し、前半を返す。"""
-    return SEPARATOR_RE.split(title, maxsplit=1)[0].strip()
+from path_placement_rules import SUBTITLE_SEPARATORS, clean_program_title
 
 
 TITLE_RELATED_REASONS = {
@@ -67,10 +60,10 @@ def main() -> int:
                 continue
             pt = data.get("program_title", "")
 
-        if not isinstance(pt, str) or not SEPARATOR_RE.search(pt):
+        if not isinstance(pt, str) or not SUBTITLE_SEPARATORS.search(pt):
             continue
 
-        cleaned = clean_title(pt)
+        cleaned = clean_program_title(pt)
         if not cleaned or cleaned == pt:
             continue
 
@@ -101,7 +94,7 @@ def main() -> int:
     if args.dry_run:
         samples = []
         for row_tuple in updates[:20]:
-            samples.append({"path_id": row_tuple[4], "program_title": row_tuple[1]})
+            samples.append({"path_id": row_tuple[3], "program_title": row_tuple[1]})
         print(
             json.dumps(
                 {
