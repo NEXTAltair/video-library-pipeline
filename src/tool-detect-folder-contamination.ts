@@ -8,7 +8,7 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
       description:
         "Detect by_program folder names contaminated with subtitle/episode info. " +
         "Cross-references programs table for suggested corrections. " +
-        "Returns updateInstructions array compatible with video_pipeline_update_program_titles.",
+        "Supports full-scan or user-specified scope (representativePath / targetProgramTitle). Returns updateInstructions array compatible with video_pipeline_update_program_titles.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -19,6 +19,14 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
             maximum: 20,
             default: 4,
             description: "Minimum extra characters beyond matched title to consider contaminated.",
+          },
+          representativePath: {
+            type: "string",
+            description: "Optional user-specified wrong path/folder. Limits detection scope to titles resolved from this path.",
+          },
+          targetProgramTitle: {
+            type: "string",
+            description: "Optional explicit current (wrong) program_title to correct. Can be combined with representativePath.",
           },
         },
       },
@@ -37,6 +45,12 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
 
         if (typeof params.minExtraChars === "number" && Number.isFinite(params.minExtraChars)) {
           args.push("--min-extra-chars", String(Math.trunc(params.minExtraChars)));
+        }
+        if (typeof params.representativePath === "string" && params.representativePath.trim()) {
+          args.push("--target-path", params.representativePath.trim());
+        }
+        if (typeof params.targetProgramTitle === "string" && params.targetProgramTitle.trim()) {
+          args.push("--target-title", params.targetProgramTitle.trim());
         }
 
         const r = runCmd("uv", args, resolved.cwd);

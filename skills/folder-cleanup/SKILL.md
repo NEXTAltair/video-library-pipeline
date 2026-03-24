@@ -1,149 +1,95 @@
 ---
 name: video-library-pipeline-folder-cleanup
-description: Detect and fix contaminated folder names under by_program/. Use when the user says "フォルダ名がおかしい", "サブタイトルがフォルダに入ってる", "folder names look wrong", or "フォルダ分けが変".
+description: Fix contaminated folder/program titles with a user-specified primary flow. Use when the user points to a wrong folder/title (e.g. "フォルダ名がおかしい", "サブタイトルがフォルダに入ってる").
 metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipeline"]}}}
 ---
 
-# Folder contamination cleanup
+# Folder contamination cleanup (user-specified first)
 
-## !! Critical rules !!
+## Critical rules
 
-- **No exec / shell commands.** Use plugin tools only (+ file write for review YAML).
-- **suggestedTitle is a proposal, not a decision.** Always present to user for review. Some folder names that contain separators ARE the complete canonical title.
-- Folder name = `program_title` only. Subtitle, episode info, or guest names in folder names = contamination.
-- **Selective approval is the default.** User may approve some, reject others, or override suggestedTitle.
+- **No exec/shell commands.** Use plugin tools only (+ file write for review YAML).
+- Primary entry is **operator-specified wrong target** (path/title), not auto-detect full scan.
+- Auto-detect full scan is optional audit mode only.
+- Folder name = `program_title` only. Subtitle/episode info in folder names is contamination.
 
-## When to use this skill
+## Shared review YAML contract (same mental model as extract-review)
 
-- "フォルダ名がおかしい" / "フォルダ分けが変" / "サブタイトルがフォルダに入ってる"
-- "folder names look wrong" / "folder cleanup"
-- Folder names contain `▽▼◇「` or episode descriptions beyond the program title
-
-## Tool sequence
-
-> **Execution rule:** Steps 1→2 run consecutively without waiting for user confirmation.
-> Pause at step 3 for user to edit the review YAML.
-
-### Step 1: Validate and get config
-
-```
-video_pipeline_validate {"checkWindowsInterop": true, "intent": "relocate"}
-```
-
-Stop and report if `ok=false`.
-
-From the result, extract **`windowsOpsRoot`** (e.g. `B:\_AI_WORK`). The WSL-equivalent path is needed for file writes — convert by replacing the drive letter: `B:\...` → `/mnt/b/...`. The `llm/` subdirectory under this path is where all review YAML files go (same location as `program_aliases_review_*.yaml` from extract-review).
-
-### Step 2: Detect contamination
-
-```
-video_pipeline_detect_folder_contamination {}
-```
-
-Branch on result:
-- `totalContaminatedTitles == 0` → Report clean, stop.
-- `totalContaminatedTitles > 0` → Proceed to step 3. **Keep the detection result in context** — `pathIds` and other details are needed in step 4.
-
-### Step 3: Write review YAML to `{windowsOpsRoot}/llm/`
-
-**Output path** (required): `{wsl_windowsOpsRoot}/llm/folder_contamination_review_{YYYYMMDD_HHMMSS}.yaml`
-
-Example: if `windowsOpsRoot` = `B:\_AI_WORK`, write to `/mnt/b/_AI_WORK/llm/folder_contamination_review_20260323_211200.yaml`.
-
-The YAML is **for human editing only** — keep it minimal:
+Use one human-facing review shape across review workflows:
 
 ```yaml
-# Folder contamination review
-# - approved_title 空欄 → suggested_title を採用
-# - approved_title 記入 → そちらを採用
-# - 行ごと削除 → スキップ
+# review contract v1
+review_type: "program_title_correction"
 candidates:
-  - program_title: "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
-    suggested_title: "ヒューマニエンス"
-    approved_title:
+  - current_value: "ヒューマニエンス 選『自律神経』あなたを操るもう一人のあなた"
+    suggested_value: "ヒューマニエンス"
+    approved_value:
+    decision: "accept" # accept | edit | skip
 ```
 
-Map from the detection result's `contaminatedTitles` array:
-- `program_title` ← `programTitle`
-- `suggested_title` ← `suggestedTitle`
-- `approved_title` ← always empty
+Rules:
+- `decision=accept` + `approved_value` empty → adopt `suggested_value`
+- `decision=edit` + `approved_value` set → adopt `approved_value`
+- `decision=skip` (or candidate deleted) → skip
 
-Do NOT include `pathIds`, `confidence`, `matchSource`, `affectedFiles`, or other machine data in the YAML. The agent already has this from the step 2 result.
+Keep machine-only fields (`pathIds`, confidence, match source) **out of the editable YAML**.
 
-Present the file path to the user and wait for them to finish editing.
+## Primary flow (recommended)
 
-**[User review gate]** — User edits the YAML:
-- Entry kept, `approved_title` empty → use `suggested_title`
-- Entry kept, `approved_title` filled → use that title
-- Entry deleted → skip
+### 1) Validate
 
-### Step 4: Read YAML and build title updates
+`video_pipeline_validate {"checkWindowsInterop": true, "intent": "relocate"}`
 
-After user signals completion, read the edited YAML. For each remaining entry:
+Stop if `ok=false`.
 
-1. Determine `new_title`: use `approved_title` when non-empty; otherwise `suggested_title`
-2. Look up `pathIds` from the **step 2 detection result** by matching `programTitle`
-3. Build one `{ "path_id": "<id>", "new_title": "<new_title>" }` per path_id
+### 2) Resolve from explicit operator input
 
-Then dry-run:
+When user gives a representative wrong path and/or wrong current title:
 
-```
-video_pipeline_update_program_titles {
-  "updates": <constructed updates array>,
-  "dryRun": true
-}
-```
+`video_pipeline_detect_folder_contamination {"representativePath":"<user path>", "targetProgramTitle":"<optional current wrong title>"}`
 
-Show preview. If the user says "OK":
+- This scoped mode must be preferred for operator-directed correction.
+- If result has no candidates and user still wants broad audit, run full scan fallback:
+  - `video_pipeline_detect_folder_contamination {}`
 
-```
-video_pipeline_update_program_titles {
-  "updates": <same array>,
-  "dryRun": false
-}
-```
+### 3) Write review YAML under `{windowsOpsRoot}/llm/`
 
-### Step 5: Relocate dry-run
+Output path: `{wsl_windowsOpsRoot}/llm/folder_contamination_review_{YYYYMMDD_HHMMSS}.yaml`
 
-After title correction, run relocate to move files to correct folders.
-Use `affectedRoots` returned by `video_pipeline_update_program_titles` as the default `roots` value (fallback: parent directory of affected folders):
+Map each `contaminatedTitles` item to one `candidates[]` row:
+- `current_value` ← `programTitle`
+- `suggested_value` ← `suggestedTitle`
+- `approved_value` ← empty
+- `decision` ← `accept`
 
-```
-video_pipeline_relocate_existing_files {
-  "apply": false,
-  "roots": [<parent directory of affected folders>],
-  "queueMissingMetadata": true,
-  "writeMetadataQueueOnDryRun": true
-}
-```
+Wait for human edits.
 
-Present relocate plan to user: number of files, source → destination paths.
+### 4) Build updates and apply title correction
 
-**[User confirmation gate]** — User approves relocation plan.
+From edited YAML:
+1. resolve `new_title` per candidate decision
+2. map `current_value` back to step-2 detection result to get `pathIds`
+3. build `[{"path_id":"...","new_title":"..."}]`
 
-### Step 6: Relocate apply
+Run dry-run first:
 
-```
-video_pipeline_relocate_existing_files {
-  "apply": true,
-  "planPath": "<planPath from step 5 dry-run result>"
-}
-```
+`video_pipeline_update_program_titles {"updates": <array>, "dryRun": true}`
 
-### Step 7: Completion report
+Then apply:
 
-- Report: contaminated folders fixed, files relocated.
-- Distinguish "title correction" from "physical move".
-- If any files had `missingMetadata`, note they need extraction before relocation.
+`video_pipeline_update_program_titles {"updates": <same array>, "dryRun": false}`
 
-## Handoff
+### 5) Relocate (dry-run → apply)
 
-- If `requiresMetadataPreparation=true` after relocate dry-run, hand off to `skills/extract-review/SKILL.md` for metadata extraction, then restart from step 5.
-- For the relocate portion (steps 5-6), follow the same rules as `skills/relocate-review/SKILL.md`.
+Dry-run:
 
-## roots specification rule
+`video_pipeline_relocate_existing_files {"apply": false, "roots": [<affected parent root>], "queueMissingMetadata": true, "writeMetadataQueueOnDryRun": true}`
 
-- Always specify the **parent directory** as roots, not individual contaminated folders.
-  - Correct: `roots=["B:\\VideoLibrary"]`
-  - Wrong: `roots=["B:\\VideoLibrary\\ヒューマニエンス 選「自律神経」..."]`
-- This ensures sibling contaminated folders are all included in the scan.
+After confirmation, apply:
+
+`video_pipeline_relocate_existing_files {"apply": true, "planPath": "<planPath from dry-run>"}`
+
+## Notes
+
+- Use parent directory in `roots` (not a single contaminated child folder).
+- If `requiresMetadataPreparation=true`, hand off to `skills/extract-review/SKILL.md`, then resume relocate.

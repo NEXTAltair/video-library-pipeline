@@ -9,6 +9,7 @@ metadata: {"openclaw":{"emoji":"🧠","requires":{"plugins":["video-library-pipe
 ## Rule
 
 - Use plugin tools only. Do not call scripts directly.
+- Human review artifact must follow a **shared review mental model** across workflows: `current value` → `suggested value` → `approved/decision` (accept/edit/skip).
 - Keep execution in the main agent turn. Do not use subagents.
 - This stage must save program info to YAML after extraction.
 - This stage ends with human review. Do not continue to move/apply automatically.
@@ -45,6 +46,16 @@ See main `video-library-pipeline` SKILL.md for definitions of `machine_extracted
 4. タイトル修正により `needs_review` の理由がなくなった行は自動的に `needs_review=false` にクリアされる
 5. 修正済み行を `source='human_reviewed'` で DB に upsert する
 6. upsert 成功後、YAML・抽出出力 JSONL・入力 JSONL を `llm/archive/` に自動アーカイブする
+
+### Shared review contract alignment
+
+Even though extract-review YAML uses `canonical_title` / `aliases`, operate it with the same cross-workflow decision model:
+- `current`: alias/raw title observed in extraction rows
+- `suggested`: canonical title candidate
+- `approved`: human-edited canonical title (if different)
+- `skip`: leave alias/canonical mapping untouched
+
+This keeps operator behavior consistent with folder-cleanup review while preserving existing YAML compatibility with `video_pipeline_apply_reviewed_metadata`.
 
 ### YAML 編集で解決できること
 
