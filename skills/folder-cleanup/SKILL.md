@@ -124,7 +124,11 @@ video_pipeline_update_program_titles {
 ### Step 5: Relocate dry-run
 
 After title correction, run relocate to move files to correct folders.
-Use `affectedRoots` returned by `video_pipeline_update_program_titles` as the default `roots` value (fallback: parent directory of affected folders):
+Use `affectedRoots` returned by `video_pipeline_update_program_titles` as the `roots` value.
+`affectedRoots` は以下の優先順位で推論される:
+1. **layout検出** — `<root>\<prog>\<YYYY>\<MM>\<file>` の年月構造からルートを特定
+2. **old_titleマッチ** — 変更前の `program_title` (および `safe_dir_name` 変換後) でパスセグメントを検索
+3. **ドライブルートフォールバック** — `B:\` など (スキャン範囲が広くなるため避けたい)
 
 ```
 video_pipeline_relocate_existing_files {

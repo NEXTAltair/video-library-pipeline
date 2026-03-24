@@ -23,10 +23,51 @@ import argparse
 import json
 import sqlite3
 import sys
+from pathlib import PureWindowsPath
 
 from epg_common import normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db
+from path_placement_rules import safe_dir_name
 from pathscan_common import now_iso
+
+
+def _infer_library_root_from_layout(path: str) -> str | None:
+    """<root>\\<prog>\\<YYYY>\\<MM>\\<file> 構造を検出してルートを返す。"""
+    p = PureWindowsPath(str(path or "").replace("/", "\\"))
+    month_dir = p.parent           # <MM>
+    year_dir = month_dir.parent    # <YYYY>
+    program_dir = year_dir.parent  # <prog>
+    year, month = year_dir.name, month_dir.name
+    if not (len(year) == 4 and year.isdigit() and len(month) == 2 and month.isdigit()):
+        return None
+    if not (1 <= int(month) <= 12):
+        return None
+    root_s = str(program_dir.parent).rstrip("\\")
+    return root_s or None
+
+
+def _infer_root_by_old_title(path: str, old_title: str) -> str | None:
+    """old_title (および safe_dir_name 変換後) でセグメントマッチしてルートを返す。"""
+    title = str(old_title or "").strip()
+    if not title:
+        return None
+    p = PureWindowsPath(str(path or "").replace("/", "\\"))
+    parts = p.parts
+    candidates = {title, safe_dir_name(title)}
+    for i in range(1, len(parts)):  # アンカー (drive) はスキップ
+        if parts[i] in candidates:
+            return str(PureWindowsPath(*parts[:i]))
+    return None
+
+
+def infer_affected_root(path: str, old_title: str) -> str | None:
+    """優先順位: (1) layout検出 → (2) old_titleマッチ → (3) ドライブルート"""
+    p = PureWindowsPath(str(path or "").replace("/", "\\"))
+    return (
+        _infer_library_root_from_layout(path)
+        or _infer_root_by_old_title(path, old_title)
+        or ((p.drive + "\\") if p.drive else None)
+    )
 
 
 def main() -> int:
@@ -110,32 +151,20 @@ def main() -> int:
 
     affected_roots: list[str] = []
     if updated_path_ids:
-        # Collect old program_titles (current folder names) for path-based root detection
         placeholders = ",".join("?" for _ in updated_path_ids)
-        title_rows = con.execute(
-            f"SELECT DISTINCT program_title FROM path_metadata WHERE path_id IN ({placeholders})",
-            updated_path_ids,
-        ).fetchall()
-        old_titles = {str(r["program_title"]).strip() for r in title_rows if r["program_title"]}
-
-        path_rows = con.execute(
-            f"SELECT DISTINCT path FROM paths WHERE path_id IN ({placeholders})",
+        rows = con.execute(
+            f"""SELECT p.path, pm.program_title
+                FROM paths p JOIN path_metadata pm ON pm.path_id = p.path_id
+                WHERE p.path_id IN ({placeholders})""",
             updated_path_ids,
         ).fetchall()
         roots: set[str] = set()
-        for row in path_rows:
-            path = str(row["path"] or "")
-            # Find dest_root: parent directory of the program_title folder segment
-            # e.g. B:\VideoLibrary\番組名\2026\03\file.ts → B:\VideoLibrary
-            parts = path.replace("/", "\\").split("\\")
-            for i, seg in enumerate(parts):
-                if seg in old_titles and i > 0:
-                    roots.add("\\".join(parts[:i]))
-                    break
-            else:
-                # Fallback: drive letter root
-                if len(path) >= 3 and path[1:3] == ":\\":
-                    roots.add(path[:3].upper())
+        for row in rows:
+            root = infer_affected_root(
+                str(row["path"] or ""), str(row["program_title"] or "")
+            )
+            if root:
+                roots.add(root)
         affected_roots = sorted(roots)
     result["affectedRoots"] = affected_roots
 
