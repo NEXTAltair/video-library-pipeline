@@ -15,7 +15,7 @@ from edcb_program_parser import match_key_from_filename, datetime_key_from_filen
 from db_helpers import latest_path_metadata, reconstruct_broadcast_data
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
-from path_placement_rules import DB_CONTRACT_REQUIRED
+from path_placement_rules import DB_CONTRACT_REQUIRED, SUBTITLE_SEPARATORS
 from plan_validation import detect_swallowed_program_title
 from source_history import make_entry
 from pathscan_common import now_iso
@@ -23,7 +23,6 @@ from pathscan_common import now_iso
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
 UND = re.compile(r"_+")
-SUBTITLE_SEPARATORS = re.compile(r"[▽▼◇]")
 
 PAT_US = re.compile(r"(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})(?=\.[^.]+$)")
 PAT_SP = re.compile(r"(\d{4}) (\d{2}) (\d{2}) (\d{2}) (\d{2})(?=\.[^.]+$)")

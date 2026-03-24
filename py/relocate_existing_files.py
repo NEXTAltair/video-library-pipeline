@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from db_helpers import latest_path_metadata
+from db_helpers import latest_path_metadata, metadata_source_flags
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from move_apply_stats import aggregate_move_apply
 from path_placement_rules import (
@@ -316,12 +316,7 @@ def main() -> int:
                     )
                 continue
 
-            source_norm = str(md_source or "").strip().lower()
-            is_human_reviewed = (
-                source_norm == "human_reviewed"
-                or bool(isinstance(md, dict) and md.get("human_reviewed"))
-            )
-            is_llm = source_norm in {"llm", "llm_subagent"}
+            is_human_reviewed, is_llm = metadata_source_flags(md, md_source)
 
             if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
                 unreviewed_metadata_skipped += 1

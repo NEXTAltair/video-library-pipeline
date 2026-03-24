@@ -25,10 +25,9 @@ from db_helpers import reconstruct_path_metadata, split_path_metadata
 from genre_resolver import resolve_genre
 from franchise_resolver import resolve_franchise
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
+from path_placement_rules import SUBTITLE_SEPARATORS
 from pathscan_common import iter_jsonl, now_iso
 from source_history import make_entry, merge_data
-
-SUBTITLE_SEPARATORS = re.compile(r"[▽▼◇]")
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 AIR_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 

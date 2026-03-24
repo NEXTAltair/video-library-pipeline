@@ -14,8 +14,8 @@ WS = re.compile(r"[\s\u3000]+")
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 SWALLOWED_TITLE_THRESHOLD = 8
 
-# ▽/▼/◇ がprogram_titleに含まれる場合、サブタイトル混入の可能性が高い
-SUBTITLE_SEPARATORS = re.compile(r"[▽▼◇]")
+# ▽/▼/◇/「 がprogram_titleに含まれる場合、サブタイトル混入の可能性が高い
+SUBTITLE_SEPARATORS = re.compile(r"[▽▼◇「]")
 
 TITLE_RELATED_REASONS = {
     "needs_review_flagged",
@@ -30,8 +30,13 @@ TITLE_RELATED_REASONS = {
 
 
 def detect_subtitle_in_program_title(program_title: str) -> bool:
-    """program_titleにサブタイトル区切り文字(▽▼◇)が含まれるかチェック"""
+    """program_titleにサブタイトル区切り文字(▽▼◇「)が含まれるかチェック"""
     return bool(SUBTITLE_SEPARATORS.search(program_title or ""))
+
+
+def clean_program_title(title: str) -> str:
+    """最初のサブタイトル区切り文字で分割し、前半を返す。"""
+    return SUBTITLE_SEPARATORS.split(str(title or ""), maxsplit=1)[0].strip()
 
 
 def normalize_title_for_comparison(s: str) -> str:

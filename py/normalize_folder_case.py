@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from db_helpers import reconstruct_path_metadata
+from db_helpers import metadata_source_flags, reconstruct_path_metadata
 from mediaops_schema import connect_db, create_schema_if_needed, fetchall
 from path_placement_rules import build_expected_dest_path, build_routed_dest_path, has_required_db_contract, load_drive_routes
 from pathscan_common import (
@@ -272,12 +272,7 @@ def main() -> int:
                 metadata_skipped += 1
                 continue
 
-            source_norm = str(md_source or "").strip().lower()
-            is_human_reviewed = (
-                source_norm == "human_reviewed"
-                or bool(isinstance(md, dict) and md.get("human_reviewed"))
-            )
-            is_llm = source_norm in {"llm", "llm_subagent"}
+            is_human_reviewed, is_llm = metadata_source_flags(md, md_source)
             if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
                 metadata_skipped += 1
                 continue

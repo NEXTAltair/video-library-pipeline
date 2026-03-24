@@ -104,6 +104,25 @@ def main() -> int:
         "dry_run": args.dry_run,
     }
 
+    # Composable output: expose affected path ids / roots for downstream chaining
+    updated_path_ids = sorted({pid for _, pid in updates})
+    result["updatedPathIds"] = updated_path_ids
+
+    affected_roots: list[str] = []
+    if updated_path_ids:
+        placeholders = ",".join("?" for _ in updated_path_ids)
+        path_rows = con.execute(
+            f"SELECT DISTINCT path FROM paths WHERE path_id IN ({placeholders})",
+            updated_path_ids,
+        ).fetchall()
+        roots: set[str] = set()
+        for row in path_rows:
+            path = str(row["path"] or "")
+            if len(path) >= 3 and path[1:3] == ":\\":
+                roots.add(path[:3].upper())
+        affected_roots = sorted(roots)
+    result["affectedRoots"] = affected_roots
+
     if args.dry_run:
         # Show what would change
         preview: list[dict] = []

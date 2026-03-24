@@ -127,6 +127,24 @@ def latest_path_metadata_by_path(con, path: str) -> tuple[dict[str, Any] | None,
     return md, source, pid
 
 
+def is_human_reviewed_metadata(source: str | None, md: dict[str, Any] | None) -> bool:
+    """Return whether metadata should be treated as human-reviewed."""
+    source_norm = str(source or "").strip().lower()
+    if source_norm == "human_reviewed":
+        return True
+    if isinstance(md, dict):
+        return bool(md.get("human_reviewed"))
+    return False
+
+
+def metadata_source_flags(md: dict[str, Any] | None, source: str | None) -> tuple[bool, bool]:
+    """Return (is_human_reviewed, is_llm) flags for metadata source."""
+    is_hr = is_human_reviewed_metadata(source, md)
+    source_norm = str(source or "").strip().lower()
+    is_llm = source_norm in {"llm", "llm_subagent"}
+    return is_hr, is_llm
+
+
 def split_broadcast_data(data: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """Split broadcast data into promoted column values and residual data_json.
 

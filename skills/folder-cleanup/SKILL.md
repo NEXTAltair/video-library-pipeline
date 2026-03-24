@@ -79,9 +79,9 @@ Present the file path to the user and wait for them to finish editing.
 
 ### Step 4: Read YAML and build title updates
 
-After user signals completion, read the edited YAML. For each entry with `decision: accept` or `decision: edit`:
+After user signals completion, read the edited YAML. For each remaining entry:
 
-1. Determine `new_title`: use `approved_title` if `decision: edit`, otherwise `suggested_title`
+1. Determine `new_title`: use `approved_title` when non-empty; otherwise `suggested_title`
 2. Look up `pathIds` from the **step 2 detection result** by matching `programTitle`
 3. Build one `{ "path_id": "<id>", "new_title": "<new_title>" }` per path_id
 
@@ -105,7 +105,8 @@ video_pipeline_update_program_titles {
 
 ### Step 5: Relocate dry-run
 
-After title correction, run relocate to move files to correct folders:
+After title correction, run relocate to move files to correct folders.
+Use `affectedRoots` returned by `video_pipeline_update_program_titles` as the default `roots` value (fallback: parent directory of affected folders):
 
 ```
 video_pipeline_relocate_existing_files {
