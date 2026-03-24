@@ -36,6 +36,7 @@ See main `video-library-pipeline` SKILL.md for definitions of `machine_extracted
 ## YAML→DB 反映フロー (primary path)
 
 `video_pipeline_export_program_yaml` が生成する YAML は **人間のレビュー・編集用アーティファクト** であると同時に、`video_pipeline_apply_reviewed_metadata` の `sourceYamlPath` パラメータ経由で **DB に直接反映できる**。
+この YAML の人間向け編集面 (`hints[].canonical_title` + `aliases[]`) は、folder-cleanup ワークフローでも同一のレビュー体験として扱う。
 
 ### 仕組み
 
