@@ -13,6 +13,8 @@ Generates updateInstructions (path_id based) compatible with update_program_titl
 
 Usage:
   python detect_folder_contamination.py --db mediaops.sqlite --dry-run
+  python detect_folder_contamination.py --db mediaops.sqlite --program-title "番組名▽サブタイトル"
+  python detect_folder_contamination.py --db mediaops.sqlite --path-like "%\\by_program\\番組名▽サブタイトル\\%"
 """
 
 from __future__ import annotations
@@ -33,24 +35,61 @@ def main() -> int:
     ap.add_argument("--db", required=True)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--min-extra-chars", type=int, default=MIN_EXTRA_CHARS_DEFAULT)
+    ap.add_argument(
+        "--program-title",
+        default="",
+        help="Only analyze rows whose current program_title exactly matches this value.",
+    )
+    ap.add_argument(
+        "--path-like",
+        default="",
+        help="Only analyze rows whose path matches this SQL LIKE pattern (e.g. %\\\\by_program\\\\title\\\\%).",
+    )
+    ap.add_argument(
+        "--path-id",
+        action="append",
+        default=[],
+        help="Only analyze these path_id values (repeatable).",
+    )
     args = ap.parse_args()
 
     con = connect_db(args.db)
     sources = load_canonical_title_sources(con)
 
-    # Query all distinct program_title values with their path_ids
+    where_parts = ["pm.program_title IS NOT NULL", "pm.program_title != ''"]
+    params: list[Any] = []
+    if args.program_title.strip():
+        where_parts.append("pm.program_title = ?")
+        params.append(args.program_title.strip())
+    if args.path_like.strip():
+        where_parts.append("pm.path LIKE ?")
+        params.append(args.path_like.strip())
+    if args.path_id:
+        placeholders = ",".join("?" for _ in args.path_id)
+        where_parts.append(f"pm.path_id IN ({placeholders})")
+        params.extend(str(x) for x in args.path_id)
+
+    where_clause = " AND ".join(where_parts)
     rows = con.execute(
-        """SELECT pm.path_id, pm.program_title
-           FROM path_metadata pm
-           WHERE pm.program_title IS NOT NULL AND pm.program_title != ''"""
+        f"""SELECT pm.path_id, pm.path, pm.program_title
+            FROM path_metadata pm
+            WHERE {where_clause}""",
+        params,
     ).fetchall()
 
     # Group path_ids by program_title
     title_to_path_ids: dict[str, list[str]] = {}
+    title_to_sample_paths: dict[str, list[str]] = {}
     for r in rows:
         pt = str(r["program_title"]).strip()
         if pt:
             title_to_path_ids.setdefault(pt, []).append(str(r["path_id"]))
+            p = str(r["path"] or "").strip()
+            if p:
+                title_to_sample_paths.setdefault(pt, [])
+                sample_paths = title_to_sample_paths[pt]
+                if p not in sample_paths and len(sample_paths) < 3:
+                    sample_paths.append(p)
 
     contaminated_titles: list[dict[str, Any]] = []
     update_instructions: list[dict[str, str]] = []
@@ -89,6 +128,7 @@ def main() -> int:
             "separatorFound": SUBTITLE_SEPARATORS.search(program_title).group() if has_separator else None,
             "affectedFiles": len(path_ids),
             "pathIds": path_ids,
+            "samplePaths": title_to_sample_paths.get(program_title, []),
         }
         contaminated_titles.append(entry)
 
@@ -103,6 +143,12 @@ def main() -> int:
     result: dict[str, Any] = {
         "ok": True,
         "dryRun": args.dry_run,
+        "filters": {
+            "programTitle": args.program_title.strip() or None,
+            "pathLike": args.path_like.strip() or None,
+            "pathIds": [str(x) for x in args.path_id] if args.path_id else [],
+        },
+        "scannedRows": len(rows),
         "totalContaminatedTitles": len(contaminated_titles),
         "totalAffectedFiles": total_affected,
         "contaminatedTitles": contaminated_titles,

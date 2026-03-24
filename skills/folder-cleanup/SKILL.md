@@ -34,7 +34,24 @@ Stop and report if `ok=false`.
 
 From the result, extract **`windowsOpsRoot`** (e.g. `B:\_AI_WORK`). The WSL-equivalent path is needed for file writes — convert by replacing the drive letter: `B:\...` → `/mnt/b/...`. The `llm/` subdirectory under this path is where all review YAML files go (same location as `program_aliases_review_*.yaml` from extract-review).
 
-### Step 2: Detect contamination
+### Step 2: Resolve target + detect contamination (primary: user-specified)
+
+Primary entry is **operator-specified wrong target**.
+When the user gives a concrete bad folder/path/title, call:
+
+```json
+video_pipeline_detect_folder_contamination {
+  "programTitle": "<exact wrong title, if known>",
+  "representativePathLike": "%<representative path fragment>%"
+}
+```
+
+- Use `programTitle` when the user points to a wrong title directly.
+- Use `representativePathLike` when the user points to a concrete bad folder/path.
+- If both are known, pass both for precise narrowing.
+- Use `pathIds` only when specific ids are already known.
+
+Fallback audit mode (secondary utility):
 
 ```
 video_pipeline_detect_folder_contamination {}
@@ -46,43 +63,42 @@ Branch on result:
 
 ### Step 3: Write review YAML to `{windowsOpsRoot}/llm/`
 
-**Output path** (required): `{wsl_windowsOpsRoot}/llm/folder_contamination_review_{YYYYMMDD_HHMMSS}.yaml`
+**Output path** (required): `{wsl_windowsOpsRoot}/llm/program_aliases_review_{YYYYMMDD_HHMMSS}.yaml`
 
-Example: if `windowsOpsRoot` = `B:\_AI_WORK`, write to `/mnt/b/_AI_WORK/llm/folder_contamination_review_20260323_211200.yaml`.
+Example: if `windowsOpsRoot` = `B:\_AI_WORK`, write to `/mnt/b/_AI_WORK/llm/program_aliases_review_20260323_211200.yaml`.
 
-The YAML is **for human editing only** — keep it minimal:
+Use the **same human-facing review shape as extract-review** (`canonical_title` + `aliases`):
 
 ```yaml
-# Folder contamination review
-# - approved_title 空欄 → suggested_title を採用
-# - approved_title 記入 → そちらを採用
-# - 行ごと削除 → スキップ
-candidates:
-  - program_title: "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
-    suggested_title: "ヒューマニエンス"
-    approved_title:
+# Folder contamination title review (same schema as extract-review)
+# - canonical_title を編集して採用タイトルを決める
+# - aliases は現在の混入タイトル（必要なら追加/整理）
+# - エントリ削除はスキップ
+hints:
+  - canonical_title: "ヒューマニエンス"
+    aliases:
+      - "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
 ```
 
 Map from the detection result's `contaminatedTitles` array:
-- `program_title` ← `programTitle`
-- `suggested_title` ← `suggestedTitle`
-- `approved_title` ← always empty
+- `canonical_title` ← `suggestedTitle`
+- `aliases[]` includes the current contaminated `programTitle`
 
 Do NOT include `pathIds`, `confidence`, `matchSource`, `affectedFiles`, or other machine data in the YAML. The agent already has this from the step 2 result.
 
 Present the file path to the user and wait for them to finish editing.
 
 **[User review gate]** — User edits the YAML:
-- Entry kept, `approved_title` empty → use `suggested_title`
-- Entry kept, `approved_title` filled → use that title
-- Entry deleted → skip
+- Entry kept: each alias maps to its edited `canonical_title`
+- Entry deleted: skip
 
 ### Step 4: Read YAML and build title updates
 
-After user signals completion, read the edited YAML. For each remaining entry:
+After user signals completion, read the edited YAML and build `alias -> canonical_title` mappings.
+For each mapping:
 
-1. Determine `new_title`: use `approved_title` when non-empty; otherwise `suggested_title`
-2. Look up `pathIds` from the **step 2 detection result** by matching `programTitle`
+1. Determine `new_title`: edited `canonical_title`
+2. Look up `pathIds` from the **step 2 detection result** by matching alias (`programTitle`)
 3. Build one `{ "path_id": "<id>", "new_title": "<new_title>" }` per path_id
 
 Then dry-run:
@@ -147,3 +163,11 @@ video_pipeline_relocate_existing_files {
   - Correct: `roots=["B:\\VideoLibrary"]`
   - Wrong: `roots=["B:\\VideoLibrary\\ヒューマニエンス 選「自律神経」..."]`
 - This ensures sibling contaminated folders are all included in the scan.
+
+## Review UX compatibility rule (issue #72)
+
+- Folder-cleanup review YAML is intentionally aligned to the extract-review mental model:
+  - `hints[]`
+  - `canonical_title`
+  - `aliases[]`
+- Do not introduce a folder-cleanup-only editable schema for long-term operation unless the common review contract is revised for all workflows together.
