@@ -14,7 +14,7 @@ Generates updateInstructions (path_id based) compatible with update_program_titl
 Usage:
   python detect_folder_contamination.py --db mediaops.sqlite --dry-run
   python detect_folder_contamination.py --db mediaops.sqlite --program-title "番組名▽サブタイトル"
-  python detect_folder_contamination.py --db mediaops.sqlite --path-like "%\\by_program\\番組名▽サブタイトル\\%"
+  python detect_folder_contamination.py --db mediaops.sqlite --path-like "%\\番組名▽サブタイトル\\%"
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def main() -> int:
     ap.add_argument(
         "--path-like",
         default="",
-        help="Only analyze rows whose path matches this SQL LIKE pattern (e.g. %%\\\\by_program\\\\title\\\\%%).",
+        help="Only analyze rows whose path matches this SQL LIKE pattern (e.g. %%\\\\番組名▽サブタイトル\\\\%%).",
     )
     ap.add_argument(
         "--path-id",

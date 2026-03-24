@@ -110,7 +110,14 @@ def main() -> int:
 
     affected_roots: list[str] = []
     if updated_path_ids:
+        # Collect old program_titles (current folder names) for path-based root detection
         placeholders = ",".join("?" for _ in updated_path_ids)
+        title_rows = con.execute(
+            f"SELECT DISTINCT program_title FROM path_metadata WHERE path_id IN ({placeholders})",
+            updated_path_ids,
+        ).fetchall()
+        old_titles = {str(r["program_title"]).strip() for r in title_rows if r["program_title"]}
+
         path_rows = con.execute(
             f"SELECT DISTINCT path FROM paths WHERE path_id IN ({placeholders})",
             updated_path_ids,
@@ -118,8 +125,17 @@ def main() -> int:
         roots: set[str] = set()
         for row in path_rows:
             path = str(row["path"] or "")
-            if len(path) >= 3 and path[1:3] == ":\\":
-                roots.add(path[:3].upper())
+            # Find dest_root: parent directory of the program_title folder segment
+            # e.g. B:\VideoLibrary\番組名\2026\03\file.ts → B:\VideoLibrary
+            parts = path.replace("/", "\\").split("\\")
+            for i, seg in enumerate(parts):
+                if seg in old_titles and i > 0:
+                    roots.add("\\".join(parts[:i]))
+                    break
+            else:
+                # Fallback: drive letter root
+                if len(path) >= 3 and path[1:3] == ":\\":
+                    roots.add(path[:3].upper())
         affected_roots = sorted(roots)
     result["affectedRoots"] = affected_roots
 
