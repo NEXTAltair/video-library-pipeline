@@ -23,10 +23,70 @@ import argparse
 import json
 import sqlite3
 import sys
+from pathlib import PureWindowsPath
 
 from epg_common import normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db
+from path_placement_rules import safe_dir_name
 from pathscan_common import now_iso
+
+
+def _infer_library_root_from_layout(path: str) -> str | None:
+    """Infer managed library root from by_program_year_month path shape.
+
+    Expected suffix: <program_folder>/<YYYY>/<MM>/<filename>.
+    Returns parent directory before <program_folder> when confidently detected.
+    """
+    p = PureWindowsPath(str(path or "").replace("/", "\\"))
+    if not p.name:
+        return None
+    month_dir = p.parent
+    year_dir = month_dir.parent
+    program_dir = year_dir.parent
+    if not month_dir.name or not year_dir.name or not program_dir.name:
+        return None
+    month = month_dir.name
+    year = year_dir.name
+    if not (len(year) == 4 and year.isdigit() and len(month) == 2 and month.isdigit()):
+        return None
+    month_num = int(month)
+    if month_num < 1 or month_num > 12:
+        return None
+    root = program_dir.parent
+    root_s = str(root).rstrip("\\")
+    return root_s or None
+
+
+def _fallback_root_by_old_title(path: str, old_titles: set[str]) -> str | None:
+    """Fallback root inference using old title folder segment match."""
+    if not old_titles:
+        return None
+    p = PureWindowsPath(str(path or "").replace("/", "\\"))
+    title_variants: set[str] = set()
+    for title in old_titles:
+        t = str(title or "").strip()
+        if not t:
+            continue
+        title_variants.add(t)
+        title_variants.add(safe_dir_name(t))
+    parts = list(p.parts)
+    if not parts:
+        return None
+    # Skip anchor (e.g. "B:\") while scanning for title folder.
+    start = 1 if p.anchor else 0
+    for i in range(start, len(parts)):
+        if parts[i] in title_variants and i > 0:
+            root = PureWindowsPath(*parts[:i])
+            root_s = str(root).rstrip("\\")
+            return root_s or None
+    return None
+
+
+def _drive_root(path: str) -> str | None:
+    p = PureWindowsPath(str(path or "").replace("/", "\\"))
+    if p.drive:
+        return f"{p.drive}\\"
+    return None
 
 
 def main() -> int:
@@ -125,17 +185,13 @@ def main() -> int:
         roots: set[str] = set()
         for row in path_rows:
             path = str(row["path"] or "")
-            # Find dest_root: parent directory of the program_title folder segment
-            # e.g. B:\VideoLibrary\番組名\2026\03\file.ts → B:\VideoLibrary
-            parts = path.replace("/", "\\").split("\\")
-            for i, seg in enumerate(parts):
-                if seg in old_titles and i > 0:
-                    roots.add("\\".join(parts[:i]))
-                    break
-            else:
-                # Fallback: drive letter root
-                if len(path) >= 3 and path[1:3] == ":\\":
-                    roots.add(path[:3].upper())
+            root = (
+                _infer_library_root_from_layout(path)
+                or _fallback_root_by_old_title(path, old_titles)
+                or _drive_root(path)
+            )
+            if root:
+                roots.add(root)
         affected_roots = sorted(roots)
     result["affectedRoots"] = affected_roots
 
