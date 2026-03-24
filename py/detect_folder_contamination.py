@@ -19,52 +19,19 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import sqlite3
 from typing import Any
 
 from mediaops_schema import connect_db
 from path_placement_rules import normalize_title_for_comparison
+from workflow_title_resolution import (
+    SUBTITLE_SEPARATOR_RE,
+    clean_title_prefix,
+    load_human_reviewed_titles,
+    load_programs_titles,
+    longest_prefix_title_match,
+)
 
-SEPARATOR_RE = re.compile(r"[▽▼◇「]")
 MIN_EXTRA_CHARS_DEFAULT = 4
-
-
-def clean_title(title: str) -> str:
-    """Split at first separator and return the prefix."""
-    return SEPARATOR_RE.split(title, maxsplit=1)[0].strip()
-
-
-def load_human_reviewed_titles(con: sqlite3.Connection) -> set[str]:
-    """Load distinct program_titles from human-reviewed path_metadata."""
-    titles: set[str] = set()
-    try:
-        rows = con.execute(
-            """SELECT DISTINCT program_title FROM path_metadata
-               WHERE program_title IS NOT NULL AND program_title != ''
-                 AND (source = 'human_reviewed' OR human_reviewed = 1)"""
-        ).fetchall()
-        for r in rows:
-            titles.add(str(r["program_title"]).strip())
-    except sqlite3.OperationalError:
-        pass
-    titles.discard("")
-    return titles
-
-
-def load_programs_titles(con: sqlite3.Connection) -> set[str]:
-    """Load canonical_title values from programs table."""
-    titles: set[str] = set()
-    try:
-        rows = con.execute(
-            "SELECT canonical_title FROM programs WHERE canonical_title IS NOT NULL AND canonical_title != ''"
-        ).fetchall()
-        for r in rows:
-            titles.add(str(r["canonical_title"]).strip())
-    except sqlite3.OperationalError:
-        pass
-    titles.discard("")
-    return titles
 
 
 def match_against_titles(
@@ -77,21 +44,11 @@ def match_against_titles(
 
     Returns (suggested_title, match_source).
     """
-    pt_norm = normalize_title_for_comparison(program_title)
-    if not pt_norm:
-        return None, "no_match"
-
-    best_title: str | None = None
-    best_len = 0
-
-    for ct in canonical_titles:
-        ct_norm = normalize_title_for_comparison(ct)
-        if not ct_norm:
-            continue
-        if pt_norm.startswith(ct_norm) and len(pt_norm) >= len(ct_norm) + min_extra_chars:
-            if len(ct_norm) > best_len:
-                best_len = len(ct_norm)
-                best_title = ct
+    best_title = longest_prefix_title_match(
+        program_title,
+        canonical_titles,
+        min_extra_chars=min_extra_chars,
+    )
 
     if best_title:
         return best_title, source_label
@@ -133,7 +90,7 @@ def main() -> int:
     update_instructions: list[dict[str, str]] = []
 
     for program_title, path_ids in sorted(title_to_path_ids.items()):
-        has_separator = bool(SEPARATOR_RE.search(program_title))
+        has_separator = bool(SUBTITLE_SEPARATOR_RE.search(program_title))
         pt_norm = normalize_title_for_comparison(program_title)
 
         # Exact match against human-reviewed titles → NOT contaminated
@@ -155,7 +112,7 @@ def main() -> int:
 
         # Priority 3: separator split fallback
         if suggested_title is None and has_separator:
-            cleaned = clean_title(program_title)
+            cleaned = clean_title_prefix(program_title)
             if cleaned and cleaned != program_title:
                 suggested_title = cleaned
                 match_source = "separator_split"
@@ -178,7 +135,7 @@ def main() -> int:
             "suggestedTitle": suggested_title,
             "matchSource": match_source,
             "confidence": confidence,
-            "separatorFound": SEPARATOR_RE.search(program_title).group() if has_separator else None,
+            "separatorFound": SUBTITLE_SEPARATOR_RE.search(program_title).group() if has_separator else None,
             "affectedFiles": len(path_ids),
             "pathIds": path_ids,
         }
