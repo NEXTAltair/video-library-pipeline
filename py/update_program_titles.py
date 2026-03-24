@@ -27,6 +27,7 @@ import sys
 from epg_common import normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db
 from pathscan_common import now_iso
+from relocate_scope_resolver import resolve_affected_roots
 
 
 def main() -> int:
@@ -110,7 +111,6 @@ def main() -> int:
 
     affected_roots: list[str] = []
     if updated_path_ids:
-        # Collect old program_titles (current folder names) for path-based root detection
         placeholders = ",".join("?" for _ in updated_path_ids)
         title_rows = con.execute(
             f"SELECT DISTINCT program_title FROM path_metadata WHERE path_id IN ({placeholders})",
@@ -122,21 +122,9 @@ def main() -> int:
             f"SELECT DISTINCT path FROM paths WHERE path_id IN ({placeholders})",
             updated_path_ids,
         ).fetchall()
-        roots: set[str] = set()
-        for row in path_rows:
-            path = str(row["path"] or "")
-            # Find dest_root: parent directory of the program_title folder segment
-            # e.g. B:\VideoLibrary\番組名\2026\03\file.ts → B:\VideoLibrary
-            parts = path.replace("/", "\\").split("\\")
-            for i, seg in enumerate(parts):
-                if seg in old_titles and i > 0:
-                    roots.add("\\".join(parts[:i]))
-                    break
-            else:
-                # Fallback: drive letter root
-                if len(path) >= 3 and path[1:3] == ":\\":
-                    roots.add(path[:3].upper())
-        affected_roots = sorted(roots)
+        current_paths = [str(r["path"] or "") for r in path_rows if r["path"]]
+
+        affected_roots = resolve_affected_roots(current_paths, old_titles)
     result["affectedRoots"] = affected_roots
 
     if args.dry_run:

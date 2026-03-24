@@ -126,6 +126,10 @@ video_pipeline_update_program_titles {
 After title correction, run relocate to move files to correct folders.
 Use `affectedRoots` returned by `video_pipeline_update_program_titles` as the default `roots` value (fallback: parent directory of affected folders):
 
+- `affectedRoots` means: **the narrowest library root(s) that can be passed directly to `video_pipeline_relocate_existing_files.roots`** for the just-corrected paths.
+- Root inference order is: (1) library layout (`<root>\<program>\<year>\<month>\<file>`), (2) old title folder segment, (3) drive-root fallback.
+- This keeps chaining stable when `program_title` has already been corrected but physical paths still use old/contaminated folders.
+
 ```
 video_pipeline_relocate_existing_files {
   "apply": false,
