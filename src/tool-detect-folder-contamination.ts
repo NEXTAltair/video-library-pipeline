@@ -8,6 +8,7 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
       description:
         "Detect by_program folder names contaminated with subtitle/episode info. " +
         "Cross-references programs table for suggested corrections. " +
+        "Supports targeted mode (programTitle / representativePathLike / pathIds) for operator-directed cleanup. " +
         "Returns updateInstructions array compatible with video_pipeline_update_program_titles.",
       parameters: {
         type: "object",
@@ -19,6 +20,26 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
             maximum: 20,
             default: 4,
             description: "Minimum extra characters beyond matched title to consider contaminated.",
+          },
+          programTitle: {
+            type: "string",
+            description:
+              "Optional explicit target. Analyze only rows whose current program_title exactly matches this value.",
+          },
+          representativePathLike: {
+            type: "string",
+            description:
+              "Optional explicit target. SQL LIKE pattern used to resolve affected rows from a representative bad path.",
+          },
+          pathIds: {
+            type: "array",
+            description: "Optional explicit target. Restrict analysis to these path_id values.",
+            items: { type: "string" },
+          },
+          includePathIds: {
+            type: "boolean",
+            default: true,
+            description: "If false, hide pathIds in contaminatedTitles for compact output.",
           },
         },
       },
@@ -37,6 +58,17 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
 
         if (typeof params.minExtraChars === "number" && Number.isFinite(params.minExtraChars)) {
           args.push("--min-extra-chars", String(Math.trunc(params.minExtraChars)));
+        }
+        if (typeof params.programTitle === "string" && params.programTitle.trim()) {
+          args.push("--program-title", params.programTitle.trim());
+        }
+        if (typeof params.representativePathLike === "string" && params.representativePathLike.trim()) {
+          args.push("--path-like", params.representativePathLike.trim());
+        }
+        if (Array.isArray(params.pathIds)) {
+          for (const id of params.pathIds) {
+            if (typeof id === "string" && id.trim()) args.push("--path-id", id.trim());
+          }
         }
 
         const r = runCmd("uv", args, resolved.cwd);
@@ -67,8 +99,8 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
             },
           ];
         }
-        // Strip verbose pathIds from contaminatedTitles in tool output (keep in updateInstructions)
-        if (parsed && Array.isArray(parsed.contaminatedTitles)) {
+        // Conditionally strip verbose pathIds from contaminatedTitles (keep in updateInstructions)
+        if (params.includePathIds === false && parsed && Array.isArray(parsed.contaminatedTitles)) {
           out.contaminatedTitles = parsed.contaminatedTitles.map((e: any) => {
             const { pathIds, ...rest } = e;
             return { ...rest, pathIdCount: Array.isArray(pathIds) ? pathIds.length : 0 };

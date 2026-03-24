@@ -13,6 +13,8 @@ Generates updateInstructions (path_id based) compatible with update_program_titl
 
 Usage:
   python detect_folder_contamination.py --db mediaops.sqlite --dry-run
+  python detect_folder_contamination.py --db mediaops.sqlite --program-title "番組名▽サブタイトル"
+  python detect_folder_contamination.py --db mediaops.sqlite --path-like "%\\by_program\\番組名▽サブタイトル\\%"
 """
 
 from __future__ import annotations
@@ -33,24 +35,75 @@ def main() -> int:
     ap.add_argument("--db", required=True)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--min-extra-chars", type=int, default=MIN_EXTRA_CHARS_DEFAULT)
+    ap.add_argument(
+        "--program-title",
+        default="",
+        help="Only analyze rows whose current program_title exactly matches this value.",
+    )
+    ap.add_argument(
+        "--path-like",
+        default="",
+        help="Only analyze rows whose path matches this SQL LIKE pattern (e.g. %%\\\\by_program\\\\title\\\\%%).",
+    )
+    ap.add_argument(
+        "--path-id",
+        action="append",
+        default=[],
+        help="Only analyze these path_id values (repeatable).",
+    )
     args = ap.parse_args()
 
     con = connect_db(args.db)
     sources = load_canonical_title_sources(con)
 
-    # Query all distinct program_title values with their path_ids
+    # Build dynamic WHERE clause for scoping
+    where_parts = ["pm.program_title IS NOT NULL", "pm.program_title != ''"]
+    params: list[Any] = []
+    needs_path_join = False
+
+    program_title_filter = str(args.program_title or "").strip()
+    path_like_filter = str(args.path_like or "").strip()
+    path_id_filters = [str(x).strip() for x in (args.path_id or []) if str(x).strip()]
+
+    if program_title_filter:
+        where_parts.append("pm.program_title = ?")
+        params.append(program_title_filter)
+    if path_like_filter:
+        needs_path_join = True
+        where_parts.append("p.path LIKE ?")
+        params.append(path_like_filter)
+    if path_id_filters:
+        placeholders = ",".join("?" for _ in path_id_filters)
+        where_parts.append(f"pm.path_id IN ({placeholders})")
+        params.extend(path_id_filters)
+
+    is_targeted = bool(program_title_filter or path_like_filter or path_id_filters)
+
+    # Always JOIN paths for samplePaths; only filter on p.path when --path-like given
+    join_clause = "JOIN paths p ON p.path_id = pm.path_id"
+    where_clause = " AND ".join(where_parts)
+
     rows = con.execute(
-        """SELECT pm.path_id, pm.program_title
-           FROM path_metadata pm
-           WHERE pm.program_title IS NOT NULL AND pm.program_title != ''"""
+        f"""SELECT pm.path_id, pm.program_title, p.path
+            FROM path_metadata pm
+            {join_clause}
+            WHERE {where_clause}""",
+        params,
     ).fetchall()
 
-    # Group path_ids by program_title
+    # Group path_ids by program_title, collect sample paths
     title_to_path_ids: dict[str, list[str]] = {}
+    title_to_sample_paths: dict[str, list[str]] = {}
     for r in rows:
         pt = str(r["program_title"]).strip()
-        if pt:
-            title_to_path_ids.setdefault(pt, []).append(str(r["path_id"]))
+        if not pt:
+            continue
+        title_to_path_ids.setdefault(pt, []).append(str(r["path_id"]))
+        path_str = str(r["path"] or "").strip()
+        if path_str:
+            samples = title_to_sample_paths.setdefault(pt, [])
+            if path_str not in samples and len(samples) < 3:
+                samples.append(path_str)
 
     contaminated_titles: list[dict[str, Any]] = []
     update_instructions: list[dict[str, str]] = []
@@ -89,6 +142,7 @@ def main() -> int:
             "separatorFound": SUBTITLE_SEPARATORS.search(program_title).group() if has_separator else None,
             "affectedFiles": len(path_ids),
             "pathIds": path_ids,
+            "samplePaths": title_to_sample_paths.get(program_title, []),
         }
         contaminated_titles.append(entry)
 
@@ -103,6 +157,13 @@ def main() -> int:
     result: dict[str, Any] = {
         "ok": True,
         "dryRun": args.dry_run,
+        "mode": "targeted" if is_targeted else "scan_all",
+        "filters": {
+            "programTitle": program_title_filter or None,
+            "pathLike": path_like_filter or None,
+            "pathIds": path_id_filters if path_id_filters else [],
+        },
+        "scannedRows": len(rows),
         "totalContaminatedTitles": len(contaminated_titles),
         "totalAffectedFiles": total_affected,
         "contaminatedTitles": contaminated_titles,

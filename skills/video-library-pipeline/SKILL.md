@@ -32,7 +32,7 @@ Classify the user request first, then **immediately read the sub-skill SKILL.md 
 | Re-run metadata extraction only | Read `skills/extract-review/SKILL.md`, then follow its sequence |
 | Rebroadcast detection | Call `video_pipeline_detect_rebroadcasts` directly (EPG `[再]` flag based: `rebroadcast` / `original` / `unknown`) |
 | Fix program titles ("タイトル修正", "番組名を直して", folder name ≠ program name) | Call `video_pipeline_update_program_titles` with dryRun=true first, then apply. **Never write raw SQL scripts.** |
-| Contaminated folder names ("フォルダ名がおかしい", "フォルダ分けが変", "サブタイトルがフォルダに入ってる", "folder cleanup") | Read `skills/folder-cleanup/SKILL.md`, then follow its sequence |
+| Contaminated folder names ("フォルダ名がおかしい", "フォルダ分けが変", "サブタイトルがフォルダに入ってる", "folder cleanup") | Read `skills/folder-cleanup/SKILL.md`, then follow its sequence (**user-specified wrong path/title is the primary entry**) |
 
 If the user asks about cleanup/reorganization for an already-existing directory tree, treat that as **relocate flow** (read `skills/relocate-review/SKILL.md`), not the `sourceRoot` pipeline flow.
 
