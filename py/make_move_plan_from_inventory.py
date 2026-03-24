@@ -9,10 +9,10 @@ import json
 import os
 from pathlib import Path, PureWindowsPath
 
-from db_helpers import latest_path_metadata
 from mediaops_schema import connect_db
 from path_placement_rules import load_drive_routes
 from plan_validation import validate_move_candidate
+from workflow_shared import resolve_effective_path_metadata
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
@@ -87,10 +87,12 @@ def main() -> int:
                     skipped_no_path += 1
                     continue
                 pid = row[0]
-                md, md_source = latest_path_metadata(con, pid)
-                if not md:
+                effective_md = resolve_effective_path_metadata(con, str(pid))
+                if not effective_md or not effective_md.metadata:
                     skipped_no_md += 1
                     continue
+                md = effective_md.metadata
+                md_source = effective_md.source
 
                 result = validate_move_candidate(
                     src, md,
@@ -124,6 +126,7 @@ def main() -> int:
                     "program_title": prog,
                     "air_date": air,
                     "metadata_source": md_source,
+                    "metadata_selected_from": effective_md.selected_from,
                 }
                 if genre_route:
                     plan_row["genre_route"] = genre_route

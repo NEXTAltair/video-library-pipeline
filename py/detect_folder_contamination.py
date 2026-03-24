@@ -20,11 +20,14 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sqlite3
 from typing import Any
 
 from mediaops_schema import connect_db
 from path_placement_rules import normalize_title_for_comparison
+from workflow_shared import (
+    load_canonical_title_sources,
+    longest_prefix_title_match,
+)
 
 SEPARATOR_RE = re.compile(r"[▽▼◇「]")
 MIN_EXTRA_CHARS_DEFAULT = 4
@@ -33,38 +36,6 @@ MIN_EXTRA_CHARS_DEFAULT = 4
 def clean_title(title: str) -> str:
     """Split at first separator and return the prefix."""
     return SEPARATOR_RE.split(title, maxsplit=1)[0].strip()
-
-
-def load_human_reviewed_titles(con: sqlite3.Connection) -> set[str]:
-    """Load distinct program_titles from human-reviewed path_metadata."""
-    titles: set[str] = set()
-    try:
-        rows = con.execute(
-            """SELECT DISTINCT program_title FROM path_metadata
-               WHERE program_title IS NOT NULL AND program_title != ''
-                 AND (source = 'human_reviewed' OR human_reviewed = 1)"""
-        ).fetchall()
-        for r in rows:
-            titles.add(str(r["program_title"]).strip())
-    except sqlite3.OperationalError:
-        pass
-    titles.discard("")
-    return titles
-
-
-def load_programs_titles(con: sqlite3.Connection) -> set[str]:
-    """Load canonical_title values from programs table."""
-    titles: set[str] = set()
-    try:
-        rows = con.execute(
-            "SELECT canonical_title FROM programs WHERE canonical_title IS NOT NULL AND canonical_title != ''"
-        ).fetchall()
-        for r in rows:
-            titles.add(str(r["canonical_title"]).strip())
-    except sqlite3.OperationalError:
-        pass
-    titles.discard("")
-    return titles
 
 
 def match_against_titles(
@@ -77,22 +48,7 @@ def match_against_titles(
 
     Returns (suggested_title, match_source).
     """
-    pt_norm = normalize_title_for_comparison(program_title)
-    if not pt_norm:
-        return None, "no_match"
-
-    best_title: str | None = None
-    best_len = 0
-
-    for ct in canonical_titles:
-        ct_norm = normalize_title_for_comparison(ct)
-        if not ct_norm:
-            continue
-        if pt_norm.startswith(ct_norm) and len(pt_norm) >= len(ct_norm) + min_extra_chars:
-            if len(ct_norm) > best_len:
-                best_len = len(ct_norm)
-                best_title = ct
-
+    best_title = longest_prefix_title_match(program_title, canonical_titles, min_extra_chars=min_extra_chars)
     if best_title:
         return best_title, source_label
     return None, "no_match"
@@ -107,13 +63,14 @@ def main() -> int:
 
     con = connect_db(args.db)
 
+    title_sources = load_canonical_title_sources(con)
     # Source 1 (highest priority): human-reviewed titles
-    hr_titles = load_human_reviewed_titles(con)
+    hr_titles = title_sources.human_reviewed_titles
     hr_titles_norm = {normalize_title_for_comparison(t) for t in hr_titles}
     hr_titles_norm.discard("")
 
     # Source 2: programs table
-    programs_titles = load_programs_titles(con)
+    programs_titles = title_sources.programs_titles
 
     # Query all distinct program_title values with their path_ids
     rows = con.execute(

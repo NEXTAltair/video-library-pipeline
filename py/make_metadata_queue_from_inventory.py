@@ -7,9 +7,9 @@ import argparse
 import json
 from pathlib import PureWindowsPath
 
-from db_helpers import latest_path_metadata
 from mediaops_schema import connect_db
 from pathscan_common import now_iso
+from workflow_shared import resolve_effective_path_metadata
 
 
 def main() -> int:
@@ -70,7 +70,8 @@ def main() -> int:
                     continue
                 pid = row["path_id"]
 
-                md, _ = latest_path_metadata(con, pid)
+                effective_md = resolve_effective_path_metadata(con, str(pid))
+                md = effective_md.metadata if effective_md else None
                 if md is None:
                     pick = True
                 else:

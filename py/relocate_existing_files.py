@@ -15,7 +15,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from db_helpers import latest_path_metadata
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from move_apply_stats import aggregate_move_apply
 from path_placement_rules import (
@@ -47,6 +46,7 @@ from pathscan_common import (
     wsl_to_windows_path,
 )
 from windows_pwsh_bridge import run_pwsh_json
+from workflow_shared import metadata_source_flags, resolve_effective_path_metadata
 
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
 
@@ -304,8 +304,8 @@ def main() -> int:
 
             registered_files += 1
             path_id = str(path_row["path_id"])
-            md, md_source = latest_path_metadata(con, path_id)
-            if md is None:
+            effective_md = resolve_effective_path_metadata(con, path_id)
+            if effective_md is None:
                 metadata_missing_skipped += 1
                 rows_for_plan.append(
                     {"path_id": path_id, "src": sf.win_path, "status": "skipped", "reason": "missing_metadata", "ts": ts_row}
@@ -315,13 +315,10 @@ def main() -> int:
                         {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
                     )
                 continue
+            md = effective_md.metadata
+            md_source = effective_md.source
 
-            source_norm = str(md_source or "").strip().lower()
-            is_human_reviewed = (
-                source_norm == "human_reviewed"
-                or bool(isinstance(md, dict) and md.get("human_reviewed"))
-            )
-            is_llm = source_norm in {"llm", "llm_subagent"}
+            is_human_reviewed, is_llm = metadata_source_flags(md, md_source)
 
             if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
                 unreviewed_metadata_skipped += 1
@@ -332,6 +329,7 @@ def main() -> int:
                         "status": "skipped",
                         "reason": "unreviewed_metadata",
                         "metadata_source": md_source,
+                        "metadata_selected_from": effective_md.selected_from,
                         "ts": ts_row,
                     }
                 )
@@ -372,6 +370,7 @@ def main() -> int:
                     "status": "skipped",
                     "reason": skip_reason,
                     "metadata_source": md_source,
+                    "metadata_selected_from": effective_md.selected_from,
                     "ts": ts_row,
                 }
                 if skip_reason in ("suspicious_program_title", "suspicious_program_title_shortened",
@@ -405,6 +404,7 @@ def main() -> int:
                         "reason": "already_correct",
                         "program_title": md.get("program_title"),
                         "air_date": md.get("air_date"),
+                        "metadata_selected_from": effective_md.selected_from,
                         "ts": ts_row,
                     }
                 )
@@ -420,6 +420,8 @@ def main() -> int:
                 "reason": reason,
                 "program_title": md.get("program_title"),
                 "air_date": md.get("air_date"),
+                "metadata_source": md_source,
+                "metadata_selected_from": effective_md.selected_from,
                 "ts": ts_row,
             }
             if vr.genre_route:
