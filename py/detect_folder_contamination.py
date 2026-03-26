@@ -7,7 +7,8 @@ cross-referencing human-reviewed titles and the programs table.
 Source priority for canonical title:
   1. human_reviewed path_metadata (exact match → not contaminated; prefix match → suggested)
   2. programs table (longest prefix match)
-  3. separator split fallback
+  3. prefix family (shorter title exists as prefix of other titles in DB)
+  4. separator split fallback
 
 Generates updateInstructions (path_id based) compatible with update_program_titles.py.
 
@@ -25,7 +26,11 @@ from typing import Any
 
 from mediaops_schema import connect_db
 from path_placement_rules import SUBTITLE_SEPARATORS, normalize_title_for_comparison
-from title_resolution import load_canonical_title_sources, suggest_canonical_title
+from title_resolution import (
+    load_canonical_title_sources,
+    longest_prefix_title_match,
+    suggest_canonical_title,
+)
 
 MIN_EXTRA_CHARS_DEFAULT = 4
 
@@ -136,9 +141,19 @@ def main() -> int:
             min_extra_chars=args.min_extra_chars,
         )
 
-        # Exact human-reviewed title → already canonical
+        # Exact human-reviewed title → already canonical,
+        # UNLESS it is a longer variant in a prefix family (contaminated title
+        # that was previously marked human_reviewed).
         if match_source == "exact_human_reviewed":
-            continue
+            pf_match = longest_prefix_title_match(
+                program_title,
+                sources.prefix_families,
+                min_extra_chars=args.min_extra_chars,
+            )
+            if pf_match is None:
+                continue
+            suggested_title = pf_match
+            match_source = "prefix_family"
 
         if suggested_title is None:
             continue
@@ -151,7 +166,7 @@ def main() -> int:
         confidence = (
             "high" if match_source == "human_reviewed"
             else "medium" if match_source == "programs_table"
-            else "low"
+            else "low"  # prefix_family, separator_split
         )
 
         has_separator = bool(SUBTITLE_SEPARATORS.search(program_title))
@@ -189,6 +204,14 @@ def main() -> int:
             suggested, match_src = suggest_canonical_title(
                 program_title, sources, min_extra_chars=args.min_extra_chars,
             )
+            if match_src == "exact_human_reviewed":
+                # Fallback: check prefix_family for contaminated human_reviewed titles
+                pf = longest_prefix_title_match(
+                    program_title, sources.prefix_families,
+                    min_extra_chars=args.min_extra_chars,
+                )
+                if pf:
+                    suggested, match_src = pf, "prefix_family"
             if suggested and match_src != "exact_human_reviewed":
                 st_norm = normalize_title_for_comparison(suggested)
                 if st_norm != normalize_title_for_comparison(program_title):
