@@ -54,3 +54,15 @@ def test_forward_slash_path():
     path = "B:/VideoLibrary/番組名/2024/06/file.ts"
     result = infer_affected_root(path, "番組名")
     assert result == r"B:\VideoLibrary"
+
+
+def test_new_title_not_in_path_falls_back_to_drive():
+    """new_titleがパスセグメントに存在しない場合はドライブルートにフォールバック。
+    old_title_mapではなくnew_titleを渡してしまうと正しいルートを返せないことを示す。"""
+    # path has old folder name "番組A", but we mistakenly pass new title "番組B"
+    path = r"B:\VideoLibrary\番組A\ep01.ts"
+    # non-standard layout (no year/month) → layout detection fails
+    # wrong: new_title passed → segment match fails → drive root fallback
+    assert infer_affected_root(path, "番組B") == "B:\\"
+    # correct: old_title passed → segment match succeeds
+    assert infer_affected_root(path, "番組A") == r"B:\VideoLibrary"

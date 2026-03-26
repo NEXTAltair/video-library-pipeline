@@ -51,6 +51,15 @@ def main() -> int:
         default=[],
         help="Only analyze these path_id values (repeatable).",
     )
+    ap.add_argument(
+        "--canonical-title",
+        default="",
+        help=(
+            "Operator-supplied canonical title for forced correction. "
+            "When set in targeted mode, builds updateInstructions directly from resolvedTargets, "
+            "bypassing auto-detection. Requires at least one targeting param."
+        ),
+    )
     args = ap.parse_args()
 
     con = connect_db(args.db)
@@ -152,6 +161,50 @@ def main() -> int:
                 "new_title": suggested_title,
             })
 
+    # In targeted mode, always return resolvedTargets so the operator can force
+    # a correction even when no contamination suggestion was generated.
+    resolved_targets: list[dict[str, Any]] = []
+    if is_targeted:
+        for program_title, path_ids in sorted(title_to_path_ids.items()):
+            resolved_targets.append({
+                "programTitle": program_title,
+                "pathIds": path_ids,
+                "affectedFiles": len(path_ids),
+                "samplePaths": title_to_sample_paths.get(program_title, []),
+            })
+
+    # Operator-supplied canonical title: build updateInstructions directly from resolvedTargets
+    # when auto-detection is insufficient but operator already knows the correct title.
+    canonical_title_override = str(args.canonical_title or "").strip()
+    operator_forced = False
+    if canonical_title_override and is_targeted and resolved_targets:
+        already_suggested = {e["programTitle"] for e in contaminated_titles}
+        ct_norm = normalize_title_for_comparison(canonical_title_override)
+        for rt in resolved_targets:
+            pt = rt["programTitle"]
+            if pt in already_suggested:
+                continue  # auto-suggest already handles this title
+            if normalize_title_for_comparison(pt) == ct_norm:
+                continue  # already canonical
+            contaminated_titles.append({
+                "programTitle": pt,
+                "suggestedTitle": canonical_title_override,
+                "matchSource": "operator_supplied",
+                "confidence": "operator",
+                "separatorFound": None,
+                "affectedFiles": rt["affectedFiles"],
+                "pathIds": rt["pathIds"],
+                "samplePaths": rt["samplePaths"],
+            })
+            for pid in rt["pathIds"]:
+                update_instructions.append({
+                    "path_id": pid,
+                    "new_title": canonical_title_override,
+                })
+        operator_forced = any(
+            e["matchSource"] == "operator_supplied" for e in contaminated_titles
+        )
+
     total_affected = sum(e["affectedFiles"] for e in contaminated_titles)
 
     result: dict[str, Any] = {
@@ -169,6 +222,11 @@ def main() -> int:
         "contaminatedTitles": contaminated_titles,
         "updateInstructions": update_instructions,
     }
+    if is_targeted:
+        result["resolvedTargets"] = resolved_targets
+    if operator_forced:
+        result["operatorForced"] = True
+        result["canonicalTitle"] = canonical_title_override
 
     con.close()
     print(json.dumps(result, ensure_ascii=False, indent=2))

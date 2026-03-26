@@ -52,6 +52,26 @@ video_pipeline_detect_folder_contamination {
 - If both are known, pass both for precise narrowing.
 - Use `pathIds` only when specific ids are already known.
 
+**Direct correction** (operator already knows BOTH the wrong title and the correct title):
+
+```json
+video_pipeline_detect_folder_contamination {
+  "programTitle": "<exact wrong title>",
+  "canonicalTitle": "<correct canonical title>"
+}
+```
+
+or with path fragment:
+
+```json
+video_pipeline_detect_folder_contamination {
+  "representativePathLike": "%<path fragment>%",
+  "canonicalTitle": "<correct canonical title>"
+}
+```
+
+When `canonicalTitle` is supplied, the tool resolves affected records AND builds `updateInstructions` directly. The result has `operatorForced=true` and includes `followUpToolCalls` pointing to `update_program_titles`. **Skip step 3 (YAML review)** and proceed directly to step 4 dry-run.
+
 Fallback audit mode (when user does **not** provide a concrete target):
 
 ```
@@ -59,8 +79,16 @@ video_pipeline_detect_folder_contamination {}
 ```
 
 Branch on result:
+
+**Targeted mode** (`mode == "targeted"`):
+- `scannedRows == 0` → No records found for the given target. Report not found, stop.
+- `operatorForced == true` → Operator supplied `canonicalTitle`. `updateInstructions` already built. **Skip step 3**, proceed directly to step 4 dry-run.
+- `totalContaminatedTitles > 0` → Auto-suggestion available. Proceed to step 3 (**auto-suggestion path**). Keep detection result in context — `pathIds` and other details needed in step 4.
+- `totalContaminatedTitles == 0` AND `resolvedTargets` non-empty → No auto-suggestion. Proceed to step 3 (**operator-forced path** — YAML with empty `canonical_title`). Keep `resolvedTargets` in context for step 4.
+
+**Scan-all mode** (`mode == "scan_all"`):
 - `totalContaminatedTitles == 0` → Report clean, stop.
-- `totalContaminatedTitles > 0` → Proceed to step 3. **Keep the detection result in context** — `pathIds` and other details are needed in step 4.
+- `totalContaminatedTitles > 0` → Proceed to step 3 (auto-suggestion path).
 
 ### Step 3: Write review YAML to `{windowsOpsRoot}/llm/`
 
@@ -81,26 +109,46 @@ hints:
       - "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
 ```
 
-Map from the detection result's `contaminatedTitles` array:
+**Auto-suggestion path** (from `contaminatedTitles`):
 - `canonical_title` ← `suggestedTitle`
 - `aliases[]` includes the current contaminated `programTitle`
+
+**Operator-forced path** (from `resolvedTargets`, no auto-suggestion):
+- `canonical_title` ← `""` (empty — operator must fill in the correct title)
+- `aliases[]` includes the current `programTitle` from `resolvedTargets`
+- Add comment at top of YAML: `# !! canonical_title が空欄のエントリは正しいタイトルを入力してください !!`
+
+Example for operator-forced path:
+```yaml
+# !! canonical_title が空欄のエントリは正しいタイトルを入力してください !!
+# Folder contamination title review (same schema as extract-review)
+# - canonical_title を編集して採用タイトルを決める
+# - aliases は現在の混入タイトル（必要なら追加/整理）
+# - エントリ削除はスキップ
+hints:
+  - canonical_title: ""
+    aliases:
+      - "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
+```
 
 Do NOT include `pathIds`, `confidence`, `matchSource`, `affectedFiles`, or other machine data in the YAML. The agent already has this from the step 2 result.
 
 Present the file path to the user and wait for them to finish editing.
 
 **[User review gate]** — User edits the YAML:
-- Entry kept, `canonical_title` unchanged → accept suggestion
-- Entry kept, `canonical_title` edited → use edited canonical title
+- Entry kept, `canonical_title` filled in / unchanged → accept as new_title
 - Entry deleted → skip
+- In operator-forced path: entries with empty `canonical_title` after editing → warn user and skip
 
 ### Step 4: Read YAML and build title updates
 
 After user signals completion, read the edited YAML and build `alias -> canonical_title` mappings.
 For each mapping:
 
-1. Read `hints[].canonical_title` as `new_title`
-2. For each alias in `hints[].aliases[]`, look up `pathIds` from the **step 2 detection result** by matching `programTitle`
+1. Read `hints[].canonical_title` as `new_title`. Skip entries where `new_title` is empty.
+2. For each alias in `hints[].aliases[]`, look up `pathIds` from the step 2 detection result:
+   - First check `contaminatedTitles` (auto-suggestion path) by matching `programTitle`
+   - If not found there, check `resolvedTargets` (operator-forced path) by matching `programTitle`
 3. Build one `{ "path_id": "<id>", "new_title": "<new_title>" }` per path_id
 
 Then dry-run:

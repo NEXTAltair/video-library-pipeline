@@ -138,6 +138,19 @@ def main() -> int:
         else:
             errors.append({"index": i, "error": "need path_id or path_pattern"})
 
+    # Capture old_title BEFORE any DB mutation for affectedRoots inference (Issue #86).
+    # Querying pm.program_title after the UPDATE would yield the new title,
+    # breaking old_title segment matching in infer_affected_root.
+    old_title_map: dict[str, str] = {}
+    if updates:
+        pids_for_old = sorted({pid for _, pid in updates})
+        ph_old = ",".join("?" for _ in pids_for_old)
+        for row in con.execute(
+            f"SELECT path_id, program_title FROM path_metadata WHERE path_id IN ({ph_old})",
+            pids_for_old,
+        ).fetchall():
+            old_title_map[str(row["path_id"])] = str(row["program_title"] or "")
+
     result = {
         "ok": True,
         "matched": len(updates),
@@ -153,16 +166,14 @@ def main() -> int:
     if updated_path_ids:
         placeholders = ",".join("?" for _ in updated_path_ids)
         rows = con.execute(
-            f"""SELECT p.path, pm.program_title
-                FROM paths p JOIN path_metadata pm ON pm.path_id = p.path_id
-                WHERE p.path_id IN ({placeholders})""",
+            f"SELECT path_id, path FROM paths WHERE path_id IN ({placeholders})",
             updated_path_ids,
         ).fetchall()
         roots: set[str] = set()
         for row in rows:
-            root = infer_affected_root(
-                str(row["path"] or ""), str(row["program_title"] or "")
-            )
+            pid = str(row["path_id"])
+            old_title = old_title_map.get(pid, "")
+            root = infer_affected_root(str(row["path"] or ""), old_title)
             if root:
                 roots.add(root)
         affected_roots = sorted(roots)
@@ -177,16 +188,13 @@ def main() -> int:
                 continue
             seen.add(pid)
             row = con.execute(
-                """SELECT pm.program_title, p.path
-                   FROM path_metadata pm
-                   JOIN paths p ON p.path_id = pm.path_id
-                   WHERE pm.path_id = ?""",
+                "SELECT path FROM paths WHERE path_id = ?",
                 (pid,),
             ).fetchone()
             if row:
                 preview.append({
                     "path_id": pid[:16],
-                    "old_title": row["program_title"],
+                    "old_title": old_title_map.get(pid, ""),
                     "new_title": new_title,
                     "path": row["path"][-80:] if row["path"] else "",
                 })

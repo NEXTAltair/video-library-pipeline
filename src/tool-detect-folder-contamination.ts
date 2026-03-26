@@ -9,7 +9,9 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
         "Detect by_program folder names contaminated with subtitle/episode info. " +
         "Cross-references programs table for suggested corrections. " +
         "Supports targeted mode (programTitle / representativePathLike / pathIds) for operator-directed cleanup. " +
-        "Returns updateInstructions array compatible with video_pipeline_update_program_titles.",
+        "Returns updateInstructions array compatible with video_pipeline_update_program_titles. " +
+        "In targeted mode, always returns resolvedTargets[] with current titles and path IDs even when no " +
+        "auto-suggestion is generated, enabling operator-forced correction without detect blocking the flow.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -35,6 +37,13 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
             type: "array",
             description: "Optional explicit target. Restrict analysis to these path_id values.",
             items: { type: "string" },
+          },
+          canonicalTitle: {
+            type: "string",
+            description:
+              "Operator-supplied correct title. When provided in targeted mode, " +
+              "builds updateInstructions directly from resolved records even if auto-detection fails. " +
+              "Use when operator already knows the canonical title and wants to skip the YAML review round-trip.",
           },
           includePathIds: {
             type: "boolean",
@@ -70,6 +79,9 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
             if (typeof id === "string" && id.trim()) args.push("--path-id", id.trim());
           }
         }
+        if (typeof params.canonicalTitle === "string" && params.canonicalTitle.trim()) {
+          args.push("--canonical-title", params.canonicalTitle.trim());
+        }
 
         const r = runCmd("uv", args, resolved.cwd);
         const parsed = parseJsonObject(r.stdout);
@@ -98,6 +110,22 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
               },
             },
           ];
+        } else if (
+          parsed &&
+          parsed.mode === "targeted" &&
+          Array.isArray(parsed.resolvedTargets) &&
+          parsed.resolvedTargets.length > 0 &&
+          parsed.totalContaminatedTitles === 0 &&
+          !parsed.operatorForced
+        ) {
+          // No auto-suggestion and no operator-supplied title.
+          // Signal that operator-forced correction path should be used via SKILL.
+          out.operatorForcedPathAvailable = true;
+          out.hint =
+            "No auto-suggestion generated, but resolvedTargets are available. " +
+            "Options: (1) Re-call with canonicalTitle param to bypass YAML round-trip, or " +
+            "(2) Follow the operator-forced path in SKILL.md: write review YAML with empty canonical_title, " +
+            "let operator fill in correct title, then build update instructions from resolvedTargets.";
         }
         // Conditionally strip verbose pathIds from contaminatedTitles (keep in updateInstructions)
         if (params.includePathIds === false && parsed && Array.isArray(parsed.contaminatedTitles)) {
