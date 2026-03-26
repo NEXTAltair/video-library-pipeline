@@ -28,6 +28,14 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
             description:
               "Optional explicit target. Analyze only rows whose current program_title exactly matches this value.",
           },
+          programTitleContains: {
+            type: "string",
+            description:
+              "Broad search: find all rows whose program_title contains this substring. " +
+              "Returns all matching title groups in resolvedTargets for bulk YAML review, " +
+              "even when auto-detection confidence is low. Use for series-family cleanup " +
+              '(e.g., "NHKスペシャル" to list all NHK Special variants).',
+          },
           representativePathLike: {
             type: "string",
             description:
@@ -70,6 +78,9 @@ export function registerToolDetectFolderContamination(api: any, getCfg: (api: an
         }
         if (typeof params.programTitle === "string" && params.programTitle.trim()) {
           args.push("--program-title", params.programTitle.trim());
+        }
+        if (typeof params.programTitleContains === "string" && params.programTitleContains.trim()) {
+          args.push("--program-title-contains", params.programTitleContains.trim());
         }
         if (typeof params.representativePathLike === "string" && params.representativePathLike.trim()) {
           args.push("--path-like", params.representativePathLike.trim());

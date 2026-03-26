@@ -52,6 +52,11 @@ def main() -> int:
         help="Only analyze these path_id values (repeatable).",
     )
     ap.add_argument(
+        "--program-title-contains",
+        default="",
+        help="Analyze rows whose program_title contains this substring (broad search for bulk review).",
+    )
+    ap.add_argument(
         "--canonical-title",
         default="",
         help=(
@@ -71,12 +76,16 @@ def main() -> int:
     needs_path_join = False
 
     program_title_filter = str(args.program_title or "").strip()
+    program_title_contains_filter = str(args.program_title_contains or "").strip()
     path_like_filter = str(args.path_like or "").strip()
     path_id_filters = [str(x).strip() for x in (args.path_id or []) if str(x).strip()]
 
     if program_title_filter:
         where_parts.append("pm.program_title = ?")
         params.append(program_title_filter)
+    if program_title_contains_filter:
+        where_parts.append("pm.program_title LIKE '%' || ? || '%'")
+        params.append(program_title_contains_filter)
     if path_like_filter:
         needs_path_join = True
         where_parts.append("p.path LIKE ?")
@@ -86,7 +95,10 @@ def main() -> int:
         where_parts.append(f"pm.path_id IN ({placeholders})")
         params.extend(path_id_filters)
 
-    is_targeted = bool(program_title_filter or path_like_filter or path_id_filters)
+    is_targeted = bool(
+        program_title_filter or program_title_contains_filter
+        or path_like_filter or path_id_filters
+    )
 
     # Always JOIN paths for samplePaths; only filter on p.path when --path-like given
     join_clause = "JOIN paths p ON p.path_id = pm.path_id"
@@ -163,15 +175,26 @@ def main() -> int:
 
     # In targeted mode, always return resolvedTargets so the operator can force
     # a correction even when no contamination suggestion was generated.
+    # Each entry is enriched with suggestedTitle when available (for YAML pre-fill).
     resolved_targets: list[dict[str, Any]] = []
     if is_targeted:
         for program_title, path_ids in sorted(title_to_path_ids.items()):
-            resolved_targets.append({
+            rt_entry: dict[str, Any] = {
                 "programTitle": program_title,
                 "pathIds": path_ids,
                 "affectedFiles": len(path_ids),
                 "samplePaths": title_to_sample_paths.get(program_title, []),
-            })
+            }
+            # Enrich: attach suggestion if auto-detect found one
+            suggested, match_src = suggest_canonical_title(
+                program_title, sources, min_extra_chars=args.min_extra_chars,
+            )
+            if suggested and match_src != "exact_human_reviewed":
+                st_norm = normalize_title_for_comparison(suggested)
+                if st_norm != normalize_title_for_comparison(program_title):
+                    rt_entry["suggestedTitle"] = suggested
+                    rt_entry["matchSource"] = match_src
+            resolved_targets.append(rt_entry)
 
     # Operator-supplied canonical title: build updateInstructions directly from resolvedTargets
     # when auto-detection is insufficient but operator already knows the correct title.
@@ -213,6 +236,7 @@ def main() -> int:
         "mode": "targeted" if is_targeted else "scan_all",
         "filters": {
             "programTitle": program_title_filter or None,
+            "programTitleContains": program_title_contains_filter or None,
             "pathLike": path_like_filter or None,
             "pathIds": path_id_filters if path_id_filters else [],
         },

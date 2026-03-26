@@ -20,6 +20,7 @@ metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipe
 - "このフォルダが間違い" / user points to a specific wrong folder or title
 - "folder names look wrong" / "folder cleanup"
 - Folder names contain `▽▼◇「` or episode descriptions beyond the program title
+- "NHKスペシャル関連のフォルダを全部見せて" / bulk review of a series/family
 
 ## Tool sequence
 
@@ -72,6 +73,16 @@ video_pipeline_detect_folder_contamination {
 
 When `canonicalTitle` is supplied, the tool resolves affected records AND builds `updateInstructions` directly. The result has `operatorForced=true` and includes `followUpToolCalls` pointing to `update_program_titles`. **Skip step 3 (YAML review)** and proceed directly to step 4 dry-run.
 
+**Bulk search by series/family** (operator wants to review all titles containing a keyword):
+
+```json
+video_pipeline_detect_folder_contamination {
+  "programTitleContains": "NHKスペシャル"
+}
+```
+
+Returns `resolvedTargets[]` with ALL title groups whose `program_title` contains the keyword. Each entry may have `suggestedTitle` + `matchSource` if auto-detection found a candidate. Auto-detected contamination also appears in `contaminatedTitles[]` as usual. Proceed to step 3 to write review YAML for all `resolvedTargets` groups.
+
 Fallback audit mode (when user does **not** provide a concrete target):
 
 ```
@@ -112,6 +123,13 @@ hints:
 **Auto-suggestion path** (from `contaminatedTitles`):
 - `canonical_title` ← `suggestedTitle`
 - `aliases[]` includes the current contaminated `programTitle`
+
+**Bulk search path** (from `resolvedTargets` with `programTitleContains`):
+- For each `resolvedTarget` entry:
+  - If `suggestedTitle` exists → `canonical_title` ← `suggestedTitle` (pre-filled)
+  - If no `suggestedTitle` → `canonical_title` ← `""` (operator fills in)
+- `aliases[]` includes the current `programTitle` from each `resolvedTarget`
+- Add comment at top: `# !! canonical_title を確認/修正してください。空欄は正しいタイトルを入力 !!`
 
 **Operator-forced path** (from `resolvedTargets`, no auto-suggestion):
 - `canonical_title` ← `""` (empty — operator must fill in the correct title)
