@@ -2,6 +2,11 @@
 
 Used by schema v3 migration and ingest_program_txt to create series-level
 program records instead of per-broadcast-title records.
+
+Note: This module handles EPG-level title grouping (franchise_rules, aliases,
+episode-number stripping) and does NOT require a DB connection.
+For DB-backed canonical title resolution used by contamination detection and
+cleanup workflows, see ``title_resolution.py``.
 """
 
 from __future__ import annotations
@@ -11,13 +16,16 @@ from pathlib import Path
 from typing import Any
 
 from epg_common import normalize_program_key, program_id_for
+from path_placement_rules import SUBTITLE_SEPARATORS
 
 try:
     import yaml  # type: ignore
 except Exception:
     yaml = None
 
-SUBTITLE_SPLIT_RE = re.compile(r"[▽▼◇「#＃]")
+# Extends SUBTITLE_SEPARATORS with episode-number markers (#/＃) for broader
+# title splitting.  Base characters stay in sync with path_placement_rules.
+SUBTITLE_SPLIT_RE = re.compile(SUBTITLE_SEPARATORS.pattern.rstrip("]") + r"#＃]")
 # Matches episode-number suffixes: " 第N話...", " #N...", " #N-N..."
 EPISODE_SUFFIX_RE = re.compile(r"\s+(?:第\d+話|#\d+).*$")
 

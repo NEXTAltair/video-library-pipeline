@@ -59,7 +59,7 @@ metadata: {"openclaw":{"emoji":"📁","requires":{"plugins":["video-library-pipe
    |-------|-------------|
    | `plannedMoves > 0` and `requiresMetadataPreparation=false` | → Step 4 (user confirmation) |
    | `requiresMetadataPreparation=true` or `metadataQueuePlannedCount > 0` | → Run `/extract-review` to fill metadata, then restart from step 2 |
-   | `suspiciousProgramTitleSkipped > 0` | → Follow `followUpToolCalls` (通常は reextract) でメタデータ修正、その後 step 2 再実行 |
+   | `suspiciousProgramTitleSkipped > 0` | → Follow `followUpToolCalls` — ツールが `video_pipeline_detect_folder_contamination` を提案する。folder-cleanup でタイトル修正後、step 2 再実行 |
    | `unregisteredSkipped > 0` | → Apply to auto-register, then fill metadata and re-run |
    | `plannedMoves == 0` and `alreadyCorrect > 0` and `suspiciousProgramTitleSkipped == 0` | → Report all files already in correct location |
    | `plannedMoves == 0` and `alreadyCorrect` not reported | → State explicitly: cannot confirm correct placement; report reason |

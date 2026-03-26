@@ -59,7 +59,7 @@ function readComparableRows(sourcePath: string): { rows: AnyObj[]; parseErrors: 
   return { rows: out, parseErrors };
 }
 
-const SUBTITLE_SEPARATOR_RE = /[▽▼◇]/;
+const SUBTITLE_SEPARATOR_RE = /[▽▼◇「]/;
 
 function summarizeReviewRisk(rows: AnyObj[]): {
   rows: number;

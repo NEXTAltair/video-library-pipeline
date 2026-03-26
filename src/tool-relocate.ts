@@ -226,27 +226,37 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
               "After apply, run video_pipeline_prepare_relocate_metadata for remaining files.";
           }
         }
-        // Route B: plannedMoves === 0 + metadata issues → metadata preparation
+        // Route B: plannedMoves === 0 + metadata issues → metadata preparation / contamination detection
         if (r.ok && params.apply !== true && plannedMoves === 0 && (hasMetadataGap || hasSuspiciousTitles)) {
-          followUpToolCalls.push({
-            tool: "video_pipeline_prepare_relocate_metadata",
-            reason: "metadata_preparation_required_before_relocate_apply",
-            params: {
-              ...commonRelocateParams,
-              runReextract: true,
-            },
-          });
+          if (hasMetadataGap) {
+            followUpToolCalls.push({
+              tool: "video_pipeline_prepare_relocate_metadata",
+              reason: "metadata_preparation_required_before_relocate_apply",
+              params: {
+                ...commonRelocateParams,
+                runReextract: true,
+              },
+            });
+          }
           if (hasSuspiciousTitles) {
+            followUpToolCalls.push({
+              tool: "video_pipeline_detect_folder_contamination",
+              reason: "suspicious_program_titles_need_contamination_check",
+              params: {
+                ...(roots && roots.length ? { pathLike: roots.map((r) => `${r}%`) } : {}),
+              },
+            });
             out.diagnostics = {
               issue: "subtitle_contamination_detected",
               message:
-                "program_title にサブタイトル区切り文字(▽/▼)が含まれるファイルがあります。" +
-                "メタデータの再抽出が必要です。",
+                "program_title にサブタイトル区切り文字(▽/▼/「)が含まれるファイルがあります。" +
+                "folder-cleanup ワークフローでタイトル修正が必要です。",
               suspiciousCount: out.suspiciousProgramTitleSkipped,
             };
             out.nextStep =
-              `${out.suspiciousProgramTitleSkipped} files have subtitle separators (▽/▼) in program_title. ` +
-              "This indicates incorrect metadata. Follow followUpToolCalls to fix.";
+              `${out.suspiciousProgramTitleSkipped} files have subtitle separators in program_title. ` +
+              "Run video_pipeline_detect_folder_contamination via followUpToolCalls to identify and fix contaminated titles, " +
+              "then re-run relocate dry-run.";
           }
         }
         // Route C: plannedMoves === 0 + no issues → all correct
@@ -275,12 +285,19 @@ export function registerToolRelocate(api: any, getCfg: (api: any) => any) {
           });
         }
         if (r.ok && params.apply === true && hasSuspiciousTitles) {
+          followUpToolCalls.push({
+            tool: "video_pipeline_detect_folder_contamination",
+            reason: "suspicious_program_titles_remain_after_apply",
+            params: {
+              ...(roots && roots.length ? { pathLike: roots.map((r) => `${r}%`) } : {}),
+            },
+          });
           out.diagnostics = {
             issue: "suspicious_program_titles_blocked_apply",
             message:
               `${out.suspiciousProgramTitleSkipped} files have program_title containing subtitle/episode ` +
-              "info (looks_like_swallowed or ▽/▼ separator). These files were skipped. " +
-              "Fix program_title in DB (remove subtitle info), then run a fresh dry-run before applying.",
+              "info (looks_like_swallowed or ▽/▼/「 separator). These files were skipped. " +
+              "Run video_pipeline_detect_folder_contamination to fix, then re-run relocate.",
             suspiciousCount: out.suspiciousProgramTitleSkipped,
           };
         }
