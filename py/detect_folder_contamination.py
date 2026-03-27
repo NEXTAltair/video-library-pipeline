@@ -142,9 +142,11 @@ def main() -> int:
         )
 
         # Exact human-reviewed title → already canonical,
-        # UNLESS it is a longer variant in a prefix family (contaminated title
-        # that was previously marked human_reviewed).
+        # UNLESS it contains a subtitle separator (contaminated title that was
+        # previously marked human_reviewed) AND a shorter prefix-family base exists.
         if match_source == "exact_human_reviewed":
+            if not SUBTITLE_SEPARATORS.search(program_title):
+                continue
             pf_match = longest_prefix_title_match(
                 program_title,
                 sources.prefix_families,
@@ -204,8 +206,8 @@ def main() -> int:
             suggested, match_src = suggest_canonical_title(
                 program_title, sources, min_extra_chars=args.min_extra_chars,
             )
-            if match_src == "exact_human_reviewed":
-                # Fallback: check prefix_family for contaminated human_reviewed titles
+            if match_src == "exact_human_reviewed" and SUBTITLE_SEPARATORS.search(program_title):
+                # Fallback: check prefix_family only for contaminated human_reviewed titles
                 pf = longest_prefix_title_match(
                     program_title, sources.prefix_families,
                     min_extra_chars=args.min_extra_chars,
