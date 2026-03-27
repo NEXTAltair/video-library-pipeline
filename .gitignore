@@ -1,2 +1,3 @@
 __pycache__
 *.yaml
+node_modules/
