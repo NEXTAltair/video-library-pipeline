@@ -19,6 +19,7 @@ from path_placement_rules import DB_CONTRACT_REQUIRED, SUBTITLE_SEPARATORS
 from plan_validation import detect_swallowed_program_title
 from source_history import make_entry
 from pathscan_common import now_iso
+from title_resolution import load_canonical_title_sources, suggest_canonical_title
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -759,16 +760,18 @@ def main() -> int:
     batch_idx = 0
     processed = 0
     preserved_human_reviewed = 0
+    title_auto_corrected = 0
     generated_input_jsonl_paths: list[str] = []
     generated_output_jsonl_paths: list[str] = []
     from mediaops_schema import connect_db
     db_con = connect_db(args.db)
     epg_cache = _EpgCache(db_con)
     program_dict = _ProgramDictionary(db_con)
+    canonical_sources = load_canonical_title_sources(db_con)
     print(f"INFO program_dictionary_count={program_dict.count}")
 
     def flush():
-        nonlocal batch, batch_idx, processed, preserved_human_reviewed
+        nonlocal batch, batch_idx, processed, preserved_human_reviewed, title_auto_corrected
         nonlocal generated_input_jsonl_paths, generated_output_jsonl_paths
         if not batch:
             return
@@ -808,6 +811,14 @@ def main() -> int:
 
             needs = False
             reasons: list[str] = []
+
+            # Auto-correct program_title against DB human_reviewed canonical titles
+            _suggested, _match_source = suggest_canonical_title(prog, canonical_sources, min_extra_chars=3)
+            if _suggested and _suggested != prog:
+                prog = _suggested
+                reasons.append(f"auto_corrected_from_{_match_source}")
+                title_auto_corrected += 1
+
             # Dictionary match → high confidence; rule-based fallback → baseline
             extraction_path = title_res.get("title_extraction_path") or ""
             conf = 0.92 if extraction_path == "dictionary_match" else 0.78
@@ -981,6 +992,7 @@ def main() -> int:
     finally:
         db_con.close()
     print(f"OK preserved_human_reviewed={preserved_human_reviewed}")
+    print(f"OK title_auto_corrected={title_auto_corrected}")
     print(f"OK processed={processed} batches={batch_idx}")
     print(
         json.dumps(
@@ -996,6 +1008,7 @@ def main() -> int:
                 "extractionVersion": str(args.extraction_version),
                 "preserveHumanReviewed": not bool(args.ignore_human_reviewed),
                 "preservedHumanReviewed": int(preserved_human_reviewed),
+                "titleAutoCorrected": int(title_auto_corrected),
                 "processed": int(processed),
                 "batches": int(batch_idx),
                 "inputJsonlPaths": generated_input_jsonl_paths,
