@@ -119,6 +119,7 @@ If a sessions_spawn call fails, times out, or the subagent doesn't produce outpu
        - default `markHumanReviewed=true`
      - ツールが YAML のエイリアスマッピングを元の抽出結果 JSONL に適用し、DB を更新する
      - タイトル変更により review reason が解消された行は自動的に `needs_review=false` になる
+     - **auto-correction**: DB upsert 時に、過去の human_reviewed タイトルと照合して汚染タイトルを自動修正する（`titleAutoCorrected` で修正件数を報告）。一度 YAML で直したタイトルは以降の抽出で自動的に正しいタイトルに修正される
 
    - **Path B — JSONL 直接編集 (レガシー / air_date 修正等)**:
      - `air_date` の修正やタイトル以外の理由による `needs_review` クリアなど、YAML では対応できない修正が必要な場合に使用

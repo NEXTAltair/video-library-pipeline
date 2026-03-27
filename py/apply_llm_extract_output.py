@@ -2,10 +2,15 @@
 
 This script is the apply step after an LLM extractor has written output.
 It performs additional sanity checks on top of the base upsert contract:
-- subtitle separator (▽/▼/◇) must not remain in program_title
+- subtitle separator (▽/▼/◇/「) must not remain in program_title
 - program_title must not exceed 80 characters
 - confidence must be a float 0.0–1.0
 - Records failing checks are marked needs_review=True with a reason code appended
+
+After validation, contaminated program_title values are auto-corrected against
+DB human_reviewed canonical titles via title_resolution.suggest_canonical_title().
+This ensures that once a title is manually corrected via YAML review, future
+extractions of the same program are automatically placed in the correct folder.
 
 Usage:
   python apply_llm_extract_output.py --db mediaops.sqlite --in output.jsonl
@@ -28,6 +33,7 @@ from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from path_placement_rules import SUBTITLE_SEPARATORS
 from pathscan_common import iter_jsonl, now_iso
 from source_history import make_entry, merge_data
+from title_resolution import load_canonical_title_sources, suggest_canonical_title
 DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 AIR_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -113,9 +119,11 @@ def main() -> int:
     create_schema_if_needed(con)
 
     updated_at = now_iso()
+    canonical_sources = load_canonical_title_sources(con)
     to_upsert: list[tuple] = []
     skipped = 0
     needs_review_count = 0
+    title_auto_corrected = 0
     validation_errors: list[str] = []
 
     for rec in iter_jsonl(args.inp):
@@ -143,6 +151,18 @@ def main() -> int:
         if not path_id:
             skipped += 1
             continue
+
+        # Auto-correct program_title using DB human_reviewed canonical titles
+        original_title = rec.get("program_title", "")
+        suggested, match_source = suggest_canonical_title(
+            original_title, canonical_sources, min_extra_chars=3,
+        )
+        if suggested and suggested != original_title:
+            rec["program_title"] = suggested
+            rec["needs_review"] = False
+            rec["needs_review_reason"] = ""
+            _append_reason(rec, f"auto_corrected_from_{match_source}")
+            title_auto_corrected += 1
 
         # Genre / franchise resolution
         if not rec.get("genre"):
@@ -188,6 +208,7 @@ def main() -> int:
         "upserted": len(to_upsert),
         "skipped": int(skipped),
         "needsReview": int(needs_review_count),
+        "titleAutoCorrected": int(title_auto_corrected),
         "validationErrors": len(validation_errors),
         "dryRun": bool(args.dry_run),
     }
