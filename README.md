@@ -66,7 +66,7 @@ graph TB
     end
 
     subgraph "PowerShell 実行層 (Windows)"
-        PS["assets/windows-scripts/*.ps1<br/>ファイル操作 (正規化/列挙/移動)"]
+        PS["assets/windows-scripts/*.ps1<br/>ファイル操作 (列挙/移動/ケース正規化)"]
         PWSH["pwsh.exe -File script.ps1<br/>(WSL2 subprocess経由)"]
     end
 
@@ -285,7 +285,7 @@ graph LR
 
 #### `video_pipeline_analyze_and_move_videos` — メインパイプライン
 
-sourceRoot (未視聴フォルダ) のファイルを正規化・棚卸し、メタデータに基づきジャンル別ドライブへ移動する。
+sourceRoot (未視聴フォルダ) のファイルを棚卸し、メタデータに基づきジャンル別ドライブへ移動する。
 
 | パラメータ           | 型      | 説明                                                                            |
 | -------------------- | ------- | ------------------------------------------------------------------------------- |
