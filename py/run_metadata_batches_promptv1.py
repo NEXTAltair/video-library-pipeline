@@ -8,7 +8,7 @@ import os
 import re
 import sqlite3
 import unicodedata
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 from edcb_program_parser import match_key_from_filename, datetime_key_from_filename
@@ -539,6 +539,7 @@ class _EpgCache:
         self._by_match_key: dict[str, dict] = {}
         self._by_title_dt: dict[str, list[dict]] = {}
         self._by_datetime_key: dict[str, list[dict]] = {}
+        self._by_filename_stem: dict[str, dict] = {}
         old_factory = con.row_factory
         con.row_factory = sqlite3.Row
         try:
@@ -570,8 +571,15 @@ class _EpgCache:
                     self._by_title_dt.setdefault(str(mk), []).append(data)
             if dk:
                 self._by_datetime_key.setdefault(str(dk), []).append(data)
+            # ファイル名ステムによる 1:1 マッチング（最も信頼性が高い）
+            stem = data.get("ts_filename_stem")
+            if stem:
+                self._by_filename_stem[str(stem)] = data
 
-    def lookup(self, match_key: str | None, datetime_key: str | None) -> dict | None:
+    def lookup(self, match_key: str | None, datetime_key: str | None, filename_stem: str | None = None) -> dict | None:
+        # ファイル名ステムが最優先（タイトル+日時のあいまいマッチより確実）
+        if filename_stem and filename_stem in self._by_filename_stem:
+            return self._by_filename_stem[filename_stem]
         if match_key:
             if match_key in self._by_match_key:
                 return self._by_match_key[match_key]
@@ -880,7 +888,9 @@ def main() -> int:
             }
 
             # EPG enrichment: look up ingested program.txt data
-            epg = epg_cache.lookup(mk, dk)
+            # ファイル名ステムで 1:1 照合（タイトル+日時によるあいまいマッチより優先）
+            _fs = PurePath(str(rec.get("path") or "")).stem or None
+            epg = epg_cache.lookup(mk, dk, filename_stem=_fs)
             _enrich_with_epg(row, epg)
             if epg and rec.get("path_id") and epg.get("program_id"):
                 path_program_links.append((

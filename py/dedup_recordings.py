@@ -632,6 +632,7 @@ def main() -> int:
         run_id: str | None = None
         apply_rows: list[dict[str, Any]] = []
         move_backend = "wsl_shutil_move"
+        move_apply_file: Path | None = None
         if args.apply:
             move_backend = "pwsh7_apply_move_plan"
             scripts_root = ops_root / "scripts"

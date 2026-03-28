@@ -164,9 +164,13 @@ def main() -> int:
                 skipped_already_ingested += 1
                 continue
 
+            # .ts.program.txt → stem twice → base filename shared with .ts/.mp4
+            ts_filename_stem = Path(ptxt.stem).stem
+
             data = {
                 "match_key": match_key,
                 "datetime_key": dt_key,
+                "ts_filename_stem": ts_filename_stem,
                 "air_date": epg["air_date"],
                 "start_time": epg["start_time"],
                 "end_time": epg["end_time"],
