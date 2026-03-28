@@ -11,7 +11,6 @@ import argparse
 import json
 import os
 import subprocess
-import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -36,7 +35,11 @@ def run_py(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = 
         encoding="utf-8",
         errors="replace",
     )
-    out = unicodedata.normalize("NFKC", cp.stdout)
+    # Do not NFKC-normalize subprocess output.  NFKC converts full-width
+    # characters that are valid in Windows filenames (e.g. ／ U+FF0F → /,
+    # ～ U+FF5E → ~), corrupting paths stored in JSONL/DB.
+    # See windows_pwsh_bridge.py for the same rationale.
+    out = cp.stdout
     if cp.returncode != 0:
         raise RuntimeError(out.strip() or f"python failed rc={cp.returncode}: {' '.join(cmd)}")
     return out

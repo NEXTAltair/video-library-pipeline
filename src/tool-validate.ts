@@ -7,12 +7,12 @@ import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-script
 const NEXT_STEP_HINTS: Record<string, string> = {
   relocate:
     "Validation passed. Immediately call video_pipeline_relocate_existing_files with {apply: false, roots: [<user-specified roots>], queueMissingMetadata: true, writeMetadataQueueOnDryRun: true, scanErrorPolicy: \"warn\", scanRetryCount: 2}. Do not ask the user for additional details — proceed with the dry-run now.",
-  normalize:
-    "Validation passed. Immediately call video_pipeline_analyze_and_move_videos with {apply: false, allowNeedsReview: false} to start the normalization dry-run.",
+  inventory:
+    "Validation passed. Immediately call video_pipeline_analyze_and_move_videos with {apply: false, allowNeedsReview: false} to start the inventory dry-run.",
   backfill:
     "Validation passed. Immediately call video_pipeline_backfill_moved_files with {apply: false} to start the DB sync dry-run.",
   extract:
-    "Validation passed. Immediately call video_pipeline_reextract using the queuePath from the previous normalize stage.",
+    "Validation passed. Immediately call video_pipeline_reextract using the queuePath from the previous inventory stage.",
 };
 
 export function registerToolValidate(api: any, getCfg: (api: any) => any) {
@@ -27,7 +27,7 @@ export function registerToolValidate(api: any, getCfg: (api: any) => any) {
           checkWindowsInterop: { type: "boolean", default: true, description: "Also check PowerShell 7 and Windows LongPathsEnabled. Required before any apply operation." },
           intent: {
             type: "string",
-            enum: ["relocate", "normalize", "backfill", "extract"],
+            enum: ["relocate", "inventory", "backfill", "extract"],
             description: "Declared intent for this pipeline run. When provided, nextStep is included in the result to guide the next tool call.",
           },
         },

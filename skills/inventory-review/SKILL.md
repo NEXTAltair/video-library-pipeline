@@ -14,7 +14,7 @@ metadata: {"openclaw":{"emoji":"📋","requires":{"plugins":["video-library-pipe
 
 ## Tool sequence
 
-1. Call `video_pipeline_validate` with `{"checkWindowsInterop": true, "intent": "normalize"}`. Follow the `nextStep` field in the result.
+1. Call `video_pipeline_validate` with `{"checkWindowsInterop": true, "intent": "inventory"}`. Follow the `nextStep` field in the result.
 2. Call `video_pipeline_analyze_and_move_videos` with:
    - `apply=false`
    - `allowNeedsReview=false`

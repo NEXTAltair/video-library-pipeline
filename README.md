@@ -118,7 +118,7 @@ flowchart TD
     EPG_DB[("programs / broadcasts")]
     EPG_START --> EPG_INGEST --> EPG_DB
 
-    %% ── Stage 1: Normalize ──
+    %% ── Stage 1: Inventory ──
     S1_IN(["B:\未視聴 (MP4)"])
     S1_VALIDATE["video_pipeline_validate<br/>環境チェック"]
     S1_RUN["video_pipeline_analyze_and_move_videos<br/>apply=false"]
@@ -220,6 +220,7 @@ flowchart TD
 | `extract-review`         | Stage 2 — ファイル名からメタデータを抽出し、ヒューマンレビューを経てDBに書き込む   |
 | `move-review`            | Stage 3 — DBのメタデータに基づき、ジャンル別ドライブにファイルを振り分ける         |
 | `relocate-review`        | 既存ライブラリの再配置。メタデータ補完→dry-run→apply のサイクルを誘導する         |
+| `folder-cleanup`         | フォルダ名汚染（サブタイトル混入等）の修正。ユーザー指定のターゲットを起点に修正する |
 
 ```mermaid
 graph LR
@@ -250,7 +251,11 @@ graph LR
     subgraph "補助ツール"
         T_BACKFILL["backfill_moved_files"]
         T_DEDUP["dedup_recordings"]
+        T_DEDUP_RB["dedup_rebroadcasts"]
         T_REBROADCAST["detect_rebroadcasts"]
+        T_CONTAMINATION["detect_folder_contamination"]
+        T_TITLES["update_program_titles"]
+        T_NORMCASE["normalize_folder_case"]
         T_EPG["ingest_epg"]
         T_BACKUP["db_backup / db_restore"]
         T_REPAIR["repair_db"]
@@ -440,11 +445,16 @@ video-library-pipeline (本プラグイン)
 
 | ツール                                        | 用途                                                     | 主要パラメータ                       |
 | --------------------------------------------- | -------------------------------------------------------- | ------------------------------------ |
-| `video_pipeline_validate`                   | 環境・設定チェック                                       | —                                   |
+| `video_pipeline_validate`                   | 環境・設定チェック                                       | `checkWindowsInterop`, `intent`    |
 | `video_pipeline_status`                     | パイプラインの最新状態サマリ (各ステージの最新JSONL等)   | `includeRawPaths`                  |
 | `video_pipeline_export_program_yaml`        | 抽出結果からヒントYAML生成                               | `sourceJsonlPath`                  |
 | `video_pipeline_ingest_epg`                 | EDCB `.program.txt` からEPG番組情報を取り込み          | —                                   |
 | `video_pipeline_detect_rebroadcasts`        | 再放送グルーピング (EPG `[再]` フラグ優先、未確定は `unknown`) | —                                   |
+| `video_pipeline_dedup_rebroadcasts`         | 同一番組+エピソードの再放送録画を検出し低優先度コピーを quarantine に隔離 | `apply`, `maxGroups`               |
+| `video_pipeline_detect_folder_contamination`| フォルダ名へのサブタイトル混入を検出し修正候補を提案     | `programTitle`, `representativePathLike`, `canonicalTitle`, `programTitleContains` |
+| `video_pipeline_update_program_titles`      | 番組タイトルの一括修正 (path_id/path_pattern指定)        | `updates[]`, `dryRun`              |
+| `video_pipeline_normalize_folder_case`      | フォルダ名の大文字小文字ケース正規化 (Windows互換)       | `apply`, `roots`                   |
+| `video_pipeline_llm_extract_status`         | LLM抽出バッチの完了状態確認・リトライ指示                | —                                   |
 | `video_pipeline_db_backup` / `db_restore` | DBスナップショットの作成・復元                           | `action`, `descriptor`, `keep` |
 | `video_pipeline_repair_db`                  | paths テーブルの drive/dir/name 分解値を path から再生成 | —                                   |
 | `video_pipeline_logs`                       | 監査ログ (events テーブル) の参照                        | —                                   |

@@ -33,6 +33,10 @@ Classify the user request first, then **immediately read the sub-skill SKILL.md 
 | Rebroadcast detection | Call `video_pipeline_detect_rebroadcasts` directly (EPG `[再]` flag based: `rebroadcast` / `original` / `unknown`) |
 | Fix program titles ("タイトル修正", "番組名を直して", folder name ≠ program name) | Call `video_pipeline_update_program_titles` with dryRun=true first, then apply. **Never write raw SQL scripts.** |
 | Contaminated folder names ("フォルダ名がおかしい", "フォルダ分けが変", "サブタイトルがフォルダに入ってる", "folder cleanup") | Read `skills/folder-cleanup/SKILL.md`, then follow its sequence (**user-specified wrong path/title is the primary entry**) |
+| Dedup recordings (ハッシュ重複削除, "重複ファイルを削除") | Call `video_pipeline_dedup_recordings` directly (dry-run/apply) |
+| Dedup rebroadcasts (再放送の重複整理, "再放送を整理") | Call `video_pipeline_dedup_rebroadcasts` directly (dry-run/apply) |
+| Folder case normalization (大文字小文字修正, "フォルダ名のケースを揃えて") | Call `video_pipeline_normalize_folder_case` directly (dry-run/apply) |
+| DB backup/restore ("バックアップ", "リストア") | Call `video_pipeline_db_backup` / `video_pipeline_db_restore` directly |
 
 If the user asks about cleanup/reorganization for an already-existing directory tree, treat that as **relocate flow** (read `skills/relocate-review/SKILL.md`), not the `sourceRoot` pipeline flow.
 
@@ -65,7 +69,7 @@ If the user asks about cleanup/reorganization for an already-existing directory 
 ## Command naming guardrail (required)
 
 Valid tool names (tool calls only — not CLI commands):
-`video_pipeline_validate`, `video_pipeline_backfill_moved_files`, `video_pipeline_relocate_existing_files`, `video_pipeline_prepare_relocate_metadata`, `video_pipeline_dedup_recordings`, `video_pipeline_analyze_and_move_videos`, `video_pipeline_logs`, `video_pipeline_status`, `video_pipeline_reextract`, `video_pipeline_apply_reviewed_metadata`, `video_pipeline_export_program_yaml`, `video_pipeline_repair_db`, `video_pipeline_ingest_epg`, `video_pipeline_detect_rebroadcasts`, `video_pipeline_update_program_titles`, `video_pipeline_detect_folder_contamination`
+`video_pipeline_validate`, `video_pipeline_backfill_moved_files`, `video_pipeline_relocate_existing_files`, `video_pipeline_prepare_relocate_metadata`, `video_pipeline_dedup_recordings`, `video_pipeline_dedup_rebroadcasts`, `video_pipeline_analyze_and_move_videos`, `video_pipeline_logs`, `video_pipeline_status`, `video_pipeline_reextract`, `video_pipeline_apply_reviewed_metadata`, `video_pipeline_apply_llm_extract_output`, `video_pipeline_export_program_yaml`, `video_pipeline_llm_extract_status`, `video_pipeline_repair_db`, `video_pipeline_ingest_epg`, `video_pipeline_detect_rebroadcasts`, `video_pipeline_update_program_titles`, `video_pipeline_detect_folder_contamination`, `video_pipeline_normalize_folder_case`, `video_pipeline_db_backup`, `video_pipeline_db_restore`
 
 Only plugin CLI helper: `openclaw video-pipeline-status`
 

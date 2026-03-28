@@ -96,7 +96,7 @@
 7. `src/tool-run.ts` が起動:
    - `uv run python py/unwatched_pipeline_runner.py --db ... --source-root ... --dest-root ... --windows-ops-root ... --max-files-per-run ... --drive-routes ... [--apply] [--allow-needs-review]`
 8. ランナーが `db/move/llm` を準備する
-9. ランナーが PowerShell 経由でファイル名を正規化し、インベントリをスナップショット
+9. ランナーが PowerShell 経由でインベントリをスナップショット（ファイル列挙 + ハッシュ生成）
 10. ランナーがインベントリを取り込み、メタデータキューを構築
 11. ランナーがオプションの YAML ヒントと EPG エンリッチメント（放送局・ジャンル）を用いて抽出を実行
 12. ランナーが `drive_routes.yaml` によるジャンル別マルチドライブルーティングで移動計画を構築
@@ -107,6 +107,9 @@
     - `video_pipeline_detect_rebroadcasts`（dry-run/apply）を実行
     - `air_date` / `broadcaster` の差異で同一エピソードの録画をグルーピング
     - `broadcast_groups` / `broadcast_group_members` を DB に書き込む（ファイル移動なし）
+17. **再放送重複削除ステージ**（任意）:
+    - `video_pipeline_dedup_rebroadcasts`（dry-run/apply）を実行
+    - 同一番組+エピソードの再放送録画をグルーピングし、低優先度コピーを quarantine に隔離
 
 ## 5) 責務マップ
 

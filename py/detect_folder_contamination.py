@@ -104,6 +104,10 @@ def main() -> int:
         program_title_filter or program_title_contains_filter
         or path_like_filter or path_id_filters
     )
+    # Narrow targeted: operator explicitly named specific targets (exact title
+    # or path_ids).  Broad targeted: search-like scope (pathLike,
+    # programTitleContains) that can match many rows.
+    is_narrow_targeted = bool(program_title_filter or path_id_filters)
 
     # Always JOIN paths for samplePaths; only filter on p.path when --path-like given
     join_clause = "JOIN paths p ON p.path_id = pm.path_id"
@@ -142,8 +146,13 @@ def main() -> int:
         )
 
         # Exact human-reviewed title → already canonical,
-        # UNLESS it contains a subtitle separator (contaminated title that was
-        # previously marked human_reviewed) AND a shorter prefix-family base exists.
+        # UNLESS it contains a subtitle separator AND a shorter prefix-family
+        # base exists.
+        # In broad/scan-all mode, require the prefix candidate to also exist
+        # in human_reviewed or programs table (strong corroboration) to avoid
+        # re-opening large numbers of accepted titles. (Issue #94)
+        # In targeted mode, prefix_family alone is sufficient (operator
+        # explicitly asked about this title).
         if match_source == "exact_human_reviewed":
             if not SUBTITLE_SEPARATORS.search(program_title):
                 continue
@@ -154,6 +163,18 @@ def main() -> int:
             )
             if pf_match is None:
                 continue
+            if not is_targeted:
+                # Broad scan: require strong corroboration
+                pf_norm = normalize_title_for_comparison(pf_match)
+                has_strong_source = (
+                    pf_norm in sources.human_reviewed_norm
+                    or any(
+                        normalize_title_for_comparison(p) == pf_norm
+                        for p in sources.programs
+                    )
+                )
+                if not has_strong_source:
+                    continue
             suggested_title = pf_match
             match_source = "prefix_family"
 
@@ -190,9 +211,15 @@ def main() -> int:
                 "new_title": suggested_title,
             })
 
-    # In targeted mode, always return resolvedTargets so the operator can force
+    # In targeted mode, return resolvedTargets so the operator can force
     # a correction even when no contamination suggestion was generated.
     # Each entry is enriched with suggestedTitle when available (for YAML pre-fill).
+    #
+    # Narrow targeted (--program-title, --path-id): include all titles —
+    #   operator explicitly asked about these.
+    # Broad targeted (--path-like, --program-title-contains): exclude clean
+    #   human_reviewed titles without a suggestion to avoid flooding review
+    #   output with already-curated titles. (Issue #94)
     resolved_targets: list[dict[str, Any]] = []
     if is_targeted:
         for program_title, path_ids in sorted(title_to_path_ids.items()):
@@ -206,6 +233,7 @@ def main() -> int:
             suggested, match_src = suggest_canonical_title(
                 program_title, sources, min_extra_chars=args.min_extra_chars,
             )
+            has_suggestion = False
             if match_src == "exact_human_reviewed" and SUBTITLE_SEPARATORS.search(program_title):
                 # Fallback: check prefix_family only for contaminated human_reviewed titles
                 pf = longest_prefix_title_match(
@@ -219,6 +247,12 @@ def main() -> int:
                 if st_norm != normalize_title_for_comparison(program_title):
                     rt_entry["suggestedTitle"] = suggested
                     rt_entry["matchSource"] = match_src
+                    has_suggestion = True
+
+            # Broad targeted: skip clean human_reviewed entries without a suggestion
+            if not is_narrow_targeted and match_src == "exact_human_reviewed" and not has_suggestion:
+                continue
+
             resolved_targets.append(rt_entry)
 
     # Operator-supplied canonical title: build updateInstructions directly from resolvedTargets
