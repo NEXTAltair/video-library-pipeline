@@ -39,6 +39,14 @@ export function registerToolDedupBroadcasterReview(api: any, getCfg: (api: any) 
         if (parsed) {
           for (const [k, v] of Object.entries(parsed)) out[k] = v;
         }
+        const outputPath = String(out.outputPath ?? "");
+        if (outputPath && Number(out.itemCount ?? 0) > 0) {
+          out.nextSteps = [
+            `Review YAML generated at: ${outputPath}`,
+            `The operator should edit the "broadcaster" field for each item (and optionally "bucket" for unknown broadcasters).`,
+            `After editing, apply with: video_pipeline_dedup_apply_broadcaster_yaml reviewYamlPath="${outputPath}"`,
+          ];
+        }
         return toToolResult(out);
       },
     }
@@ -80,6 +88,12 @@ export function registerToolDedupBroadcasterReview(api: any, getCfg: (api: any) 
         };
         if (parsed) {
           for (const [k, v] of Object.entries(parsed)) out[k] = v;
+        }
+        if (out.ok && Number(out.updated ?? 0) > 0) {
+          out.nextSteps = [
+            `${out.updated} broadcaster(s) updated in DB.`,
+            `Re-run video_pipeline_dedup_recordings to resolve the previously unknown_bucket_mixed groups.`,
+          ];
         }
         return toToolResult(out);
       },

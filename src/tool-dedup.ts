@@ -155,6 +155,34 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         if (parsed) {
           for (const [k, v] of Object.entries(parsed)) out[k] = v;
         }
+
+        // --- nextSteps guidance for the agent ---
+        const nextSteps: string[] = [];
+        const manualReview = Number(out.groupsManualReview ?? 0);
+        const planPath = String(out.planPath ?? "");
+        const filesDropped = Number(out.filesDropped ?? 0);
+
+        if (manualReview > 0 && planPath) {
+          nextSteps.push(
+            `${manualReview} group(s) require broadcaster review (unknown_bucket_mixed). ` +
+            `Generate the review YAML by calling video_pipeline_dedup_generate_broadcaster_yaml ` +
+            `with planJsonlPath="${planPath}". ` +
+            `After the operator edits the YAML, apply it with video_pipeline_dedup_apply_broadcaster_yaml, ` +
+            `then re-run this tool to resolve the remaining groups.`
+          );
+        }
+        if (filesDropped > 0 && planPath) {
+          nextSteps.push(
+            `${filesDropped} file(s) marked as drop candidates (Phase 2 metadata dedup). ` +
+            `Generate the drop-review YAML by calling video_pipeline_dedup_generate_drop_review_yaml ` +
+            `with planJsonlPath="${planPath}". ` +
+            `After the operator reviews keep/drop decisions, apply it with video_pipeline_dedup_apply_drop_review_yaml.`
+          );
+        }
+        if (nextSteps.length > 0) {
+          out.nextSteps = nextSteps;
+        }
+
         return toToolResult(out);
       },
     }

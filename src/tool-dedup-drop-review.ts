@@ -39,6 +39,14 @@ export function registerToolDedupDropReview(api: any, getCfg: (api: any) => any)
         if (parsed) {
           for (const [k, v] of Object.entries(parsed)) out[k] = v;
         }
+        const outputPath = String(out.outputPath ?? "");
+        if (outputPath && Number(out.groupCount ?? 0) > 0) {
+          out.nextSteps = [
+            `Drop-review YAML generated at: ${outputPath}`,
+            `The operator should review each group's "decision" field (keep/drop/skip).`,
+            `After editing, apply with: video_pipeline_dedup_apply_drop_review_yaml reviewYamlPath="${outputPath}"`,
+          ];
+        }
         return toToolResult(out);
       },
     }
