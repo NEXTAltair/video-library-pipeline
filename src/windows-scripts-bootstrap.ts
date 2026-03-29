@@ -35,17 +35,9 @@ function templateRootDir(): string {
   return path.join(getExtensionRootDir(), "assets", "windows-scripts");
 }
 
-function userTemplateRootDir(cfg: { windowsOpsRoot: string }): string {
-  return path.join(String(cfg.windowsOpsRoot || ""), "templates", "windows-scripts");
-}
-
-function resolveTemplatePath(cfg: { windowsOpsRoot: string }, name: string): string | null {
-  const userTemplate = path.join(userTemplateRootDir(cfg), name);
-  if (fs.existsSync(userTemplate)) return userTemplate;
-
+function resolveTemplatePath(name: string): string | null {
   const bundledTemplate = path.join(templateRootDir(), name);
   if (fs.existsSync(bundledTemplate)) return bundledTemplate;
-
   return null;
 }
 
@@ -75,7 +67,7 @@ export function ensureWindowsScripts(cfg: { windowsOpsRoot: string }): Provision
 
   for (const name of MANAGED_WINDOWS_SCRIPTS) {
     const target = path.join(scriptsDir, name);
-    const template = resolveTemplatePath(cfg, name);
+    const template = resolveTemplatePath(name);
 
     if (!template) {
       result.missingTemplates.push(name);
