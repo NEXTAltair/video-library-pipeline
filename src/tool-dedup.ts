@@ -85,10 +85,11 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           hashScanExitCode = cp.status ?? null;
           if (cp.error) {
             hashScanError = String(cp.error?.message || cp.error);
-          } else if (cp.status !== 0) {
-            hashScanError = `czkawka exited with code ${cp.status}. stderr: ${String(cp.stderr || "").slice(0, 500)}`;
-          } else {
+          } else if (cp.status === 0 || cp.status === 11) {
+            // exit 0 = no duplicates found, exit 11 = duplicates found (both are success)
             hashScanOk = true;
+          } else {
+            hashScanError = `czkawka exited with code ${cp.status}. stderr: ${String(cp.stderr || "").slice(0, 500)}`;
           }
         } catch (e: any) {
           hashScanError = String(e?.message || e);
