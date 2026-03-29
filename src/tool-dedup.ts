@@ -72,7 +72,8 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
             "dup",
             "--search-method", "HASH",
             "--hash-type", "BLAKE3",
-            "--directories", cfg.sourceRoot, cfg.destRoot,
+            "-d", cfg.sourceRoot,
+            "-d", cfg.destRoot,
             "--thread-number", "4",
             "--compact-file-to-save", tmpJsonPath,
           ];
