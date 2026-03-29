@@ -55,7 +55,7 @@ def generate(plan_jsonl: str, db_path: str, output: str) -> dict:
         """,
         all_path_ids,
     )
-    db_map = {r["path_id"]: r for r in db_rows}
+    db_map = {r["path_id"]: dict(r) for r in db_rows}
     con.close()
 
     yaml_groups = []
