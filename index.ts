@@ -5,6 +5,8 @@ import { registerToolApplyReviewedMetadata } from "./src/tool-apply-reviewed-met
 import { registerToolDbBackup, registerToolDbRestore } from "./src/tool-db-backup";
 import { registerToolBackfill } from "./src/tool-backfill";
 import { registerToolDedup } from "./src/tool-dedup";
+import { registerToolDedupBroadcasterReview } from "./src/tool-dedup-broadcaster-review";
+import { registerToolDedupDropReview } from "./src/tool-dedup-drop-review";
 import { registerToolDedupRebroadcasts } from "./src/tool-dedup-rebroadcasts";
 import { registerToolLogs } from "./src/tool-logs";
 import { registerToolExportProgramYaml } from "./src/tool-export-program-yaml";
@@ -41,6 +43,8 @@ export default function register(api: any) {
   registerToolRun(api, getCfg);
   registerToolBackfill(api, getCfg);
   registerToolDedup(api, getCfg);
+  registerToolDedupBroadcasterReview(api, getCfg);
+  registerToolDedupDropReview(api, getCfg);
   registerToolDedupRebroadcasts(api, getCfg);
   registerToolRelocate(api, getCfg);
   registerToolNormalizeFolderCase(api, getCfg);

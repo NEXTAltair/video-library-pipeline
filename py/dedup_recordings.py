@@ -10,13 +10,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import uuid
-from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from db_helpers import reconstruct_path_metadata
+from dedup_common import (
+    Candidate,
+    build_group_key,
+    choose_keep,
+    classify_broadcast_bucket,
+    load_bucket_rules,
+    normalize_subtitle,
+    parse_confidence,
+    parse_resolution_score,
+    safe_group_key,
+)
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
 from move_apply_stats import aggregate_move_apply
 from pathscan_common import (
@@ -36,129 +45,6 @@ from windows_pwsh_bridge import run_pwsh_json
 FILE_NAMESPACE = uuid.UUID("88e78892-867e-4e54-b432-2f251e75ac9f")
 
 
-def normalize_subtitle(s: str) -> str:
-    return re.sub(r"\s+", " ", str(s or "").strip().lower())
-
-
-def parse_confidence(v: Any) -> float:
-    try:
-        return float(v)
-    except Exception:
-        return 0.0
-
-
-def parse_resolution_score(v: Any) -> int:
-    if isinstance(v, (int, float)):
-        return int(v)
-    if not isinstance(v, str):
-        return 0
-    m = re.search(r"(\d+)\s*[xX]\s*(\d+)", v)
-    if not m:
-        return 0
-    try:
-        return int(m.group(1)) * int(m.group(2))
-    except Exception:
-        return 0
-
-
-def safe_group_key(s: str) -> str:
-    x = re.sub(r"[^0-9A-Za-z._-]+", "_", s)
-    x = re.sub(r"_+", "_", x).strip("._-")
-    return x[:120] if x else "group"
-
-
-def parse_simple_yaml_lists(path: Path) -> dict[str, list[str]]:
-    out: dict[str, list[str]] = {}
-    if not path.exists():
-        return out
-    cur: str | None = None
-    for i, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw.rstrip()
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        m_key = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$", line)
-        if m_key:
-            cur = m_key.group(1)
-            out.setdefault(cur, [])
-            continue
-        m_item = re.match(r"^\s*-\s*(.+?)\s*$", line)
-        if m_item and cur:
-            v = m_item.group(1).strip()
-            if len(v) >= 2 and ((v[0] == v[-1] == '"') or (v[0] == v[-1] == "'")):
-                v = v[1:-1]
-            out[cur].append(v)
-            continue
-        m_scalar = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?)\s*$", line)
-        if m_scalar:
-            out.setdefault(m_scalar.group(1), [])
-            cur = None
-            continue
-        raise SystemExit(f"invalid bucket yaml at {path}:{i}: {line}")
-    return out
-
-
-def load_bucket_rules(path: Path) -> dict[str, list[str]]:
-    data = parse_simple_yaml_lists(path)
-    terrestrial = [str(x).strip() for x in data.get("terrestrial_keywords", []) if str(x).strip()]
-    bs_cs = [str(x).strip() for x in data.get("bs_cs_keywords", []) if str(x).strip()]
-    return {"terrestrial": terrestrial, "bs_cs": bs_cs}
-
-
-def classify_broadcast_bucket(row: dict[str, Any], rules: dict[str, list[str]]) -> tuple[str, str]:
-    explicit = str(row.get("broadcast_bucket") or "").strip().lower()
-    if explicit in {"terrestrial", "bs_cs"}:
-        return explicit, "explicit_field"
-
-    sources = [
-        str(row.get("broadcaster") or ""),
-        str(row.get("channel") or ""),
-        str(row.get("path") or ""),
-        str((row.get("evidence") or {}).get("raw") if isinstance(row.get("evidence"), dict) else ""),
-    ]
-    merged = " ".join([s for s in sources if s]).lower()
-    merged_no_space = re.sub(r"\s+", "", merged)
-
-    for kw in rules.get("terrestrial", []):
-        k = kw.lower()
-        if k and (k in merged or re.sub(r"\s+", "", k) in merged_no_space):
-            return "terrestrial", f"keyword:{kw}"
-    for kw in rules.get("bs_cs", []):
-        k = kw.lower()
-        if k and (k in merged or re.sub(r"\s+", "", k) in merged_no_space):
-            return "bs_cs", f"keyword:{kw}"
-    return "unknown", "no_match"
-
-
-@dataclass
-class Candidate:
-    path_id: str
-    path: str
-    group_key: str
-    confidence: float
-    needs_review: bool
-    program_title: str
-    air_date: str | None
-    episode_no: str | None
-    subtitle: str | None
-    bucket: str
-    bucket_reason: str
-    size_bytes: int
-    mtime_ts: float
-    resolution_score: int
-    not_corrupt: int
-    raw_meta: dict[str, Any]
-
-
-def choose_keep(candidates: list[Candidate]) -> Candidate:
-    # Higher score first:
-    # 1) not_corrupt, 2) resolution, 3) file size, 4) mtime, 5) path asc
-    ranked = sorted(
-        candidates,
-        key=lambda c: (-c.not_corrupt, -c.resolution_score, -c.size_bytes, -c.mtime_ts, c.path),
-    )
-    return ranked[0]
-
-
 def unique_dst_path(dst: Path) -> Path:
     if not dst.exists():
         return dst
@@ -170,20 +56,6 @@ def unique_dst_path(dst: Path) -> Path:
         if not p.exists():
             return p
     raise RuntimeError(f"failed to resolve unique dst path: {dst}")
-
-
-def build_group_key(md: dict[str, Any]) -> tuple[str | None, str | None]:
-    from epg_common import normalize_program_key
-    key = normalize_program_key(str(md.get("program_title") or ""))
-    if not key or key == "unknown":
-        return None, "missing_program_title"
-    ep = md.get("episode_no")
-    if ep is not None and str(ep).strip():
-        return f"{key}::ep::{str(ep).strip()}", None
-    sub = str(md.get("subtitle") or "").strip()
-    if sub:
-        return f"{key}::sub::{normalize_subtitle(sub)}", None
-    return None, "missing_episode_and_subtitle"
 
 
 def load_hash_groups(path: str) -> list[frozenset[str]]:
@@ -304,8 +176,6 @@ def main() -> int:
     ap.add_argument("--windows-ops-root", required=True)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--max-groups", type=int, default=0)
-    ap.add_argument("--confidence-threshold", type=float, default=0.85)
-    ap.add_argument("--allow-needs-review", default="false")
     ap.add_argument("--keep-terrestrial-and-bscs", default="true")
     ap.add_argument("--bucket-rules-path", default="")
     ap.add_argument("--hash-scan-path", default="", help="czkawka compact JSON path for hash-exact dedup pre-pass")
@@ -328,7 +198,6 @@ def main() -> int:
     )
     bucket_rules = load_bucket_rules(bucket_rules_path)
 
-    allow_needs_review = as_bool(args.allow_needs_review, False)
     keep_terrestrial_and_bscs = as_bool(args.keep_terrestrial_and_bscs, True)
     max_groups = max(0, int(args.max_groups or 0))
 
@@ -439,6 +308,7 @@ def main() -> int:
         hash_claimed_paths: set[str] = set()
         hash_groups_total = 0
         hash_groups_processed = 0
+        hash_group_details: list[dict[str, Any]] = []
 
         hash_groups = load_hash_groups(args.hash_scan_path)
         for hg in hash_groups:
@@ -449,6 +319,11 @@ def main() -> int:
             # keep/drop 判定（confidence・needs_review チェックをスキップ: バイト一致は確実）
             keep = choose_keep(candidates)
             hash_groups_processed += 1
+            hash_group_details.append({
+                "group_key": keep.group_key or f"hash::{keep.path_id}",
+                "keep": 1,
+                "drop": len(candidates) - 1,
+            })
             groups_auto_processed += 1
             files_kept += 1
             rows_plan.append(
@@ -494,30 +369,10 @@ def main() -> int:
             arr = [x for x in grouped[gk] if x.path not in hash_claimed_paths]
             if len(arr) < 2:
                 continue
-            auto_eligible = [x for x in arr if (allow_needs_review or not x.needs_review) and x.confidence >= args.confidence_threshold]
-            if len(auto_eligible) < 2:
-                groups_manual_review += 1
-                for x in arr:
-                    rows_plan.append(
-                        {
-                            "group_key": gk,
-                            "path_id": x.path_id,
-                            "path": x.path,
-                            "bucket": x.bucket,
-                            "decision": "manual_review_required",
-                            "reason": "low_confidence_or_needs_review",
-                            "confidence": x.confidence,
-                            "needs_review": x.needs_review,
-                            "bucket_reason": x.bucket_reason,
-                            "ts": now_iso(),
-                        }
-                    )
-                continue
-
             cohorts: list[tuple[str, list[Candidate]]] = []
             if keep_terrestrial_and_bscs:
                 by_bucket: dict[str, list[Candidate]] = {"terrestrial": [], "bs_cs": [], "unknown": []}
-                for x in auto_eligible:
+                for x in arr:
                     by_bucket.setdefault(x.bucket, []).append(x)
                 if by_bucket["unknown"] and (by_bucket["terrestrial"] or by_bucket["bs_cs"]):
                     groups_manual_review += 1
@@ -544,7 +399,7 @@ def main() -> int:
                     if by_bucket[b]:
                         cohorts.append((b, by_bucket[b]))
             else:
-                cohorts.append(("all", auto_eligible))
+                cohorts.append(("all", arr))
 
             group_has_drop = False
             for bucket_name, cohort in cohorts:
@@ -615,8 +470,6 @@ def main() -> int:
                             "generated_at": now_iso(),
                             "db": args.db,
                             "groups_total": len(group_keys),
-                            "allow_needs_review": allow_needs_review,
-                            "confidence_threshold": args.confidence_threshold,
                             "keep_terrestrial_and_bscs": keep_terrestrial_and_bscs,
                             "bucket_rules_path": str(bucket_rules_path),
                             "dropped_for_missing_key": dropped_for_missing_key,
@@ -634,16 +487,21 @@ def main() -> int:
         move_backend = "wsl_shutil_move"
         move_apply_file: Path | None = None
         if args.apply:
+            # --apply は Phase 1 hash 完全一致の drop のみ auto-apply する
+            # Phase 2 メタデータベースの drop は YAML レビュー経由で適用
+            hash_rows_drop = [r for r in rows_drop if r.get("method") == "hash_exact"]
             move_backend = "pwsh7_apply_move_plan"
             scripts_root = ops_root / "scripts"
             apply_move_script = scripts_root / "apply_move_plan.ps1"
-            if not apply_move_script.exists():
+            if not hash_rows_drop:
+                pass  # no hash drops to apply
+            elif not apply_move_script.exists():
                 errors.append(f"apply_move_plan.ps1 not found: {apply_move_script}")
             else:
                 ops_root_win = wsl_to_windows_path(str(ops_root))
                 quarantine_root_win = wsl_to_windows_path(str(quarantine_root))
                 internal_move_plan = move_dir / f"dedup_move_plan_internal_{ts}.jsonl"
-                drop_by_path_id = {str(r["path_id"]): r for r in rows_drop if r.get("path_id")}
+                drop_by_path_id = {str(r["path_id"]): r for r in hash_rows_drop if r.get("path_id")}
                 with internal_move_plan.open("w", encoding="utf-8") as w:
                     w.write(
                         safe_json(
@@ -652,13 +510,13 @@ def main() -> int:
                                     "kind": "dedup_move_plan_internal",
                                     "generated_at": now_iso(),
                                     "source": "dedup_recordings.py",
-                                    "rows": len(rows_drop),
+                                    "rows": len(hash_rows_drop),
                                 }
                             }
                         )
                         + "\n"
                     )
-                    for row in rows_drop:
+                    for row in hash_rows_drop:
                         src_win = canonicalize_windows_path(str(row["path"]))
                         group_dir_win = canonicalize_windows_path(
                             quarantine_root_win + "\\" + safe_group_key(str(row["group_key"]))
@@ -715,7 +573,7 @@ def main() -> int:
                                 now_iso(),
                                 None,
                                 "dedup_recordings.py",
-                                f"groups={len(group_keys)} drops={len(rows_drop)}",
+                                f"hash_auto_apply groups={hash_groups_processed} drops={len(hash_rows_drop)}",
                             ),
                         )
 
@@ -834,6 +692,7 @@ def main() -> int:
             "files_hash_rows_upserted": files_hash_rows_upserted,
             "hashGroupsTotal": hash_groups_total,
             "hashGroupsProcessed": hash_groups_processed,
+            "hashGroupDetails": hash_group_details,
             "errors": errors,
         }
         print(safe_json(summary))
