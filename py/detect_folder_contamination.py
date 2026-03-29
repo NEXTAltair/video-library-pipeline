@@ -220,6 +220,12 @@ def main() -> int:
     # Broad targeted (--path-like, --program-title-contains): exclude clean
     #   human_reviewed titles without a suggestion to avoid flooding review
     #   output with already-curated titles. (Issue #94)
+    #
+    # Exception: when --canonical-title is supplied, do NOT suppress any rows
+    # from resolvedTargets — the operator has already decided the correct title
+    # and the forced-correction path needs a non-empty resolvedTargets to work.
+    canonical_title_override = str(args.canonical_title or "").strip()
+
     resolved_targets: list[dict[str, Any]] = []
     if is_targeted:
         for program_title, path_ids in sorted(title_to_path_ids.items()):
@@ -249,15 +255,17 @@ def main() -> int:
                     rt_entry["matchSource"] = match_src
                     has_suggestion = True
 
-            # Broad targeted: skip clean human_reviewed entries without a suggestion
+            # Broad targeted: skip clean human_reviewed entries without a suggestion.
+            # Exception: operator-supplied canonicalTitle means they already know the
+            # correct title — include the row so forced-correction can proceed. (Issue #94)
             if not is_narrow_targeted and match_src == "exact_human_reviewed" and not has_suggestion:
-                continue
+                if not canonical_title_override:
+                    continue
 
             resolved_targets.append(rt_entry)
 
     # Operator-supplied canonical title: build updateInstructions directly from resolvedTargets
     # when auto-detection is insufficient but operator already knows the correct title.
-    canonical_title_override = str(args.canonical_title or "").strip()
     operator_forced = False
     if canonical_title_override and is_targeted and resolved_targets:
         already_suggested = {e["programTitle"] for e in contaminated_titles}

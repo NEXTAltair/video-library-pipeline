@@ -340,7 +340,7 @@ def main() -> int:
                 sf.win_path, md,
                 allow_needs_review=allow_needs_review,
                 check_swallowed_title=not skip_suspicious_title_check and not is_human_reviewed,
-                check_subtitle_separator=not skip_suspicious_title_check,
+                check_subtitle_separator=not skip_suspicious_title_check and not is_human_reviewed,
                 routes=routes,
                 dest_root=dest_root_win if not routes else None,
             )

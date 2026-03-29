@@ -59,8 +59,6 @@ function readComparableRows(sourcePath: string): { rows: AnyObj[]; parseErrors: 
   return { rows: out, parseErrors };
 }
 
-const SUBTITLE_SEPARATOR_RE = /[▽▼◇「]/;
-
 function summarizeReviewRisk(rows: AnyObj[]): {
   rows: number;
   needsReviewRows: number;
@@ -70,12 +68,7 @@ function summarizeReviewRisk(rows: AnyObj[]): {
   let suspiciousProgramTitleRows = 0;
   for (const row of rows) {
     if (row && row.needs_review === true) needsReviewRows += 1;
-    if (looksSwallowedProgramTitleInRow(row)) {
-      suspiciousProgramTitleRows += 1;
-    } else {
-      const pt = typeof row?.program_title === "string" ? row.program_title : "";
-      if (SUBTITLE_SEPARATOR_RE.test(pt)) suspiciousProgramTitleRows += 1;
-    }
+    if (looksSwallowedProgramTitleInRow(row)) suspiciousProgramTitleRows += 1;
   }
   return { rows: rows.length, needsReviewRows, suspiciousProgramTitleRows };
 }
