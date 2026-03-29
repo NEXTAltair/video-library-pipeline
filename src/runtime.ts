@@ -24,6 +24,31 @@ export function runCmd(command: string, args: string[], cwd?: string): CmdResult
   };
 }
 
+// PowerShell 経由でコマンドを実行する。Windows ネイティブバイナリの呼び出しに使用。
+export function runCmdViaPwsh(
+  command: string,
+  args: string[],
+  opts?: { timeoutMs?: number },
+): CmdResult {
+  const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const psCommand = `& ${[command, ...args].map(quote).join(" ")}`;
+  const cp = spawnSync("pwsh.exe", ["-NoProfile", "-Command", psCommand], {
+    encoding: "utf-8",
+    timeout: opts?.timeoutMs,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  // czkawka exit code 11 = "results found" (intentional, not a crash)
+  const ok = cp.status === 0 || cp.status === 11;
+  return {
+    ok,
+    code: cp.status ?? 1,
+    stdout: cp.stdout ?? "",
+    stderr: cp.stderr ?? "",
+    command,
+    args,
+  };
+}
+
 const EXT_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const EXT_ROOT_DIR = path.resolve(EXT_SRC_DIR, "..");
 const EXT_PY_DIR = path.join(EXT_ROOT_DIR, "py");

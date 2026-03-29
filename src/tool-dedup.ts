@@ -1,11 +1,18 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, runCmdViaPwsh, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
+
+// /mnt/X/foo → X:\foo (drvfs WSL パスを Windows パスに変換)
+function drvfsToWindowsPath(wslPath: string): string {
+  const m = /^\/mnt\/([a-zA-Z])(\/(.*))?$/.exec(String(wslPath || ""));
+  if (!m) return wslPath;
+  const drive = m[1].toUpperCase();
+  const rest = (m[3] || "").replace(/\//g, "\\");
+  return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
+}
 
 function findLatestRawJson(outputRoot: string, prefix: string): string {
   if (!outputRoot) return "";
@@ -57,11 +64,15 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           });
         }
 
-        // --- czkawka ハッシュスキャン前段 ---
+        // --- czkawka ハッシュスキャン前段 (Windows ネイティブバイナリ経由) ---
+        // drvfs 経由だと長いファイル名を持つディレクトリを列挙できないため
+        // windows_czkawka_cli を PowerShell 経由で呼び出す
         const czkawkaCfgRaw = api?.config?.plugins?.entries?.["czkawka-cli"]?.config ?? {};
-        const czkawkaCliPath: string = String(czkawkaCfgRaw.czkawkaCliPath || "czkawka_cli");
         const czkawkaOutputRoot: string = String(czkawkaCfgRaw.outputRoot || "");
-        const tmpJsonPath = path.join(os.tmpdir(), `dedup_hash_${Date.now()}.json`);
+        const ts = Date.now();
+        const winOpsRoot = drvfsToWindowsPath(String(cfg.windowsOpsRoot || ""));
+        const winTmpJsonPath = `${winOpsRoot}\\dedup_hash_${ts}.json`;
+        const wslTmpJsonPath = path.join(String(cfg.windowsOpsRoot || ""), `dedup_hash_${ts}.json`);
 
         let hashScanOk = false;
         let hashScanExitCode: number | null = null;
@@ -72,24 +83,17 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
             "dup",
             "--search-method", "HASH",
             "--hash-type", "BLAKE3",
-            "-d", cfg.sourceRoot,
-            "-d", cfg.destRoot,
+            "-d", drvfsToWindowsPath(String(cfg.sourceRoot || "")),
+            "-d", drvfsToWindowsPath(String(cfg.destRoot || "")),
             "--thread-number", "4",
-            "--compact-file-to-save", tmpJsonPath,
+            "--compact-file-to-save", winTmpJsonPath,
           ];
-          const cp = spawnSync(czkawkaCliPath, czkawkaArgs, {
-            env: process.env,
-            encoding: "utf-8",
-            timeout: 10 * 60 * 1000,
-          });
-          hashScanExitCode = cp.status ?? null;
-          if (cp.error) {
-            hashScanError = String(cp.error?.message || cp.error);
-          } else if (cp.status === 0 || cp.status === 11) {
-            // exit 0 = no duplicates found, exit 11 = duplicates found (both are success)
+          const result = runCmdViaPwsh("windows_czkawka_cli", czkawkaArgs, { timeoutMs: 10 * 60 * 1000 });
+          hashScanExitCode = result.code;
+          if (result.ok) {
             hashScanOk = true;
           } else {
-            hashScanError = `czkawka exited with code ${cp.status}. stderr: ${String(cp.stderr || "").slice(0, 500)}`;
+            hashScanError = `czkawka exited with code ${result.code}. stderr: ${result.stderr.slice(0, 500)}`;
           }
         } catch (e: any) {
           hashScanError = String(e?.message || e);
@@ -112,7 +116,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           "--bucket-rules-path",
           String(params.bucketRulesPath || defaultRulesPath),
           "--hash-scan-path",
-          hashScanOk ? tmpJsonPath : "",
+          hashScanOk ? wslTmpJsonPath : "",
           "--hash-raw-json",
           hashRawJsonPath,
         ];
@@ -125,7 +129,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
 
         // 一時 JSON を削除
         try {
-          if (fs.existsSync(tmpJsonPath)) fs.rmSync(tmpJsonPath);
+          if (fs.existsSync(wslTmpJsonPath)) fs.rmSync(wslTmpJsonPath);
         } catch {
           // ignore cleanup errors
         }
@@ -142,7 +146,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           hashScan: {
             ok: hashScanOk,
             exitCode: hashScanExitCode,
-            tmpJsonPath: hashScanOk ? tmpJsonPath : null,
+            wslTmpJsonPath: hashScanOk ? wslTmpJsonPath : null,
             rawJsonPath: hashRawJsonPath || null,
             error: hashScanError ?? null,
           },
