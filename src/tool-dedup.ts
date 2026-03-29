@@ -163,6 +163,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         const filesDropped = Number(out.filesDropped ?? 0);
 
         if (manualReview > 0 && planPath) {
+          // Gate 1 が未解決なら Gate 1 だけ案内。drop レビューは Gate 1 解消後の再実行で案内する
           nextSteps.push(
             `${manualReview} group(s) require broadcaster review (unknown_bucket_mixed). ` +
             `Generate the review YAML by calling video_pipeline_dedup_generate_broadcaster_yaml ` +
@@ -170,8 +171,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
             `After the operator edits the YAML, apply it with video_pipeline_dedup_apply_broadcaster_yaml, ` +
             `then re-run this tool to resolve the remaining groups.`
           );
-        }
-        if (filesDropped > 0 && planPath) {
+        } else if (filesDropped > 0 && planPath) {
           nextSteps.push(
             `${filesDropped} file(s) marked as drop candidates (Phase 2 metadata dedup). ` +
             `Generate the drop-review YAML by calling video_pipeline_dedup_generate_drop_review_yaml ` +
