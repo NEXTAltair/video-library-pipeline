@@ -70,7 +70,8 @@ def apply_yaml(yaml_path: str, db_path: str, bucket_rules_path: str) -> dict:
     skipped = 0
     buckets_added = 0
 
-    with begin_immediate(con):
+    begin_immediate(con)
+    try:
         # register run
         con.execute(
             """
@@ -133,8 +134,12 @@ def apply_yaml(yaml_path: str, db_path: str, bucket_rules_path: str) -> dict:
             updated += 1
 
         con.execute("UPDATE runs SET finished_at=? WHERE run_id=?", (now_iso(), run_id))
-
-    con.close()
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
     return {
         "ok": len(errors) == 0,
