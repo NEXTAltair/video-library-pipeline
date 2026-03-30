@@ -93,7 +93,14 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           if (result.ok) {
             hashScanOk = true;
           } else {
-            hashScanError = `czkawka exited with code ${result.code}. stderr: ${result.stderr.slice(0, 500)}`;
+            hashScanError = [
+              `czkawka exited with code ${result.code}.`,
+              `stdout: ${result.stdout.slice(0, 500)}`,
+              `stderr: ${result.stderr.slice(0, 500)}`,
+              `winSourceRoot: ${drvfsToWindowsPath(String(cfg.sourceRoot || ""))}`,
+              `winDestRoot: ${drvfsToWindowsPath(String(cfg.destRoot || ""))}`,
+              `winTmpJsonPath: ${winTmpJsonPath}`,
+            ].join(" | ");
           }
         } catch (e: any) {
           hashScanError = String(e?.message || e);
