@@ -31,7 +31,7 @@ export function runCmdViaPwsh(
   opts?: { timeoutMs?: number },
 ): CmdResult {
   const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
-  const psCommand = `& ${[command, ...args].map(quote).join(" ")}`;
+  const psCommand = `& ${[command, ...args].map(quote).join(" ")}; exit $LASTEXITCODE`;
   const cp = spawnSync("pwsh.exe", ["-NoProfile", "-Command", psCommand], {
     encoding: "utf-8",
     timeout: opts?.timeoutMs,
