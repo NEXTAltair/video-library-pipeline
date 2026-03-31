@@ -86,7 +86,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
             drvfsToWindowsPath(String(cfg.windowsOpsRoot || "")),
           ].filter(Boolean);
           const quoteLit = (p: string) => p.replace(/'/g, "''");
-          const psCmd = `$r = @{}; ${checkPaths.map((p) => `$r['${quoteLit(p)}'] = (Test-Path -LiteralPath '${quoteLit(p)}' -ErrorAction SilentlyContinue)`).join("; ")}; $r | ConvertTo-Json -Compress`;
+          const psCmd = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $r = @{}; ${checkPaths.map((p) => `$r['${quoteLit(p)}'] = (Test-Path -LiteralPath '${quoteLit(p)}' -ErrorAction SilentlyContinue)`).join("; ")}; $r | ConvertTo-Json -Compress`;
           const pfCp = spawnSync(pwshResolved, ["-NoProfile", "-Command", psCmd], { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 });
           const accessible: Record<string, boolean> = {};
           const rawOut = pfCp.stdout?.trim() || "";
