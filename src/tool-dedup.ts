@@ -90,13 +90,18 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           ];
           const result = runCmdViaPwsh("windows_czkawka_cli", czkawkaArgs, { timeoutMs: 10 * 60 * 1000 });
           hashScanExitCode = result.code;
-          if (result.ok) {
+          // exit 1 = czkawka completed with warnings (e.g. some dirs unreadable)
+          // JSON may still have been written — check file existence before giving up
+          const jsonWritten = fs.existsSync(wslTmpJsonPath);
+          if (result.ok || (result.code === 1 && jsonWritten)) {
             hashScanOk = true;
+            if (result.code === 1) {
+              hashScanError = `czkawka exited with code 1 (partial scan — some directories could not be read).`;
+            }
           } else {
             hashScanError = [
               `czkawka exited with code ${result.code}.`,
-              `stdout: ${result.stdout.slice(0, 500)}`,
-              `stderr: ${result.stderr.slice(0, 500)}`,
+              `jsonWritten: ${jsonWritten}`,
               `winSourceRoot: ${drvfsToWindowsPath(String(cfg.sourceRoot || ""))}`,
               `winDestRoot: ${drvfsToWindowsPath(String(cfg.destRoot || ""))}`,
               `winTmpJsonPath: ${winTmpJsonPath}`,
