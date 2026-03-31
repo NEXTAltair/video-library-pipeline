@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, runCmdViaPwsh, toToolResult } from "./runtime";
+import { getExtensionRootDir, parseJsonObject, resolvePwsh, resolvePythonScript, runCmd, runCmdViaPwsh, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
@@ -85,7 +85,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           ].filter(Boolean);
           const quoteLit = (p: string) => p.replace(/'/g, "''");
           const psCmd = `$r = @{}; ${checkPaths.map((p) => `$r['${quoteLit(p)}'] = (Test-Path -LiteralPath '${quoteLit(p)}' -ErrorAction SilentlyContinue)`).join("; ")}; $r | ConvertTo-Json -Compress`;
-          const pfCp = spawnSync("pwsh.exe", ["-NoProfile", "-Command", psCmd], { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 });
+          const pfCp = spawnSync(resolvePwsh(), ["-NoProfile", "-Command", psCmd], { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 });
           const pfResult = { stdout: pfCp.stdout ?? "", stderr: pfCp.stderr ?? "", code: pfCp.status ?? -1 };
           const accessible: Record<string, boolean> = {};
           if (pfResult.stdout?.trim()) {

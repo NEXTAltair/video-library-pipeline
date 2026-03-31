@@ -24,15 +24,38 @@ export function runCmd(command: string, args: string[], cwd?: string): CmdResult
   };
 }
 
+// Openclaw の実行コンテキストでは Windows PATH が継承されないため
+// pwsh.exe をフルパスで解決する。
+const PWSH_CANDIDATES = [
+  "/mnt/c/Program Files/PowerShell/7/pwsh.exe",
+  "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+];
+
+export function resolvePwsh(): string {
+  // PATH に pwsh.exe があればそれを使う
+  const pathVar = process.env.PATH || "";
+  for (const dir of pathVar.split(path.delimiter)) {
+    if (!dir) continue;
+    const p = path.join(dir, "pwsh.exe");
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* continue */ }
+  }
+  // フォールバック: 既知のインストール先
+  for (const p of PWSH_CANDIDATES) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* continue */ }
+  }
+  return "pwsh.exe"; // 最終フォールバック
+}
+
 // PowerShell 経由でコマンドを実行する。Windows ネイティブバイナリの呼び出しに使用。
 export function runCmdViaPwsh(
   command: string,
   args: string[],
   opts?: { timeoutMs?: number },
 ): CmdResult {
+  const pwsh = resolvePwsh();
   const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
   const psCommand = `& ${[command, ...args].map(quote).join(" ")}; exit $LASTEXITCODE`;
-  const cp = spawnSync("pwsh.exe", ["-NoProfile", "-Command", psCommand], {
+  const cp = spawnSync(pwsh, ["-NoProfile", "-Command", psCommand], {
     encoding: "utf-8",
     timeout: opts?.timeoutMs,
     maxBuffer: 32 * 1024 * 1024,
