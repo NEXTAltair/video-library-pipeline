@@ -76,7 +76,9 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         const wslTmpJsonPath = path.join(String(cfg.windowsOpsRoot || ""), `dedup_hash_${ts}.json`);
 
         // --- プリフライト: PowerShell 経由でパスアクセシビリティを確認 ---
-        let preflightResult: { accessible: Record<string, boolean>; stdout?: string | null; stderr?: string | null; exitCode?: number; error?: string } | null = null;
+        // --- プリフライト: PowerShell 経由でパスアクセシビリティを確認 ---
+        const pwshResolved = resolvePwsh();
+        let preflightResult: { pwshPath: string; accessible: Record<string, boolean>; stdout?: string | null; stderr?: string | null; exitCode?: number; spawnError?: string | null; error?: string } | null = null;
         try {
           const checkPaths = [
             drvfsToWindowsPath(String(cfg.sourceRoot || "")),
@@ -85,20 +87,27 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           ].filter(Boolean);
           const quoteLit = (p: string) => p.replace(/'/g, "''");
           const psCmd = `$r = @{}; ${checkPaths.map((p) => `$r['${quoteLit(p)}'] = (Test-Path -LiteralPath '${quoteLit(p)}' -ErrorAction SilentlyContinue)`).join("; ")}; $r | ConvertTo-Json -Compress`;
-          const pfCp = spawnSync(resolvePwsh(), ["-NoProfile", "-Command", psCmd], { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 });
-          const pfResult = { stdout: pfCp.stdout ?? "", stderr: pfCp.stderr ?? "", code: pfCp.status ?? -1 };
+          const pfCp = spawnSync(pwshResolved, ["-NoProfile", "-Command", psCmd], { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 });
           const accessible: Record<string, boolean> = {};
-          if (pfResult.stdout?.trim()) {
+          const rawOut = pfCp.stdout?.trim() || "";
+          if (rawOut) {
             try {
-              const parsed = JSON.parse(pfResult.stdout.trim());
+              const parsed = JSON.parse(rawOut);
               for (const [k, v] of Object.entries(parsed)) accessible[k] = !!v;
             } catch {
               // ignore parse error
             }
           }
-          preflightResult = { accessible, stdout: pfResult.stdout?.trim() || null, stderr: pfResult.stderr?.trim() || null, exitCode: pfResult.code };
+          preflightResult = {
+            pwshPath: pwshResolved,
+            accessible,
+            stdout: rawOut || null,
+            stderr: pfCp.stderr?.trim() || null,
+            exitCode: pfCp.status ?? -1,
+            spawnError: pfCp.error ? String((pfCp.error as any).message || pfCp.error) : null,
+          };
         } catch (e: any) {
-          preflightResult = { accessible: {}, error: String(e?.message || e) };
+          preflightResult = { pwshPath: pwshResolved, accessible: {}, error: String(e?.message || e) };
         }
 
         let hashScanOk = false;
