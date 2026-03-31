@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, runCmdViaPwsh, toToolResult } from "./runtime";
 import type { AnyObj } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
@@ -73,6 +74,32 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
         const winOpsRoot = drvfsToWindowsPath(String(cfg.windowsOpsRoot || ""));
         const winTmpJsonPath = `${winOpsRoot}\\dedup_hash_${ts}.json`;
         const wslTmpJsonPath = path.join(String(cfg.windowsOpsRoot || ""), `dedup_hash_${ts}.json`);
+
+        // --- プリフライト: PowerShell 経由でパスアクセシビリティを確認 ---
+        let preflightResult: { accessible: Record<string, boolean>; stdout?: string | null; stderr?: string | null; exitCode?: number; error?: string } | null = null;
+        try {
+          const checkPaths = [
+            drvfsToWindowsPath(String(cfg.sourceRoot || "")),
+            drvfsToWindowsPath(String(cfg.destRoot || "")),
+            drvfsToWindowsPath(String(cfg.windowsOpsRoot || "")),
+          ].filter(Boolean);
+          const quoteLit = (p: string) => p.replace(/'/g, "''");
+          const psCmd = `$r = @{}; ${checkPaths.map((p) => `$r['${quoteLit(p)}'] = (Test-Path -LiteralPath '${quoteLit(p)}' -ErrorAction SilentlyContinue)`).join("; ")}; $r | ConvertTo-Json -Compress`;
+          const pfCp = spawnSync("pwsh.exe", ["-NoProfile", "-Command", psCmd], { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 });
+          const pfResult = { stdout: pfCp.stdout ?? "", stderr: pfCp.stderr ?? "", code: pfCp.status ?? -1 };
+          const accessible: Record<string, boolean> = {};
+          if (pfResult.stdout?.trim()) {
+            try {
+              const parsed = JSON.parse(pfResult.stdout.trim());
+              for (const [k, v] of Object.entries(parsed)) accessible[k] = !!v;
+            } catch {
+              // ignore parse error
+            }
+          }
+          preflightResult = { accessible, stdout: pfResult.stdout?.trim() || null, stderr: pfResult.stderr?.trim() || null, exitCode: pfResult.code };
+        } catch (e: any) {
+          preflightResult = { accessible: {}, error: String(e?.message || e) };
+        }
 
         let hashScanOk = false;
         let hashScanExitCode: number | null = null;
@@ -161,6 +188,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
             wslTmpJsonPath: hashScanOk ? wslTmpJsonPath : null,
             rawJsonPath: hashRawJsonPath || null,
             error: hashScanError ?? null,
+            preflight: preflightResult,
           },
           scriptsProvision: {
             created: scriptsProvision.created,
