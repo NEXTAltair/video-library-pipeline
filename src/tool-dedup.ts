@@ -173,6 +173,20 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
           args.push("--max-groups", String(Math.trunc(params.maxGroups)));
         }
 
+        // Python 実行前に compact JSON の先頭 512 bytes をキャプチャ（フォーマット診断用）
+        let hashScanJsonPreview: string | null = null;
+        if (hashScanOk && fs.existsSync(wslTmpJsonPath)) {
+          try {
+            const buf = Buffer.alloc(512);
+            const fd = fs.openSync(wslTmpJsonPath, "r");
+            const bytesRead = fs.readSync(fd, buf, 0, 512, 0);
+            fs.closeSync(fd);
+            hashScanJsonPreview = buf.slice(0, bytesRead).toString("utf-8");
+          } catch {
+            // ignore
+          }
+        }
+
         const r = runCmd("uv", args, resolved.cwd);
 
         // 一時 JSON を削除
@@ -198,6 +212,7 @@ export function registerToolDedup(api: any, getCfg: (api: any) => any) {
             rawJsonPath: hashRawJsonPath || null,
             error: hashScanError ?? null,
             preflight: preflightResult,
+            jsonPreview: hashScanJsonPreview,
           },
           scriptsProvision: {
             created: scriptsProvision.created,
