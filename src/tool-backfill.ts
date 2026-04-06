@@ -1,9 +1,9 @@
 import path from "node:path";
 import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
-export function registerToolBackfill(api: any, getCfg: (api: any) => any) {
+export function registerToolBackfill(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_backfill_moved_files",

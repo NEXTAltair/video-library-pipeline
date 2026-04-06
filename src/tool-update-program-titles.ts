@@ -1,7 +1,7 @@
 import { resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
-export function registerToolUpdateProgramTitles(api: any, getCfg: (api: any) => any) {
+export function registerToolUpdateProgramTitles(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_update_program_titles",

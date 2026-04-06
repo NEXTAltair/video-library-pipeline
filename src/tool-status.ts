@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, latestJsonlFile, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
-export function registerToolStatus(api: any, getCfg: (api: any) => any) {
+export function registerToolStatus(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_status",

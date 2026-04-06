@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, parseJsonObject, runCmd } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 const TARGET_TOOL = "video_pipeline_analyze_and_move_videos";
@@ -317,7 +317,7 @@ function buildCalibrePromptNudge(): string {
   ].join("\n");
 }
 
-export function registerPluginHooks(api: any, getCfg: (api: any) => AnyObj) {
+export function registerPluginHooks(api: PluginApi, getCfg: GetCfgFn) {
   api.on("before_prompt_build", (event: AnyObj, ctx: AnyObj) => {
     const prompt = typeof event?.prompt === "string" ? event.prompt : "";
     const messages = Array.isArray(event?.messages) ? event.messages : [];

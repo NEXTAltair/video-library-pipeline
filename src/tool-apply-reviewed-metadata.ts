@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { byProgramGroupFromPath, chooseSourceJsonl, getExtensionRootDir, latestJsonlFile, looksSwallowedProgramTitle, lowerCompact, resolvePythonScript, runCmd, sha256Short, toToolResult, tsCompact, tsCompactMs } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
 function isRawExtractOutputJsonl(p: string): boolean {
   const base = path.basename(p);
@@ -307,7 +307,7 @@ function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, str
   return { editedRows, changedRowsCount, retitledRowsCount, reviewClearedRowsCount };
 }
 
-export function registerToolApplyReviewedMetadata(api: any, getCfg: (api: any) => any) {
+export function registerToolApplyReviewedMetadata(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_apply_reviewed_metadata",

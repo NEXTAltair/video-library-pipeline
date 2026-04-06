@@ -1,8 +1,8 @@
 import { toToolResult } from "./runtime";
 import { runIngestEpg } from "./core-ingest-epg";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
-export function registerToolIngestEpg(api: any, getCfg: (api: any) => any) {
+export function registerToolIngestEpg(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_ingest_epg",

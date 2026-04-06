@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { getExtensionRootDir, parseJsonObject, resolvePwsh, resolvePythonScript, runCmd, runCmdViaPwsh, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 
@@ -30,7 +30,7 @@ function findLatestRawJson(outputRoot: string, prefix: string): string {
   return files[0] || "";
 }
 
-export function registerToolDedup(api: any, getCfg: (api: any) => any) {
+export function registerToolDedup(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_dedup_recordings",

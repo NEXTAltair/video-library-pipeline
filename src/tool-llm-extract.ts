@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { lowerCompact, resolvePythonScript, runCmd, sha256Short, toToolResult, tsCompactMs } from "./runtime";
 import { buildReviewDiagnostics, buildYaml, type CohortMeta, readJsonlRows } from "./tool-export-program-yaml";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
 function generateReviewYaml(sourceJsonlPath: string, outDir: string, rows: AnyObj[]): { yamlPath: string | null; error?: string } {
   try {
@@ -42,7 +42,7 @@ function generateReviewYaml(sourceJsonlPath: string, outDir: string, rows: AnyOb
   }
 }
 
-export function registerToolLlmExtract(api: any, getCfg: (api: any) => any) {
+export function registerToolLlmExtract(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_apply_llm_extract_output",

@@ -1,8 +1,8 @@
 import { parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
-export function registerToolDedupDropReview(api: any, getCfg: (api: any) => any) {
+export function registerToolDedupDropReview(api: PluginApi, getCfg: GetCfgFn) {
   // --- Generate YAML ---
   api.registerTool(
     {

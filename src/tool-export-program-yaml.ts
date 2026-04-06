@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { byProgramGroupFromPath, chooseSourceJsonl, looksSwallowedProgramTitle, lowerCompact, sha256Short, toToolResult, tsCompactMs } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
 type ProgramStat = {
   canonicalTitle: string;
@@ -251,7 +251,7 @@ export function buildYaml(
   return `${lines.join("\n")}\n`;
 }
 
-export function registerToolExportProgramYaml(api: any, getCfg: (api: any) => any) {
+export function registerToolExportProgramYaml(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_export_program_yaml",

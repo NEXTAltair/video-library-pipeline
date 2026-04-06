@@ -1,8 +1,9 @@
 import path from "node:path";
 import { latestJsonlFile } from "./runtime";
 import { runIngestEpg } from "./core-ingest-epg";
+import type { PluginApi, GetCfgFn } from "./types";
 
-export function registerCli(api: any, pluginId: string, getCfg: (api: any) => any) {
+export function registerCli(api: PluginApi, pluginId: string, getCfg: GetCfgFn) {
   // CLI補助コマンド: 現在の plugin config を確認する。
   api.registerCli?.(
     ({ program }: any) => {
@@ -47,6 +48,11 @@ export function registerCli(api: any, pluginId: string, getCfg: (api: any) => an
           process.exitCode = result.ok ? 0 : 1;
         });
     },
-    { commands: ["video-pipeline-status", "video-pipeline-ingest-epg"] },
+    {
+      descriptors: [
+        { name: "video-pipeline-status", description: "Show configured video-library-pipeline plugin values", hasSubcommands: false },
+        { name: "video-pipeline-ingest-epg", description: "Ingest EDCB .program.txt EPG data into DB", hasSubcommands: false },
+      ],
+    },
   );
 }

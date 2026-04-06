@@ -1,7 +1,7 @@
 import { parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
-export function registerToolDetectRebroadcasts(api: any, getCfg: (api: any) => any) {
+export function registerToolDetectRebroadcasts(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_detect_rebroadcasts",

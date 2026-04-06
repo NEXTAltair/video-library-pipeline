@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, latestJsonlFile, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 function parseLastJsonObjectLine(input: unknown): AnyObj | null {
@@ -37,7 +37,7 @@ function parseReextractStats(stdout: string): { processed?: number; batches?: nu
   return out;
 }
 
-export function registerToolPrepareRelocateMetadata(api: any, getCfg: (api: any) => any) {
+export function registerToolPrepareRelocateMetadata(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_prepare_relocate_metadata",

@@ -1,8 +1,8 @@
 import path from "node:path";
 import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
-export function registerToolDedupBroadcasterReview(api: any, getCfg: (api: any) => any) {
+export function registerToolDedupBroadcasterReview(api: PluginApi, getCfg: GetCfgFn) {
   // --- Generate YAML ---
   api.registerTool(
     {

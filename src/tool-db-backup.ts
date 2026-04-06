@@ -1,7 +1,7 @@
 import { parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
-export function registerToolDbBackup(api: any, getCfg: (api: any) => any) {
+export function registerToolDbBackup(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_db_backup",
@@ -66,7 +66,7 @@ export function registerToolDbBackup(api: any, getCfg: (api: any) => any) {
   );
 }
 
-export function registerToolDbRestore(api: any, getCfg: (api: any) => any) {
+export function registerToolDbRestore(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_db_restore",

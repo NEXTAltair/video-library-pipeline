@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
 function ensureDefaultQueueFile(queuePath: string): { created: boolean; error?: string } {
   try {
@@ -63,7 +63,7 @@ export function buildLlmExtractTask(inputJsonlPath: string, outputJsonlPath: str
   ].join("\n");
 }
 
-export function registerToolReextract(api: any, getCfg: (api: any) => any) {
+export function registerToolReextract(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_reextract",

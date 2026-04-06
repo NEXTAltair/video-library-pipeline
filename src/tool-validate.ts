@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
 const NEXT_STEP_HINTS: Record<string, string> = {
@@ -15,7 +15,7 @@ const NEXT_STEP_HINTS: Record<string, string> = {
     "Validation passed. Immediately call video_pipeline_reextract using the queuePath from the previous inventory stage.",
 };
 
-export function registerToolValidate(api: any, getCfg: (api: any) => any) {
+export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_validate",

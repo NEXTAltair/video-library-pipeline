@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, toToolResult } from "./runtime";
 import { buildLlmExtractTask } from "./tool-reextract";
+import type { PluginApi, GetCfgFn } from "./types";
 
 interface BatchInfo {
   inputPath: string;
@@ -21,7 +22,7 @@ function countJsonlLines(filePath: string): number {
     }).length;
 }
 
-export function registerToolLlmExtractStatus(api: any, getCfg: (api: any) => any) {
+export function registerToolLlmExtractStatus(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_llm_extract_status",

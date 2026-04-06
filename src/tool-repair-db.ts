@@ -1,7 +1,7 @@
 import { resolvePythonScript, runCmd, toToolResult } from "./runtime";
-import type { AnyObj } from "./types";
+import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
-export function registerToolRepairDb(api: any, getCfg: (api: any) => any) {
+export function registerToolRepairDb(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
       name: "video_pipeline_repair_db",
