@@ -192,6 +192,8 @@ flowchart TD
     style S2_DB fill:#1565c0,color:#fff
 ```
 
+`video_pipeline_analyze_and_move_videos` の dry-run は、`queue_unwatched_batch_*.jsonl` 生成後に内部で rule-based `reextract` まで進む。レビューが必要な抽出結果が残った場合は、`program_aliases_review_*.yaml` を自動生成し、結果JSONに `reviewYamlPath` / `reviewYamlPaths` を返す。手動で `video_pipeline_reextract` を呼ぶのは、既存キューを個別再処理したい場合の補助フロー。
+
 ---
 
 ## 4. Relocateフロー
@@ -319,6 +321,8 @@ sourceRoot (未視聴フォルダ) のファイルを棚卸し、メタデータ
 | `allowNeedsReview` | boolean | `needs_review=true`のファイルも移動対象に含める (default: false)              |
 
 内部で `unwatched_pipeline_runner.py` を実行し、`drive_routes.yaml` に基づくジャンルルーティングを適用する。
+
+dry-run (`apply=false`) 時は inventory → queue生成 → rule-based `reextract` → move plan まで一括で実行する。`reextract` 結果に `needs_review` 行が残った場合は、`llm/` 配下に `program_aliases_review_*.yaml` を自動生成し、結果JSONに `reviewYamlPath` / `reviewYamlPaths` / `reviewSummary` を含める。この分岐では `followUpToolCalls` は `video_pipeline_apply_reviewed_metadata` を案内し、追加の `reextract` 呼び出しは不要。
 
 ---
 
@@ -543,6 +547,8 @@ flowchart TD
     RELOC_QUEUE --> OUTPUT
     DB --> RELOC_PLAN --> RELOC_APPLY
 ```
+
+未視聴フロー (`video_pipeline_analyze_and_move_videos`) では、dry-run 実行中に `QUEUE -> OUTPUT -> YAML` まで自動で進む。`reviewSummary.rowsNeedingReview > 0` の場合だけ `program_aliases_review_*.yaml` が生成され、生成パスは tool/script の戻り値から参照する。
 
 ### windowsOpsRoot ディレクトリ構成
 
