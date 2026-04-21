@@ -118,3 +118,18 @@ def test_export_review_yaml_artifacts_reports_export_failure(tmp_path) -> None:
 
     assert result["ok"] is False
     assert result["error"] == f"failed to export review YAML for {batch}"
+
+
+def test_export_review_yaml_artifacts_reports_runner_exception(tmp_path) -> None:
+    batch = tmp_path / "llm_filename_extract_output_0001_0013.jsonl"
+    batch.write_text("", encoding="utf-8")
+
+    def fake_runner(script: Path, args: list[str], cwd: str | None = None) -> str:
+        raise RuntimeError("python failed rc=1: export_program_yaml.py")
+
+    result = export_review_yaml_artifacts([str(batch)], tmp_path / "export_program_yaml.py", cwd=str(tmp_path), runner=fake_runner)
+
+    assert result["ok"] is False
+    assert result["error"] == f"failed to export review YAML for {batch}"
+    assert result["exception"] == "python failed rc=1: export_program_yaml.py"
+    assert result["raw"] is None

@@ -112,15 +112,25 @@ def export_review_yaml_artifacts(
     review_candidates_truncated = False
 
     for output_jsonl_path in output_jsonl_paths:
-        raw = runner(
-            export_script,
-            [
-                "--source-jsonl",
-                output_jsonl_path,
-                "--only-if-reviewable",
-            ],
-            cwd,
-        )
+        try:
+            raw = runner(
+                export_script,
+                [
+                    "--source-jsonl",
+                    output_jsonl_path,
+                    "--only-if-reviewable",
+                ],
+                cwd,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"failed to export review YAML for {output_jsonl_path}",
+                "sourceJsonlPath": output_jsonl_path,
+                "raw": None,
+                "parsed": None,
+                "exception": str(exc),
+            }
         parsed = parse_last_json_object_line(raw)
         if not isinstance(parsed, dict) or parsed.get("ok") is not True:
             return {
