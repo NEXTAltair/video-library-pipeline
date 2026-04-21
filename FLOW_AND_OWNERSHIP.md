@@ -5,14 +5,15 @@
 
 ## 1) レイヤー責務
 
-- **TypeScript ツール層** (`src/*.ts`)
-  - プラグイン設定を検証（fail-fast）
-  - 実行時設定を1つの正規形に解決
-  - 明示的な引数で Python ランナーを起動
-- **Python オーケストレーション層** (`py/*.py`)
-  - パイプラインの各ステージをエンドツーエンドで実行
-  - DB のアップサート・照合とアーティファクト生成を担当
-  - 実行サマリーを出力
+- **TypeScript プラグイン / ツール層** (`src/plugin/*.ts`, `src/tools/*.ts`)
+  - Openclaw plugin 登録、CLI、tool adapter を担当
+  - Python ランナーへ明示的な引数を渡す境界
+- **TypeScript プラットフォーム / コア層** (`src/platform/*.ts`, `src/core/*.ts`, `src/contracts/*.ts`)
+  - 設定解決、共通ランタイム、スクリプト同期、共通型を担当
+- **Python オーケストレーション層**
+  - `py/*.py`: 実行エントリポイントと後方互換ラッパー
+  - `py/video_pipeline/domain|db|platform/*.py`: 共有ロジック本体
+  - パイプラインの各ステージをエンドツーエンドで実行し、DB のアップサート・照合とアーティファクト生成を担当
 - **Windows PowerShell 層** (`<windowsOpsRoot>/scripts/*.ps1`)
   - Windows ファイルシステムの変更・列挙を担当
   - 移動・インベントリの生のエビデンスを出力
@@ -93,7 +94,7 @@
    - `video_pipeline_relocate_existing_files`（dry-run/apply）を実行
    - DB メタデータと現在の配置ルールに基づき既存ファイルを物理移動
 6. `video_pipeline_analyze_and_move_videos` を実行
-7. `src/tool-run.ts` が起動:
+7. `src/tools/tool-run.ts` が起動:
    - `uv run python py/unwatched_pipeline_runner.py --db ... --source-root ... --dest-root ... --windows-ops-root ... --max-files-per-run ... --drive-routes ... [--apply] [--allow-needs-review]`
 8. ランナーが `db/move/llm` を準備する
 9. ランナーが PowerShell 経由でインベントリをスナップショット（ファイル列挙 + ハッシュ生成）
@@ -121,7 +122,7 @@
 - マルチドライブルーティングの情報源: `<plugin-root>/rules/drive_routes.yaml`
 - バックフィルルートの情報源: `<plugin-root>/rules/backfill_roots.yaml`
 - スクリプトテンプレートの情報源:
-  - 優先: `<windowsOpsRoot>/templates/windows-scripts/*.ps1`
+  - 優先: `<plugin-root>/templates/windows-scripts/*.ps1`
   - フォールバック: `<plugin-root>/assets/windows-scripts/*.ps1`
 - DB 状態: `<windowsOpsRoot>/db/mediaops.sqlite`
 - 生エビデンス: `<windowsOpsRoot>/move/*.jsonl`, `<windowsOpsRoot>/llm/*.jsonl`
@@ -132,6 +133,7 @@
 - 長パス対応のファイルアクセスには WSL ファイル I/O より pwsh7 ヘルパーを優先する
 - TS→Python の引数名はランナーの CLI 引数と完全に一致させる
 - ヒントはオプションの補助入力として扱い、主たる抽出エンジンにしない
+- `src/*.ts` と `py/*.py` の互換ラッパーには新規ロジックを追加しない
 
 ## data_json v2
 - Added `genre`, `franchise`, `source_history` fields to metadata payloads.

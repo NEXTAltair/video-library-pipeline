@@ -30,7 +30,7 @@ For current behavior, prefer these files:
 - `skills/SKILL.md` (agent-facing scope and semantics)
 - `FLOW_AND_OWNERSHIP.md` (runtime flow)
 - `DEPENDENCIES.md` (runtime prerequisites)
-- `src/tool-definitions.ts` (current tool schema)
+- `index.ts`, `src/tools/tool-backfill.ts` (current tool registration / adapter)
 - `py/backfill_moved_files.py` (actual logic)
 
 Use the sections below for:
