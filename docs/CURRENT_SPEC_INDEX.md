@@ -58,6 +58,9 @@
   - トップレベルオーケストレータスキル
   - インテントマッピング（自然言語 → ツールフロー）
   - エージェントガードレール（ツール/スキル混同禁止、シェルフォールバック禁止）
+- `docs/adr/0001-plugin-sdk-testing.md`
+  - OpenClaw SDK testing に沿ったプラグインテスト方針
+  - Vitest と pytest の責務分担、runtime mock、import discipline
 - `skills/inventory-review/SKILL.md`
   - sourceRoot パイプライン ステージ1（棚卸 + キュー生成 + レビューゲート）
 - `skills/extract-review/SKILL.md`

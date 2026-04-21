@@ -413,6 +413,8 @@ relocateフロー専用の複合オーケストレーター。内部で relocate
 
 **安全機構:** apply前に自動DBバックアップ + ローテーション (最新10世代)。
 
+YAML適用時は、canonical title が確認できていて `needs_review_reason` がタイトル系理由のみの場合、実際の retitle が発生しなくても `needs_review=false` へ自動復旧する。過去バグ由来の残留フラグは `video_pipeline_repair_db` の `action: "clear_review_flags"` で後追い修復できる。
+
 ---
 
 #### `video_pipeline_apply_llm_extract_output` — LLM抽出結果統合
@@ -481,7 +483,7 @@ video-library-pipeline (本プラグイン)
 | `video_pipeline_normalize_folder_case`      | フォルダ名の大文字小文字ケース正規化 (Windows互換)       | `apply`, `roots`                   |
 | `video_pipeline_llm_extract_status`         | LLM抽出バッチの完了状態確認・リトライ指示                | —                                   |
 | `video_pipeline_db_backup` / `db_restore` | DBスナップショットの作成・復元                           | `action`, `descriptor`, `keep` |
-| `video_pipeline_repair_db`                  | paths テーブルの drive/dir/name 分解値を path から再生成 | —                                   |
+| `video_pipeline_repair_db`                  | DB補修。`repair_paths` で paths 分解値を再生成、`clear_review_flags` で human_reviewed の残留 `needs_review` を解除 | `action`, `dryRun`, `limit`         |
 | `video_pipeline_logs`                       | 監査ログ (events テーブル) の参照                        | —                                   |
 
 ---
@@ -964,6 +966,8 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 1. **生ファイル名拒否ゲート**: `llm_filename_extract_output_NNNN_NNNN.jsonl` 形式の生抽出ファイルは `markHumanReviewed=true` 時に無条件で拒否。`allowNoContentChanges` でもバイパス不可。レビュー済みコピーの使用を強制する。
 2. **内容変更チェックゲート**: レビュー済みJSONLとベースライン抽出出力を比較し、変更が0行の場合は拒否。`allowNoContentChanges=true` で合法的にバイパス可能だが、疑似タイトル (`program_title` にサブタイトル区切り文字 ▽/▼ が混入) や `needs_review=true` のレコードが残存する場合はバイパス不可。
+
+補足: YAML apply は canonical title が既に source JSONL 側へ反映済みでも、タイトル系理由しか残っていない stale `needs_review` を自動で解除する。既存DBに残っている過去分は `video_pipeline_repair_db` + `action: "clear_review_flags"` で dry-run/apply 補修する。
 
 ### dry-run/apply パターン
 

@@ -4,6 +4,18 @@ import path from "node:path";
 import { byProgramGroupFromPath, chooseSourceJsonl, getExtensionRootDir, latestJsonlFile, looksSwallowedProgramTitle, lowerCompact, resolvePythonScript, runCmd, sha256Short, toToolResult, tsCompact, tsCompactMs } from "./runtime";
 import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 
+const SUBTITLE_SEPARATORS = /[▽▼◇「]/;
+export const TITLE_RELATED_REASONS = new Set([
+  "needs_review_flagged",
+  "program_title_may_include_description",
+  "suspicious_program_title",
+  "relocate_suspicious_program_title",
+  "suspicious_program_title_shortened",
+  "relocate_suspicious_program_title_shortened",
+  "subtitle_separator_in_program_title",
+  "relocate_subtitle_separator_in_program_title",
+]);
+
 function isRawExtractOutputJsonl(p: string): boolean {
   const base = path.basename(p);
   return /^llm_filename_extract_output_\d{4}_\d{4}\.jsonl$/i.test(base);
@@ -39,6 +51,31 @@ function looksSwallowedProgramTitleInRow(row: AnyObj): boolean {
   return looksSwallowedProgramTitle(programTitle, folderTitle);
 }
 
+function looksShortenedProgramTitleInRow(row: AnyObj): boolean {
+  const programTitle = typeof row.program_title === "string" ? row.program_title.trim() : "";
+  const folderTitle = byProgramGroupFromPath(typeof row.path === "string" ? row.path : undefined);
+  if (!programTitle || !folderTitle) return false;
+  const programNorm = lowerCompact(programTitle);
+  const folderNorm = lowerCompact(folderTitle);
+  if (!programNorm || !folderNorm || programNorm === folderNorm) return false;
+  return folderNorm.startsWith(programNorm) && folderNorm.length >= programNorm.length + 3;
+}
+
+export function hasOnlyTitleRelatedReviewReasons(reasonValue: unknown): boolean {
+  const parts = String(reasonValue || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.every((part) => TITLE_RELATED_REASONS.has(part));
+}
+
+export function hasSuspiciousProgramTitleInRow(row: AnyObj): boolean {
+  const programTitle = typeof row.program_title === "string" ? row.program_title : "";
+  return SUBTITLE_SEPARATORS.test(programTitle)
+    || looksSwallowedProgramTitleInRow(row)
+    || looksShortenedProgramTitleInRow(row);
+}
+
 function readComparableRows(sourcePath: string): { rows: AnyObj[]; parseErrors: number } {
   const out: AnyObj[] = [];
   let parseErrors = 0;
@@ -68,7 +105,7 @@ function summarizeReviewRisk(rows: AnyObj[]): {
   let suspiciousProgramTitleRows = 0;
   for (const row of rows) {
     if (row && row.needs_review === true) needsReviewRows += 1;
-    if (looksSwallowedProgramTitleInRow(row)) suspiciousProgramTitleRows += 1;
+    if (hasSuspiciousProgramTitleInRow(row)) suspiciousProgramTitleRows += 1;
   }
   return { rows: rows.length, needsReviewRows, suspiciousProgramTitleRows };
 }
@@ -236,11 +273,12 @@ function parseAliasMappingsFromYaml(yamlPath: string): {
   return { sourceJsonlPath, aliasToCanonical, cohort: hasCohort ? cohort : undefined };
 }
 
-function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, string>): {
+export function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, string>): {
   editedRows: AnyObj[];
   changedRowsCount: number;
   retitledRowsCount: number;
   reviewClearedRowsCount: number;
+  staleReviewFlagsClearedWithoutRetitle: number;
 } {
   // canonical titles の逆引きリストを構築 (prefix マッチ用)
   const canonicalSet = new Set(aliasToCanonical.values());
@@ -255,9 +293,11 @@ function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, str
   let changedRowsCount = 0;
   let retitledRowsCount = 0;
   let reviewClearedRowsCount = 0;
+  let staleReviewFlagsClearedWithoutRetitle = 0;
   for (const row of rows) {
     const next: AnyObj = { ...row };
     let changed = false;
+    let retitled = false;
     const beforeTitle = typeof row.program_title === "string" ? row.program_title.trim() : "";
     let canonical = beforeTitle ? aliasToCanonical.get(lowerCompact(beforeTitle)) : undefined;
 
@@ -275,36 +315,30 @@ function applyYamlReviewToRows(rows: AnyObj[], aliasToCanonical: Map<string, str
     if (canonical && canonical !== beforeTitle) {
       next.program_title = canonical;
       retitledRowsCount += 1;
+      retitled = true;
       changed = true;
     }
-    // needs_review をクリアするのはタイトルが実際に修正された場合のみ
-    // かつ、タイトル以外の理由（missing_air_date 等）が残っていない場合のみ
-    if (canonical && canonical !== beforeTitle && next.needs_review === true) {
-      const reason = typeof next.needs_review_reason === "string" ? next.needs_review_reason.trim() : "";
-      // Sync: py/path_placement_rules.py TITLE_RELATED_REASONS
-      const titleRelatedReasons = [
-        "needs_review_flagged",
-        "program_title_may_include_description",
-        // 抽出側 (relocate_ なし) と relocate 側 (relocate_ 付き) の両方を網羅
-        "suspicious_program_title",
-        "relocate_suspicious_program_title",
-        "suspicious_program_title_shortened",
-        "relocate_suspicious_program_title_shortened",
-        "subtitle_separator_in_program_title",
-        "relocate_subtitle_separator_in_program_title",
-      ];
-      const remainingReasons = reason.split(",").map((r: string) => r.trim()).filter((r: string) => r && !titleRelatedReasons.includes(r));
-      if (remainingReasons.length === 0) {
+    // canonical title が確認でき、タイトル系理由だけが残っていて、
+    // 現在の program_title が安全になった場合のみ needs_review を解除する。
+    if (canonical && next.needs_review === true && hasOnlyTitleRelatedReviewReasons(next.needs_review_reason)) {
+      if (!hasSuspiciousProgramTitleInRow(next)) {
         next.needs_review = false;
         next.needs_review_reason = "";
         reviewClearedRowsCount += 1;
+        if (!retitled) staleReviewFlagsClearedWithoutRetitle += 1;
         changed = true;
       }
     }
     if (changed) changedRowsCount += 1;
     editedRows.push(next);
   }
-  return { editedRows, changedRowsCount, retitledRowsCount, reviewClearedRowsCount };
+  return {
+    editedRows,
+    changedRowsCount,
+    retitledRowsCount,
+    reviewClearedRowsCount,
+    staleReviewFlagsClearedWithoutRetitle,
+  };
 }
 
 export function registerToolApplyReviewedMetadata(api: PluginApi, getCfg: GetCfgFn) {
@@ -615,6 +649,7 @@ export function registerToolApplyReviewedMetadata(api: PluginApi, getCfg: GetCfg
             : null,
           retitledRowsCount: yamlDerived?.retitledRowsCount ?? 0,
           reviewClearedRowsCount: yamlDerived?.reviewClearedRowsCount ?? 0,
+          staleReviewFlagsClearedWithoutRetitle: yamlDerived?.staleReviewFlagsClearedWithoutRetitle ?? 0,
         } : null;
 
         // --- Write review manifest for downstream cohort tracking ---
@@ -692,6 +727,7 @@ export function registerToolApplyReviewedMetadata(api: PluginApi, getCfg: GetCfg
           sourceIsYaml,
           yamlAliasCount,
           yamlReviewApplied: yamlDerived,
+          staleReviewFlagsClearedWithoutRetitle: yamlDerived?.staleReviewFlagsClearedWithoutRetitle ?? 0,
           sourceLooksRawExtractionOutput,
           reviewBaselinePath,
           reviewBaselineExists,
