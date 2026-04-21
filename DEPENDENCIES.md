@@ -7,8 +7,9 @@
 ## スコープ
 
 - プラグインパッケージ: `extensions/video-library-pipeline`
-- ツールエントリポイント: `src/tool-run.ts`, `src/tool-backfill.ts`, `src/tool-relocate.ts`, `src/tool-dedup.ts`, `src/tool-status.ts`, `src/tool-validate.ts`, `src/tool-reextract.ts`, `src/tool-ingest-epg.ts`, `src/tool-detect-rebroadcasts.ts`
+- ツールエントリポイント: `src/tools/tool-run.ts`, `src/tools/tool-backfill.ts`, `src/tools/tool-relocate.ts`, `src/tools/tool-dedup.ts`, `src/tools/tool-status.ts`, `src/tools/tool-validate.ts`, `src/tools/tool-reextract.ts`, `src/tools/tool-ingest-epg.ts`, `src/tools/tool-detect-rebroadcasts.ts`
 - Python オーケストレーション: `py/unwatched_pipeline_runner.py`, `py/backfill_moved_files.py`, `py/relocate_existing_files.py`, `py/dedup_recordings.py`, `py/run_metadata_batches_promptv1.py`, `py/ingest_program_txt.py`, `py/detect_rebroadcasts.py`
+- Python 共有ロジック: `py/video_pipeline/domain/*.py`, `py/video_pipeline/db/*.py`, `py/video_pipeline/platform/*.py`
 - Windows 操作: `<windowsOpsRoot>/scripts` 配下のスクリプト
 
 ## プラグイン設定コントラクト
@@ -54,7 +55,7 @@
 
 ## Python ランタイム依存関係
 
-- `pyyaml` — `drive_routes.yaml` ロードに必要（`py/path_placement_rules.py`）。標準ライブラリ外では唯一の必須依存
+- `pyyaml` — `drive_routes.yaml` ロードに必要（`py/video_pipeline/domain/path_placement_rules.py`）。標準ライブラリ外では唯一の必須依存
 - Python 標準ライブラリ（`sqlite3`, `argparse`, `json`, `unicodedata` 等）
 - DB アクセスは標準 `sqlite3` のみ（外部 ORM 依存なし）
 
@@ -72,8 +73,8 @@
 
 テンプレートの情報源:
 
-- 優先（ユーザー上書き可能）: `<windowsOpsRoot>/templates/windows-scripts/*.ps1`
-- フォールバック（プラグイン同梱）: `<plugin-root>/assets/windows-scripts/*.ps1`
+- 優先（プラグイン同梱の canonical source）: `<plugin-root>/templates/windows-scripts/*.ps1`
+- フォールバック（移行期間中の legacy source）: `<plugin-root>/assets/windows-scripts/*.ps1`
 
 ## 最小プリフライト
 

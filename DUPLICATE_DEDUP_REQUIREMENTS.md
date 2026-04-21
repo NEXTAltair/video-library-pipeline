@@ -29,7 +29,7 @@ For current behavior, prefer these files:
 - `skills/SKILL.md` (agent-facing scope and semantics)
 - `FLOW_AND_OWNERSHIP.md` (runtime flow)
 - `DEPENDENCIES.md` (runtime prerequisites)
-- `src/tool-definitions.ts` (current tool schema)
+- `index.ts`, `src/tools/tool-dedup.ts` (current tool registration / adapter)
 - `py/dedup_recordings.py` (actual logic)
 
 Use the sections below for:
