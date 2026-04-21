@@ -3,6 +3,11 @@ import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toTo
 import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 import { ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
 export function registerToolRun(api: PluginApi, getCfg: GetCfgFn) {
   api.registerTool(
     {
@@ -98,12 +103,39 @@ export function registerToolRun(api: PluginApi, getCfg: GetCfgFn) {
           const planned = Number(planStats.planned || 0);
           const apply = params.apply === true;
           const queuePath = String(parsed.queue || "");
+          const reviewYamlPaths = stringArray(parsed.reviewYamlPaths)
+            .concat(typeof parsed.reviewYamlPath === "string" && parsed.reviewYamlPath ? [parsed.reviewYamlPath] : [])
+            .filter((value, index, arr) => arr.indexOf(value) === index);
+          const reviewSummary = parsed.reviewSummary && typeof parsed.reviewSummary === "object"
+            ? parsed.reviewSummary as Record<string, unknown>
+            : null;
+          const reviewRows = Number(reviewSummary?.rowsNeedingReview || 0);
 
           const skipParts: string[] = [];
           if (skippedNeedsReview > 0) skipParts.push(`${skippedNeedsReview} needs_review`);
           if (skippedSubtitleSeparator > 0) skipParts.push(`${skippedSubtitleSeparator} subtitle_separator`);
 
-          if (!apply && (skippedNeedsReview > 0 || skippedSubtitleSeparator > 0)) {
+          if (reviewYamlPaths.length > 0) {
+            out.followUpToolCalls = reviewYamlPaths.map((sourceYamlPath) => ({
+              tool: "video_pipeline_apply_reviewed_metadata",
+              reason: "apply_generated_review_yaml_after_human_review",
+              requiresHumanReview: true,
+              params: { sourceYamlPath },
+            }));
+            out.hasFollowUpToolCalls = out.followUpToolCalls.length > 0;
+            if (typeof parsed.nextStep === "string" && parsed.nextStep.trim()) {
+              out.nextStep = parsed.nextStep;
+            } else if (!apply) {
+              out.nextStep =
+                `Dry-run complete. Generated ${reviewYamlPaths.length} review YAML artifact(s) for ${reviewRows} reviewable rows. ` +
+                "Ask the user to review the YAML, then call video_pipeline_apply_reviewed_metadata with sourceYamlPath from followUpToolCalls. " +
+                "Do NOT restart extraction for this cohort.";
+            } else {
+              out.nextStep =
+                `Moves were applied for ready rows, but ${reviewRows} reviewable rows still require human review. ` +
+                "Use followUpToolCalls after YAML review to apply metadata corrections before the next run.";
+            }
+          } else if (!apply && (skippedNeedsReview > 0 || skippedSubtitleSeparator > 0)) {
             out.nextStep =
               `Dry-run complete. ${planned} files planned for move, ${skipParts.join(" + ")} files skipped. ` +
               `Proceed to Stage 2: call video_pipeline_reextract with the queue path to extract metadata for review. ` +
@@ -126,6 +158,9 @@ export function registerToolRun(api: PluginApi, getCfg: GetCfgFn) {
             out.nextStep =
               "Moves applied. Check moveApplyStats for results. " +
               "Call video_pipeline_logs to verify.";
+          }
+          if (!("hasFollowUpToolCalls" in out)) {
+            out.hasFollowUpToolCalls = Array.isArray(out.followUpToolCalls) && out.followUpToolCalls.length > 0;
           }
         }
 

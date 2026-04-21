@@ -13,6 +13,7 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable
 
 from move_apply_stats import aggregate_move_apply
 from windows_pwsh_bridge import canonicalize_windows_path, run_pwsh_json
@@ -47,6 +48,119 @@ def run_py(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = 
 
 def run_py_uv(script: Path, args: list[str], cwd: str | None = None) -> str:
     return run_py(["uv", "run", "python", str(script), *args], cwd=cwd)
+
+
+def parse_last_json_object_line(output: str) -> dict[str, Any] | None:
+    if not isinstance(output, str):
+        return None
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            parsed = json.loads(stripped)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def string_array(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def aggregate_review_summaries(results: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = {
+        "rowsNeedingReview": 0,
+        "requiredFieldMissingRows": 0,
+        "invalidAirDateRows": 0,
+        "needsReviewFlagRows": 0,
+        "suspiciousProgramTitleRows": 0,
+        "fieldCounts": {},
+        "reasonCounts": {},
+    }
+    for result in results:
+        review_summary = result.get("reviewSummary")
+        if not isinstance(review_summary, dict):
+            continue
+        summary["rowsNeedingReview"] += int(review_summary.get("rowsNeedingReview") or 0)
+        summary["requiredFieldMissingRows"] += int(review_summary.get("requiredFieldMissingRows") or 0)
+        summary["invalidAirDateRows"] += int(review_summary.get("invalidAirDateRows") or 0)
+        summary["needsReviewFlagRows"] += int(review_summary.get("needsReviewFlagRows") or 0)
+        summary["suspiciousProgramTitleRows"] += int(review_summary.get("suspiciousProgramTitleRows") or 0)
+        for key, value in (review_summary.get("fieldCounts") or {}).items():
+            if isinstance(key, str):
+                summary["fieldCounts"][key] = int(summary["fieldCounts"].get(key, 0)) + int(value or 0)
+        for key, value in (review_summary.get("reasonCounts") or {}).items():
+            if isinstance(key, str):
+                summary["reasonCounts"][key] = int(summary["reasonCounts"].get(key, 0)) + int(value or 0)
+    return summary
+
+
+def export_review_yaml_artifacts(
+    output_jsonl_paths: list[str],
+    export_script: Path,
+    *,
+    cwd: str,
+    runner: Callable[[Path, list[str], str | None], str] = run_py_uv,
+) -> dict[str, Any]:
+    artifacts: list[dict[str, Any]] = []
+    review_candidates: list[dict[str, Any]] = []
+    review_candidates_truncated = False
+
+    for output_jsonl_path in output_jsonl_paths:
+        try:
+            raw = runner(
+                export_script,
+                [
+                    "--source-jsonl",
+                    output_jsonl_path,
+                    "--only-if-reviewable",
+                ],
+                cwd,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"failed to export review YAML for {output_jsonl_path}",
+                "sourceJsonlPath": output_jsonl_path,
+                "raw": None,
+                "parsed": None,
+                "exception": str(exc),
+            }
+        parsed = parse_last_json_object_line(raw)
+        if not isinstance(parsed, dict) or parsed.get("ok") is not True:
+            return {
+                "ok": False,
+                "error": f"failed to export review YAML for {output_jsonl_path}",
+                "sourceJsonlPath": output_jsonl_path,
+                "raw": raw,
+                "parsed": parsed,
+            }
+        if not parsed.get("outputPath"):
+            continue
+        artifacts.append(parsed)
+        for candidate in parsed.get("reviewCandidates") or []:
+            if len(review_candidates) < 50 and isinstance(candidate, dict):
+                review_candidates.append(candidate)
+            else:
+                review_candidates_truncated = True
+        if parsed.get("reviewCandidatesTruncated") is True:
+            review_candidates_truncated = True
+
+    review_yaml_paths = [str(result["outputPath"]) for result in artifacts if isinstance(result.get("outputPath"), str)]
+    return {
+        "ok": True,
+        "reviewArtifacts": artifacts,
+        "reviewYamlPaths": review_yaml_paths,
+        "reviewYamlPath": review_yaml_paths[0] if len(review_yaml_paths) == 1 else None,
+        "reviewSummary": aggregate_review_summaries(artifacts),
+        "reviewCandidates": review_candidates,
+        "reviewCandidatesTruncated": review_candidates_truncated,
+    }
 
 
 def latest(move_dir: Path, glob_pat: str) -> Path:
@@ -118,6 +232,7 @@ def main() -> int:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     here = Path(__file__).resolve().parent
     hints_yaml = here.parent / "rules" / "program_aliases.yaml"
+    export_yaml_script = here / "export_program_yaml.py"
 
     inv_meta = run_pwsh_json(
         scripts_root_win + r"\unwatched_inventory.ps1",
@@ -150,7 +265,7 @@ def main() -> int:
         cwd=str(here),
     )
 
-    run_py_uv(
+    reextract_raw = run_py_uv(
         here / "run_metadata_batches_promptv1.py",
         [
             "--db",
@@ -168,6 +283,11 @@ def main() -> int:
         ],
         cwd=str(here),
     )
+    reextract_parsed = parse_last_json_object_line(reextract_raw) or {}
+    reextract_output_jsonl_paths = string_array(reextract_parsed.get("outputJsonlPaths"))
+    latest_output_jsonl_path = reextract_parsed.get("latestOutputJsonlPath")
+    if not reextract_output_jsonl_paths and isinstance(latest_output_jsonl_path, str) and latest_output_jsonl_path:
+        reextract_output_jsonl_paths = [latest_output_jsonl_path]
 
     plan_cmd = [
         "--db",
@@ -197,7 +317,8 @@ def main() -> int:
     plan_stats = plan_out if isinstance(plan_out, dict) else {}
     planned = int(plan_stats.get("planned", 0))
 
-    summary: dict = {
+    summary: dict[str, Any] = {
+        "ok": True,
         "inventory": str(inv),
         "queue": str(queue),
         "plan": str(plan),
@@ -205,7 +326,39 @@ def main() -> int:
         "apply": bool(args.apply),
         "windows_ops_root": str(ops_root),
         "max_files_per_run": int(args.max_files_per_run),
+        "reextract": {
+            "ok": True,
+            "queuePath": str(queue),
+            "summary": reextract_parsed,
+            "outputJsonlPaths": reextract_output_jsonl_paths,
+            "outputJsonlPath": reextract_output_jsonl_paths[-1] if reextract_output_jsonl_paths else None,
+            "raw": reextract_raw,
+        },
+        "workflowState": "relocate_plan_ready",
     }
+
+    if reextract_output_jsonl_paths:
+        review_export = export_review_yaml_artifacts(
+            reextract_output_jsonl_paths,
+            export_yaml_script,
+            cwd=str(here),
+        )
+        if not review_export.get("ok"):
+            summary["ok"] = False
+            summary["workflowState"] = "review_yaml_export_failed"
+            summary["error"] = review_export.get("error") or "failed to export review yaml artifacts"
+            summary["reviewExport"] = review_export
+            print(json.dumps(summary, ensure_ascii=False))
+            return 1
+        summary.update(review_export)
+        if summary.get("reviewYamlPaths"):
+            review_summary = summary.get("reviewSummary") or {}
+            summary["workflowState"] = "metadata_review_required"
+            summary["nextStep"] = (
+                "Human review required for extracted metadata. "
+                f"Review reviewYamlPath/reviewYamlPaths and apply corrections before relying on apply=true. "
+                f"rowsNeedingReview={int((review_summary or {}).get('rowsNeedingReview') or 0)}."
+            )
 
     if args.apply and planned > 0:
         # Stage 3: 実際にファイルを移動
@@ -239,9 +392,22 @@ def main() -> int:
         summary["applied"] = str(applied)
         summary["moveApplyStats"] = move_stats
         summary["remaining_files"] = max(inv_count - move_stats["succeeded"], 0)
+        if summary.get("reviewYamlPaths"):
+            summary["nextStep"] = (
+                "Moves were applied for ready rows, but reviewable metadata remains. "
+                "Review reviewYamlPath/reviewYamlPaths and apply corrections before the next run."
+            )
     else:
         # Dry-run: plan のみ。apply は実行しない。
         summary["remaining_files"] = inv_count
+        if not summary.get("reviewYamlPaths") and planned > 0:
+            summary["nextStep"] = (
+                f"Dry-run complete. {planned} files planned for move and no review YAML was needed. "
+                "Present the plan before calling this runner with --apply."
+            )
+        elif not summary.get("reviewYamlPaths") and planned == 0:
+            summary["workflowState"] = "no_moves_planned"
+            summary["nextStep"] = "Dry-run complete. No files planned for move. Check plan_stats for skip reasons."
 
     print(
         json.dumps(summary, ensure_ascii=False)
