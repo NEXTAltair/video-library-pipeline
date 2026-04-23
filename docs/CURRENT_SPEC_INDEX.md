@@ -19,7 +19,9 @@
    - ランタイム前提条件、バイナリ、スクリプト、プリフライト
 5. `index.ts`, `src/tools/*.ts`, `src/contracts/types.ts`
    - 現在のツール登録位置と TypeScript 側の共通コントラクト
-6. Python/TS 実装ファイル（`src/tools/*.ts`, `src/platform/*.ts`, `py/*.py`, `py/video_pipeline/**/*.py`）
+6. `docs/adr/0007-openclaw-sdk-recommended-plugin-implementation.md`
+   - OpenClaw SDK公式docsに基づくplugin実装規約
+7. Python/TS 実装ファイル（`src/tools/*.ts`, `src/platform/*.ts`, `py/*.py`, `py/video_pipeline/**/*.py`）
    - 実際の動作詳細とエッジケース処理
 
 ## 2) 問い別・情報源マッピング
@@ -58,6 +60,11 @@
 - 第一: `skills/extract-review/SKILL.md`
 - ツール結果の形: `src/tools/tool-export-program-yaml.ts`
 
+### 「OpenClaw SDKとして推奨される実装方法は？」
+- 第一: `docs/adr/0007-openclaw-sdk-recommended-plugin-implementation.md`
+- 第二: `docs/adr/0001-plugin-sdk-testing.md`（テスト方針）
+- 実装確認: `index.ts`, `openclaw.plugin.json`, `package.json`
+
 ## 3) 現行操作ドキュメント（稼働中の動作）
 
 - `skills/video-library-pipeline/SKILL.md`
@@ -78,6 +85,8 @@
   - JSONL/YAMLアーティファクト、`windowsOpsRoot`、source遷移
 - `docs/adr/0006-mediaops-db-routing-and-safety.md`
   - `mediaops.sqlite`、ジャンル別ドライブルーティング、安全機構
+- `docs/adr/0007-openclaw-sdk-recommended-plugin-implementation.md`
+  - OpenClaw SDK公式docsに基づくentry point、manifest、runtime、setup、agent harness境界
 - `skills/inventory-review/SKILL.md`
   - sourceRoot パイプライン ステージ1（棚卸 + キュー生成 + レビューゲート）
 - `skills/extract-review/SKILL.md`

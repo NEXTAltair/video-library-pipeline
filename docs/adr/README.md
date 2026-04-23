@@ -12,6 +12,7 @@
 | [ADR-0004](0004-tool-orchestration-and-follow-up-calls.md) | Accepted | ツール構成、followUpToolCalls、LLMサブエージェント |
 | [ADR-0005](0005-metadata-and-artifact-lifecycle.md) | Accepted | JSONL/YAMLアーティファクト、`windowsOpsRoot`、source遷移 |
 | [ADR-0006](0006-mediaops-db-routing-and-safety.md) | Accepted | `mediaops.sqlite`、ジャンルルーティング、安全機構 |
+| [ADR-0007](0007-openclaw-sdk-recommended-plugin-implementation.md) | Accepted | OpenClaw SDK公式docsに基づくplugin推奨実装方針 |
 
 ## メンテナンスルール
 
