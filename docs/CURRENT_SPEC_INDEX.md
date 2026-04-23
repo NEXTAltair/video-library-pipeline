@@ -11,13 +11,15 @@
 
 1. `skills/video-library-pipeline/SKILL.md`
    - AIエージェントの実行ルール、インテントマッピング、ツール使用ガードレール
-2. `FLOW_AND_OWNERSHIP.md`
+2. `docs/adr/README.md`
+   - 設計判断の一覧。READMEから移した詳細仕様への入口
+3. `FLOW_AND_OWNERSHIP.md`
    - 現在の実行順序、レイヤー境界、責務分担
-3. `DEPENDENCIES.md`
+4. `DEPENDENCIES.md`
    - ランタイム前提条件、バイナリ、スクリプト、プリフライト
-4. `index.ts`, `src/tools/*.ts`, `src/contracts/types.ts`
+5. `index.ts`, `src/tools/*.ts`, `src/contracts/types.ts`
    - 現在のツール登録位置と TypeScript 側の共通コントラクト
-5. Python/TS 実装ファイル（`src/tools/*.ts`, `src/platform/*.ts`, `py/*.py`, `py/video_pipeline/**/*.py`）
+6. Python/TS 実装ファイル（`src/tools/*.ts`, `src/platform/*.ts`, `py/*.py`, `py/video_pipeline/**/*.py`）
    - 実際の動作詳細とエッジケース処理
 
 ## 2) 問い別・情報源マッピング
@@ -33,11 +35,13 @@
 
 ### 「現在の実行フローは？」
 - 第一: `FLOW_AND_OWNERSHIP.md`
-- 第二: `skills/video-library-pipeline/SKILL.md`（エージェント向けのウィニングフロー）
+- 第二: `docs/adr/0002-pipeline-architecture-and-review-gates.md`
+- 第三: `skills/video-library-pipeline/SKILL.md`（エージェント向けのウィニングフロー）
 
 ### 「必要なバイナリ/設定/スクリプトは？」
 - 第一: `DEPENDENCIES.md`
-- 第二: `src/tools/tool-validate.ts`, `src/platform/windows-scripts-bootstrap.ts`
+- 第二: `docs/adr/0003-windows-powershell-filesystem-boundary.md`
+- 第三: `src/tools/tool-validate.ts`, `src/platform/windows-scripts-bootstrap.ts`
 
 ### 「DB更新/移動照合で具体的に何が起きるか？」
 - 主要実装:
@@ -45,6 +49,8 @@
   - `py/relocate_existing_files.py`
   - `py/backfill_moved_files.py`
 - 補足ドキュメント:
+  - `docs/adr/0005-metadata-and-artifact-lifecycle.md`
+  - `docs/adr/0006-mediaops-db-routing-and-safety.md`
   - `FLOW_AND_OWNERSHIP.md`
   - `DEPENDENCIES.md`
 
@@ -61,6 +67,17 @@
 - `docs/adr/0001-plugin-sdk-testing.md`
   - OpenClaw SDK testing に沿ったプラグインテスト方針
   - Vitest と pytest の責務分担、runtime mock、import discipline
+- `docs/adr/0002-pipeline-architecture-and-review-gates.md`
+  - sourceRoot / relocate のパイプライン構成
+  - Stage 1-3 とヒューマンレビューゲート
+- `docs/adr/0003-windows-powershell-filesystem-boundary.md`
+  - WSL2/Windows境界、PowerShell委譲、長パス・Unicode前提
+- `docs/adr/0004-tool-orchestration-and-follow-up-calls.md`
+  - ツール詳細、`followUpToolCalls`、LLMサブエージェントフロー
+- `docs/adr/0005-metadata-and-artifact-lifecycle.md`
+  - JSONL/YAMLアーティファクト、`windowsOpsRoot`、source遷移
+- `docs/adr/0006-mediaops-db-routing-and-safety.md`
+  - `mediaops.sqlite`、ジャンル別ドライブルーティング、安全機構
 - `skills/inventory-review/SKILL.md`
   - sourceRoot パイプライン ステージ1（棚卸 + キュー生成 + レビューゲート）
 - `skills/extract-review/SKILL.md`
@@ -119,6 +136,7 @@
   - `index.ts`, `src/tools/*.ts`, `src/contracts/types.ts`（ツール登録や共通コントラクトが変わった場合）
   - `skills/video-library-pipeline/SKILL.md`（エージェントの動作や解釈が変わった場合）
   - `FLOW_AND_OWNERSHIP.md` / `DEPENDENCIES.md`（フロー/依存関係が変わった場合）
+  - `docs/adr/*.md`（設計判断、フロー、安全機構、DB契約が変わった場合）
 - 要件書が古くなった場合は:
   - `Status / Source of Truth` 注記を追加・更新するか
   - 明示的に歴史的セクションとしてマークする
