@@ -131,6 +131,37 @@ def test_register_artifact_records_checksum_and_provenance(tmp_path) -> None:
     assert loaded.artifacts["artifact_inventory"].producer == "test_runner"
 
 
+def test_register_artifact_rejects_duplicate_artifact_id_without_clobbering(tmp_path) -> None:
+    store = WorkflowStore(tmp_path)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_artifact_duplicate")
+    first_file = tmp_path / "runs" / "run_artifact_duplicate" / "inventory" / "first.jsonl"
+    second_file = tmp_path / "runs" / "run_artifact_duplicate" / "inventory" / "second.jsonl"
+    first_file.write_text("first\n", encoding="utf-8")
+    second_file.write_text("second\n", encoding="utf-8")
+    first = store.register_artifact(
+        "run_artifact_duplicate",
+        artifact_type="inventory",
+        path=first_file,
+        producer="first_step",
+        artifact_id="artifact_inventory",
+    )
+
+    with pytest.raises(FileExistsError):
+        store.register_artifact(
+            "run_artifact_duplicate",
+            artifact_type="inventory",
+            path=second_file,
+            producer="second_step",
+            artifact_id="artifact_inventory",
+        )
+
+    loaded = store.read_run("run_artifact_duplicate")
+    assert loaded.artifact_ids == ["artifact_inventory"]
+    assert loaded.artifacts["artifact_inventory"].path == str(first_file)
+    assert loaded.artifacts["artifact_inventory"].sha256 == first.sha256
+    assert loaded.artifacts["artifact_inventory"].producer == "first_step"
+
+
 def test_register_missing_artifact_adds_diagnostic(tmp_path) -> None:
     store = WorkflowStore(tmp_path)
     store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_missing")
@@ -171,6 +202,39 @@ def test_review_gate_create_and_update_round_trip(tmp_path) -> None:
     assert updated.resolved_at is not None
     assert updated.resolution == {"approvedBy": "tester"}
     assert store.read_run("run_gate").review_gate_ids == ["gate_metadata"]
+
+
+def test_create_review_gate_rejects_duplicate_gate_id_without_clobbering(tmp_path) -> None:
+    store = WorkflowStore(tmp_path)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_gate_duplicate")
+    store.create_review_gate(
+        "run_gate_duplicate",
+        gate_type="metadata_review",
+        artifact_ids=["artifact_first"],
+        gate_id="gate_metadata",
+    )
+    approved = store.update_review_gate(
+        "run_gate_duplicate",
+        "gate_metadata",
+        status=ReviewGateStatus.APPROVED,
+        resolution={"approvedBy": "tester"},
+    )
+
+    with pytest.raises(FileExistsError):
+        store.create_review_gate(
+            "run_gate_duplicate",
+            gate_type="metadata_review",
+            artifact_ids=["artifact_second"],
+            gate_id="gate_metadata",
+        )
+
+    loaded = store.read_run("run_gate_duplicate")
+    gate = loaded.review_gates["gate_metadata"]
+    assert loaded.review_gate_ids == ["gate_metadata"]
+    assert gate.status == "approved"
+    assert gate.artifact_ids == ["artifact_first"]
+    assert gate.resolved_at == approved.resolved_at
+    assert gate.resolution == {"approvedBy": "tester"}
 
 
 def test_workflow_result_serializes_for_typescript_consumption(tmp_path) -> None:

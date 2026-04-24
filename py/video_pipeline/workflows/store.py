@@ -135,6 +135,8 @@ class WorkflowStore:
             raise FileNotFoundError(diagnostic.message)
 
         aid = artifact_id or f"{artifact_type}_{uuid.uuid4().hex[:12]}"
+        if aid in run.artifacts:
+            raise FileExistsError(f"workflow artifact already exists: {aid}")
         artifact = ArtifactRef(
             id=aid,
             type=artifact_type,
@@ -164,6 +166,8 @@ class WorkflowStore:
     ) -> ReviewGate:
         run = self.read_run(run_id)
         gid = gate_id or f"{gate_type}_{uuid.uuid4().hex[:12]}"
+        if gid in run.review_gates:
+            raise FileExistsError(f"workflow review gate already exists: {gid}")
         gate = ReviewGate(
             id=gid,
             type=gate_type,
