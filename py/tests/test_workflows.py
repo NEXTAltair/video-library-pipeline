@@ -70,6 +70,30 @@ def test_init_run_creates_manifest_and_standard_directories(tmp_path) -> None:
     assert loaded.to_dict()["configSnapshot"] == {"windowsOpsRoot": str(tmp_path)}
 
 
+def test_run_id_rejects_path_traversal(tmp_path) -> None:
+    store = WorkflowStore(tmp_path)
+
+    for run_id in ("../escape", r"..\escape", "/tmp/escape", "run/escape", r"run\escape", "run..escape"):
+        with pytest.raises(ValueError):
+            store.run_dir(run_id)
+
+    assert not (tmp_path / "escape").exists()
+
+
+def test_init_run_fails_for_existing_run_id_without_clobbering_manifest(tmp_path) -> None:
+    store = WorkflowStore(tmp_path)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_existing")
+    run_path = tmp_path / "runs" / "run_existing" / "run.json"
+    before = json.loads(run_path.read_text(encoding="utf-8"))
+
+    with pytest.raises(FileExistsError):
+        store.init_run(WorkflowFlow.RELOCATE, run_id="run_existing")
+
+    after = json.loads(run_path.read_text(encoding="utf-8"))
+    assert after == before
+    assert after["flow"] == "source_root"
+
+
 def test_transition_run_updates_phase_status_and_manifest(tmp_path) -> None:
     store = WorkflowStore(tmp_path)
     store.init_run(WorkflowFlow.RELOCATE, run_id="run_transition")

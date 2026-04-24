@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from .models import (
 from .state_machine import validate_transition
 
 RUN_SUBDIRS = ("inventory", "metadata", "review", "plan", "apply", "logs")
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 def generate_run_id() -> str:
@@ -40,13 +42,20 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def validate_run_id(run_id: str) -> str:
+    rid = str(run_id or "")
+    if not RUN_ID_PATTERN.fullmatch(rid) or ".." in rid:
+        raise ValueError(f"invalid workflow run_id: {run_id!r}")
+    return rid
+
+
 class WorkflowStore:
     def __init__(self, windows_ops_root: str | Path) -> None:
         self.windows_ops_root = Path(windows_ops_root)
         self.runs_root = self.windows_ops_root / "runs"
 
     def run_dir(self, run_id: str) -> Path:
-        return self.runs_root / run_id
+        return self.runs_root / validate_run_id(run_id)
 
     def manifest_path(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "run.json"
@@ -58,9 +67,11 @@ class WorkflowStore:
         run_id: str | None = None,
         config_snapshot: dict[str, Any] | None = None,
     ) -> WorkflowRun:
-        rid = run_id or generate_run_id()
+        rid = validate_run_id(run_id or generate_run_id())
         run_path = self.run_dir(rid)
-        run_path.mkdir(parents=True, exist_ok=True)
+        if run_path.exists():
+            raise FileExistsError(f"workflow run already exists: {rid}")
+        run_path.mkdir(parents=True)
         for subdir in RUN_SUBDIRS:
             (run_path / subdir).mkdir(exist_ok=True)
         now = now_iso()
