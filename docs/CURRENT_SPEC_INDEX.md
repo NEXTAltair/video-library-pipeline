@@ -65,6 +65,10 @@
 - 第二: `docs/adr/0001-plugin-sdk-testing.md`（テスト方針）
 - 実装確認: `index.ts`, `openclaw.plugin.json`, `package.json`
 
+### 「V2再設計の方針は？」
+- 第一: `docs/adr/0008-v2-workflow-kernel-and-run-based-tool-surface.md`
+- 注意: これは将来の V2 再設計方針であり、現行動作の source of truth ではない
+
 ## 3) 現行操作ドキュメント（稼働中の動作）
 
 - `skills/video-library-pipeline/SKILL.md`
@@ -107,6 +111,9 @@
   - バックフィル機能の歴史的要件・設計メモ
 - `DUPLICATE_DEDUP_REQUIREMENTS.md`
   - 重複削除機能の歴史的要件・設計メモ
+- `docs/adr/0008-v2-workflow-kernel-and-run-based-tool-surface.md`
+  - run-based workflow kernel と V2 公開 tool surface の提案
+  - `Proposed` ADR。現行の `video_pipeline_*` 動作仕様としては扱わない
 
 ルール:
 - 以下で検証されるまで、これらのファイルを現行動作仕様として扱わないこと:
