@@ -27,6 +27,210 @@ def make_config(tmp_path: Path, run_id: str = "run_source_root", db: str | None 
     )
 
 
+class SourceRootWorkflowHarness:
+    def __init__(self, tmp_path: Path, *, run_id: str, needs_review: bool = False) -> None:
+        self.tmp_path = tmp_path
+        self.cfg = make_config(tmp_path, run_id=run_id)
+        self.needs_review = needs_review
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def powershell_runner(self, _script: str, args: list[str]) -> dict:
+        out_path = Path(args[args.index("-OutJsonl") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            "\n".join([
+                json.dumps({"_meta": {"kind": "unwatched_inventory"}}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "path": r"B:\Unwatched\show.mp4",
+                        "name": "show.mp4",
+                        "mtimeUtc": "2026-04-25T00:00:00Z",
+                    },
+                    ensure_ascii=False,
+                ),
+            ])
+            + "\n",
+            encoding="utf-8",
+        )
+        return {"out_jsonl": str(out_path), "warning_count": 0}
+
+    def python_runner(self, script: Path, args: list[str], _cwd: str | None = None) -> str:
+        self.calls.append((script.name, list(args)))
+        if script.name == "make_metadata_queue_from_inventory.py":
+            out_path = Path(args[args.index("--out") + 1])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                "\n".join([
+                    json.dumps({"_meta": {"kind": "metadata_queue"}}, ensure_ascii=False),
+                    json.dumps({"path_id": "p1", "path": r"B:\Unwatched\show.mp4", "name": "show.mp4"}, ensure_ascii=False),
+                ])
+                + "\n",
+                encoding="utf-8",
+            )
+            return json.dumps({"ok": True, "queueRows": 1}, ensure_ascii=False)
+        if script.name == "run_metadata_batches_promptv1.py":
+            outdir = Path(args[args.index("--outdir") + 1])
+            output_path = outdir / "llm_filename_extract_output_0001_0001.jsonl"
+            row = {
+                "path_id": "p1",
+                "path": r"B:\Unwatched\show.mp4",
+                "program_title": "UNKNOWN" if self.needs_review else "Show",
+                "air_date": "2026-04-25",
+                "needs_review": self.needs_review,
+            }
+            if self.needs_review:
+                row["needs_review_reason"] = "unknown_program_title"
+            output_path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+            return json.dumps(
+                {
+                    "ok": True,
+                    "outputJsonlPaths": [str(output_path)],
+                    "latestOutputJsonlPath": str(output_path),
+                    "processed": 1,
+                },
+                ensure_ascii=False,
+            )
+        if script.name == "export_program_yaml.py":
+            if not self.needs_review:
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "outputPath": None,
+                        "reviewSummary": {"rowsNeedingReview": 0},
+                        "reviewCandidates": [],
+                        "reviewCandidatesTruncated": False,
+                        "skippedReason": "no_reviewable_rows",
+                    },
+                    ensure_ascii=False,
+                )
+            out_path = Path(args[args.index("--output") + 1])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text("hints: []\n", encoding="utf-8")
+            return json.dumps(
+                {
+                    "ok": True,
+                    "sourceJsonlPath": args[args.index("--source-jsonl") + 1],
+                    "outputPath": str(out_path),
+                    "reviewSummary": {
+                        "rowsNeedingReview": 1,
+                        "needsReviewFlagRows": 1,
+                        "reasonCounts": {"unknown_program_title": 1},
+                    },
+                    "reviewCandidates": [{"pathId": "p1", "reasons": ["unknown_program_title"]}],
+                    "reviewCandidatesTruncated": False,
+                },
+                ensure_ascii=False,
+            )
+        if script.name == "make_move_plan_from_inventory.py":
+            if self.needs_review:
+                raise AssertionError("move plan must not be generated while metadata review gate is open")
+            out_path = Path(args[args.index("--out") + 1])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                "\n".join([
+                    json.dumps({"_meta": {"kind": "move_plan_from_inventory"}}, ensure_ascii=False),
+                    json.dumps(
+                        {
+                            "path_id": "p1",
+                            "src": r"B:\Unwatched\show.mp4",
+                            "dst": r"B:\VideoLibrary\Show\show.mp4",
+                        },
+                        ensure_ascii=False,
+                    ),
+                ])
+                + "\n",
+                encoding="utf-8",
+            )
+            return json.dumps({"out": str(out_path), "planned": 1}, ensure_ascii=False)
+        return json.dumps({"ok": True}, ensure_ascii=False)
+
+    def service(self) -> SourceRootWorkflowService:
+        return SourceRootWorkflowService(
+            python_runner=self.python_runner,
+            powershell_runner=self.powershell_runner,
+            py_root=self.tmp_path,
+        )
+
+    def dry_run(self):
+        return self.service().dry_run(self.cfg)
+
+    def manifest(self) -> dict:
+        manifest_path = Path(self.cfg.windows_ops_root) / "runs" / self.cfg.run_id / "run.json"
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def assert_json_serializable_for_typescript(payload: dict) -> None:
+    json.dumps(payload, ensure_ascii=False)
+    assert {"ok", "runId", "flow", "phase", "outcome", "artifacts", "gates", "nextActions", "diagnostics"} <= set(payload)
+    for artifact in payload["artifacts"]:
+        assert {"id", "type", "path", "sha256", "createdAt", "producer", "status", "inputArtifactIds", "metadata"} <= set(artifact)
+    for gate in payload["gates"]:
+        assert {"id", "type", "status", "artifactIds", "requiresHumanReview", "openedAt", "resolvedAt", "resolution"} <= set(gate)
+    for action in payload["nextActions"]:
+        assert {"action", "label", "tool", "params", "requiresHumanInput"} <= set(action)
+
+
+def test_source_root_fixture_no_review_result_json_shape(tmp_path) -> None:
+    harness = SourceRootWorkflowHarness(tmp_path, run_id="run_fixture_no_review")
+
+    payload = harness.dry_run().to_dict()
+
+    assert_json_serializable_for_typescript(payload)
+    assert payload["ok"] is True
+    assert payload["flow"] == "source_root"
+    assert payload["phase"] == "plan_ready"
+    assert payload["outcome"] == "source_root_dry_run_complete"
+    assert [artifact["id"] for artifact in payload["artifacts"]] == [
+        "source_root_inventory",
+        "metadata_queue",
+        "metadata_extract_output_0001",
+        "source_root_move_plan",
+    ]
+    assert payload["nextActions"] == [
+        {
+            "action": "review_plan",
+            "label": "Review sourceRoot move plan",
+            "tool": "video_pipeline_resume",
+            "params": {
+                "runId": "run_fixture_no_review",
+                "artifactId": "source_root_move_plan",
+                "resumeAction": "apply_source_root_move_plan",
+            },
+            "requiresHumanInput": True,
+        }
+    ]
+
+    manifest = harness.manifest()
+    assert manifest["artifactIds"] == [artifact["id"] for artifact in payload["artifacts"]]
+    assert manifest["artifacts"]["source_root_move_plan"]["inputArtifactIds"] == [
+        "source_root_inventory",
+        "metadata_queue",
+        "metadata_extract_output_0001",
+    ]
+
+
+def test_source_root_fixture_review_yaml_handoff_round_trip(tmp_path) -> None:
+    harness = SourceRootWorkflowHarness(tmp_path, run_id="run_fixture_review", needs_review=True)
+
+    payload = harness.dry_run().to_dict()
+
+    assert_json_serializable_for_typescript(payload)
+    assert payload["ok"] is False
+    assert payload["phase"] == "review_required"
+    assert payload["outcome"] == "source_root_metadata_review_required"
+    assert payload["gates"][0]["artifactIds"] == ["metadata_review_yaml_0001"]
+    assert payload["nextActions"][0]["params"]["artifactIds"] == ["metadata_review_yaml_0001"]
+
+    manifest = harness.manifest()
+    review_artifact = manifest["artifacts"]["metadata_review_yaml_0001"]
+    review_path = str(Path(harness.cfg.windows_ops_root) / "runs" / "run_fixture_review" / "review" / "metadata_review_0001.yaml")
+    assert review_artifact["path"] == review_path
+    assert review_artifact["metadata"]["sourceJsonlPath"] == manifest["artifacts"]["metadata_extract_output_0001"]["path"]
+    assert manifest["reviewGates"]["metadata_review"]["artifactIds"] == ["metadata_review_yaml_0001"]
+    assert payload["nextActions"][0]["params"]["reviewYamlPaths"] == [review_path]
+    assert Path(review_path).read_text(encoding="utf-8") == "hints: []\n"
+
+
 def test_source_root_dry_run_registers_core_artifacts(tmp_path) -> None:
     cfg = make_config(tmp_path)
     calls: list[tuple[str, list[str]]] = []
