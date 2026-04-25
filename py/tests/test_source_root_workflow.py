@@ -549,6 +549,27 @@ def test_source_root_apply_rejects_terminal_run_without_blocked_transition(tmp_p
     assert manifest["diagnostics"][-1]["code"] == "source_root_apply_wrong_phase"
 
 
+def test_source_root_apply_rejects_other_flow_without_blocking_run(tmp_path) -> None:
+    ops_root = tmp_path / "ops"
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.RELOCATE, run_id="run_relocate", config_snapshot={"db": str(ops_root / "db.sqlite")})
+    store.transition_run("run_relocate", WorkflowPhase.PLAN_READY)
+
+    service = SourceRootWorkflowService(py_root=tmp_path)
+    result = service.apply(SourceRootApplyConfig(windows_ops_root=str(ops_root), run_id="run_relocate"))
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "plan_ready"
+    assert payload["outcome"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_wrong_flow"
+    manifest_path = ops_root / "runs" / "run_relocate" / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["flow"] == "relocate"
+    assert manifest["phase"] == "plan_ready"
+    assert manifest["diagnostics"][-1]["code"] == "source_root_apply_wrong_flow"
+
+
 def test_source_root_apply_registers_apply_artifacts_and_completes(tmp_path) -> None:
     cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_apply_success")
     calls: list[tuple[str, list[str]]] = []

@@ -691,7 +691,7 @@ class SourceRootWorkflowService:
 
         run.diagnostics.append(diagnostic)
         store.write_run(run)
-        if run.phase not in {
+        if run.flow == WorkflowFlow.SOURCE_ROOT.value and run.phase not in {
             WorkflowPhase.BLOCKED.value,
             WorkflowPhase.COMPLETE.value,
             WorkflowPhase.FAILED.value,
