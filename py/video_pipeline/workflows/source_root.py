@@ -106,6 +106,7 @@ class SourceRootWorkflowService:
 
     def dry_run(self, config: SourceRootDryRunConfig) -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        db_path = str(local_path_from_any(config.db))
         run = store.init_run(
             WorkflowFlow.SOURCE_ROOT,
             run_id=config.run_id,
@@ -113,14 +114,14 @@ class SourceRootWorkflowService:
                 "windowsOpsRoot": config.windows_ops_root,
                 "sourceRoot": config.source_root,
                 "destRoot": config.dest_root,
-                "db": config.db,
+                "db": db_path,
                 "driveRoutes": config.drive_routes or "",
                 "maxFilesPerRun": int(config.max_files_per_run),
                 "allowNeedsReview": bool(config.allow_needs_review),
             },
         )
         try:
-            return self._dry_run_existing(run.run_id, config, store)
+            return self._dry_run_existing(run.run_id, config, store, db_path)
         except Exception as exc:
             diagnostic = Diagnostic(
                 code="source_root_dry_run_failed",
@@ -146,6 +147,7 @@ class SourceRootWorkflowService:
         run_id: str,
         config: SourceRootDryRunConfig,
         store: WorkflowStore,
+        db_path: str,
     ) -> WorkflowResult:
         run_dir = store.run_dir(run_id)
         inventory_dir = run_dir / "inventory"
@@ -189,14 +191,14 @@ class SourceRootWorkflowService:
 
         self.python_runner(
             self.py_root / "ingest_inventory_jsonl.py",
-            ["--db", config.db, "--jsonl", str(inventory_path), "--target-root", source_root_win],
+            ["--db", db_path, "--jsonl", str(inventory_path), "--target-root", source_root_win],
             str(self.py_root),
         )
         self.python_runner(
             self.py_root / "make_metadata_queue_from_inventory.py",
             [
                 "--db",
-                config.db,
+                db_path,
                 "--inventory",
                 str(inventory_path),
                 "--source-root",
@@ -222,7 +224,7 @@ class SourceRootWorkflowService:
             self.py_root / "run_metadata_batches_promptv1.py",
             [
                 "--db",
-                config.db,
+                db_path,
                 "--queue",
                 str(queue_path),
                 "--outdir",
@@ -260,7 +262,7 @@ class SourceRootWorkflowService:
 
         plan_args = [
             "--db",
-            config.db,
+            db_path,
             "--inventory",
             str(inventory_path),
             "--source-root",
