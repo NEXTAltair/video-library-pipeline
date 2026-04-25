@@ -114,6 +114,24 @@ def test_transition_run_updates_phase_status_and_manifest(tmp_path) -> None:
     assert store.read_run("run_transition").phase == "metadata_extracted"
 
 
+def test_read_run_rejects_manifest_run_id_mismatch_without_cross_run_write(tmp_path) -> None:
+    store = WorkflowStore(tmp_path)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_a")
+    store.init_run(WorkflowFlow.RELOCATE, run_id="run_b")
+    run_a_manifest = tmp_path / "runs" / "run_a" / "run.json"
+    run_b_manifest = tmp_path / "runs" / "run_b" / "run.json"
+    run_a_data = json.loads(run_a_manifest.read_text(encoding="utf-8"))
+    run_a_data["runId"] = "run_b"
+    run_a_manifest.write_text(json.dumps(run_a_data, ensure_ascii=False), encoding="utf-8")
+    run_b_before = json.loads(run_b_manifest.read_text(encoding="utf-8"))
+
+    with pytest.raises(ValueError, match="runId mismatch"):
+        store.transition_run("run_a", WorkflowPhase.METADATA_EXTRACTED)
+
+    run_b_after = json.loads(run_b_manifest.read_text(encoding="utf-8"))
+    assert run_b_after == run_b_before
+
+
 def test_register_artifact_records_checksum_and_provenance(tmp_path) -> None:
     store = WorkflowStore(tmp_path)
     store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_artifact")

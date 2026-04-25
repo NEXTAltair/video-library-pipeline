@@ -89,8 +89,14 @@ class WorkflowStore:
         return run
 
     def read_run(self, run_id: str) -> WorkflowRun:
+        expected_run_id = validate_run_id(run_id)
         with self.manifest_path(run_id).open("r", encoding="utf-8") as f:
-            return WorkflowRun.from_dict(json.load(f))
+            run = WorkflowRun.from_dict(json.load(f))
+        if run.run_id != expected_run_id:
+            raise ValueError(
+                f"workflow manifest runId mismatch: expected {expected_run_id!r}, got {run.run_id!r}"
+            )
+        return run
 
     def write_run(self, run: WorkflowRun) -> None:
         path = self.manifest_path(run.run_id)
