@@ -13,11 +13,13 @@ export function runCmd(command: string, args: string[], cwd?: string): CmdResult
     env: process.env,
     encoding: "utf-8",
   });
+  const spawnError = cp.error ? String(cp.error.message || cp.error) : "";
+  const stderr = [cp.stderr ?? "", spawnError].filter(Boolean).join(cp.stderr ? "\n" : "");
   return {
     ok: cp.status === 0,
     code: cp.status ?? 1,
     stdout: cp.stdout ?? "",
-    stderr: cp.stderr ?? "",
+    stderr,
     command,
     args,
     cwd,
@@ -73,7 +75,7 @@ export function runCmdViaPwsh(
 }
 
 const EXT_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
-const EXT_ROOT_DIR = path.resolve(EXT_SRC_DIR, "..");
+const EXT_ROOT_DIR = path.resolve(EXT_SRC_DIR, "..", "..");
 const EXT_PY_DIR = path.join(EXT_ROOT_DIR, "py");
 
 export function getExtensionRootDir(): string {
