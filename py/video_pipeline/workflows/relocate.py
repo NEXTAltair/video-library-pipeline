@@ -141,8 +141,10 @@ class RelocateWorkflowService:
             )
 
     def resume(self, config: RelocateApplyConfig, *, action: str = "apply_relocate_move_plan") -> WorkflowResult:
+        store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        if action in {"prepare_relocate_metadata", "review_relocate_metadata"}:
+            return self._resume_metadata_action(store, config.run_id, action)
         if action != "apply_relocate_move_plan":
-            store = WorkflowStore(local_path_from_any(config.windows_ops_root))
             diagnostic = Diagnostic(
                 code="relocate_resume_action_unsupported",
                 severity=DiagnosticSeverity.ERROR,
@@ -720,6 +722,100 @@ class RelocateWorkflowService:
         run = store.read_run(run_id)
         run.diagnostics.append(diagnostic)
         store.write_run(run)
+
+    def _resume_metadata_action(self, store: WorkflowStore, run_id: str, action: str) -> WorkflowResult:
+        try:
+            run = store.read_run(run_id)
+        except Exception as exc:
+            return WorkflowResult(
+                ok=False,
+                run_id=run_id,
+                flow=WorkflowFlow.RELOCATE,
+                phase=WorkflowPhase.FAILED,
+                outcome="relocate_resume_action_failed",
+                diagnostics=[
+                    Diagnostic(
+                        code="relocate_resume_run_missing",
+                        severity=DiagnosticSeverity.ERROR,
+                        message=str(exc),
+                        details={"exceptionType": type(exc).__name__, "action": action},
+                    )
+                ],
+            )
+        if run.flow != WorkflowFlow.RELOCATE.value:
+            diagnostic = Diagnostic(
+                code="relocate_resume_wrong_flow",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"run is not a relocate workflow: {run.flow}",
+                details={"runId": run_id, "flow": run.flow, "action": action},
+            )
+            run.diagnostics.append(diagnostic)
+            store.write_run(run)
+            return self._result(
+                ok=False,
+                store=store,
+                run_id=run_id,
+                phase=run.phase,
+                outcome="relocate_resume_action_rejected",
+            )
+        if run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
+            diagnostic = Diagnostic(
+                code="relocate_resume_wrong_phase",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"relocate metadata resume requires phase review_required, got {run.phase}",
+                details={"runId": run_id, "phase": run.phase, "action": action},
+            )
+            run.diagnostics.append(diagnostic)
+            store.write_run(run)
+            return self._result(
+                ok=False,
+                store=store,
+                run_id=run_id,
+                phase=run.phase,
+                outcome="relocate_resume_action_rejected",
+            )
+
+        params: dict[str, Any] = {"runId": run_id}
+        queue_artifacts = [aid for aid in run.artifact_ids if run.artifacts.get(aid) and run.artifacts[aid].type == "relocate_metadata_queue"]
+        diagnostics_artifacts = [aid for aid in run.artifact_ids if run.artifacts.get(aid) and run.artifacts[aid].type == "relocate_diagnostics"]
+        if action == "prepare_relocate_metadata":
+            params["artifactIds"] = queue_artifacts or diagnostics_artifacts
+            next_action = NextAction(
+                action="prepare_relocate_metadata",
+                label="Prepare missing or blocked relocate metadata",
+                tool="video_pipeline_resume",
+                params=params,
+                requires_human_input=False,
+            )
+            outcome = "relocate_metadata_preparation_pending"
+        else:
+            gate_ids = [
+                gid
+                for gid in run.review_gate_ids
+                if gid in run.review_gates and run.review_gates[gid].status == ReviewGateStatus.OPEN.value
+            ]
+            if gate_ids:
+                params["gateId"] = gate_ids[0]
+                params["artifactIds"] = run.review_gates[gate_ids[0]].artifact_ids
+            else:
+                params["artifactIds"] = diagnostics_artifacts
+            next_action = NextAction(
+                action="review_relocate_metadata",
+                label="Review blocked relocate metadata",
+                tool="video_pipeline_resume",
+                params=params,
+                requires_human_input=True,
+            )
+            outcome = "relocate_metadata_review_pending"
+
+        return self._result(
+            ok=False,
+            store=store,
+            run_id=run_id,
+            phase=run.phase,
+            outcome=outcome,
+            next_actions=[next_action],
+        )
 
     def _block_apply(
         self,

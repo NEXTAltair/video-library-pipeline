@@ -200,6 +200,47 @@ def test_relocate_dry_run_suspicious_title_creates_review_gate(tmp_path) -> None
     assert payload["gates"][0]["artifactIds"] == ["relocate_diagnostics"]
 
 
+def test_relocate_metadata_resume_actions_do_not_block_review_required_run(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_resume_gap", scenario="metadata_gap")
+    harness.dry_run()
+    service = RelocateWorkflowService(py_root=tmp_path)
+
+    result = service.resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="prepare_relocate_metadata",
+    )
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "review_required"
+    assert payload["outcome"] == "relocate_metadata_preparation_pending"
+    assert payload["nextActions"][0]["action"] == "prepare_relocate_metadata"
+    manifest = harness.manifest()
+    assert manifest["phase"] == "review_required"
+    assert payload["diagnostics"][-1]["code"] == "relocate_metadata_preparation_required"
+
+
+def test_relocate_review_resume_action_keeps_gate_open_without_blocking(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_resume_review", scenario="suspicious")
+    harness.dry_run()
+    service = RelocateWorkflowService(py_root=tmp_path)
+
+    result = service.resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="review_relocate_metadata",
+    )
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "review_required"
+    assert payload["outcome"] == "relocate_metadata_review_pending"
+    assert payload["nextActions"][0]["action"] == "review_relocate_metadata"
+    assert payload["nextActions"][0]["params"]["gateId"] == "relocate_metadata_review"
+    manifest = harness.manifest()
+    assert manifest["phase"] == "review_required"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["status"] == "open"
+
+
 def test_relocate_dry_run_already_correct_requires_explicit_count(tmp_path) -> None:
     harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_already", scenario="already_correct")
 
