@@ -560,6 +560,7 @@ def test_source_root_apply_rejects_other_flow_without_blocking_run(tmp_path) -> 
 
     payload = result.to_dict()
     assert payload["ok"] is False
+    assert payload["flow"] == "relocate"
     assert payload["phase"] == "plan_ready"
     assert payload["outcome"] == "source_root_apply_rejected"
     assert payload["diagnostics"][-1]["code"] == "source_root_apply_wrong_flow"

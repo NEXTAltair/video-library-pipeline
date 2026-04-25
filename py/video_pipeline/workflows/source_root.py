@@ -701,7 +701,7 @@ class SourceRootWorkflowService:
         return WorkflowResult(
             ok=False,
             run_id=run_id,
-            flow=WorkflowFlow.SOURCE_ROOT,
+            flow=final_run.flow,
             phase=final_run.phase,
             outcome=outcome,
             artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
