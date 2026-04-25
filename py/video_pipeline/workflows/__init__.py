@@ -16,6 +16,7 @@ from .models import (
 )
 from .state_machine import InvalidTransitionError, can_transition, validate_transition
 from .store import WorkflowStore
+from .source_root import SourceRootDryRunConfig, SourceRootWorkflowService
 
 __all__ = [
     "ArtifactRef",
@@ -26,6 +27,8 @@ __all__ = [
     "NextAction",
     "ReviewGate",
     "ReviewGateStatus",
+    "SourceRootDryRunConfig",
+    "SourceRootWorkflowService",
     "WorkflowFlow",
     "WorkflowPhase",
     "WorkflowResult",
