@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from video_pipeline.domain.move_apply_stats import aggregate_move_apply
 from video_pipeline.platform.pathscan_common import (
     canonicalize_windows_path,
     windows_to_wsl_path,
@@ -17,17 +18,25 @@ from video_pipeline.platform.pathscan_common import (
 
 from .models import (
     ArtifactRef,
+    ArtifactStatus,
     Diagnostic,
     DiagnosticSeverity,
     NextAction,
+    ReviewGateStatus,
     WorkflowFlow,
     WorkflowPhase,
     WorkflowResult,
 )
-from .store import WorkflowStore
+from .store import WorkflowStore, sha256_file
 
 PythonRunner = Callable[[Path, list[str], str | None], str]
 PowerShellRunner = Callable[[str, list[str]], dict[str, Any]]
+
+
+class SourceRootApplyRejected(Exception):
+    def __init__(self, diagnostic: Diagnostic) -> None:
+        self.diagnostic = diagnostic
+        super().__init__(diagnostic.message)
 
 
 @dataclass
@@ -40,6 +49,14 @@ class SourceRootDryRunConfig:
     max_files_per_run: int = 200
     allow_needs_review: bool = False
     run_id: str | None = None
+
+
+@dataclass
+class SourceRootApplyConfig:
+    windows_ops_root: str
+    run_id: str
+    artifact_id: str = "source_root_move_plan"
+    db: str | None = None
 
 
 def run_py_uv(script: Path, args: list[str], cwd: str | None = None) -> str:
@@ -92,6 +109,11 @@ def path_for_powershell(path: Path) -> str:
     return value
 
 
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 class SourceRootWorkflowService:
     def __init__(
         self,
@@ -140,6 +162,162 @@ class SourceRootWorkflowService:
                 artifacts=[failed_run.artifacts[aid] for aid in failed_run.artifact_ids],
                 gates=[failed_run.review_gates[gid] for gid in failed_run.review_gate_ids],
                 diagnostics=failed_run.diagnostics,
+            )
+
+    def resume(self, config: SourceRootApplyConfig, *, action: str = "apply_source_root_move_plan") -> WorkflowResult:
+        if action != "apply_source_root_move_plan":
+            store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+            diagnostic = Diagnostic(
+                code="source_root_resume_action_unsupported",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"unsupported sourceRoot resume action: {action}",
+                details={"action": action},
+            )
+            return self._block_apply(store, config.run_id, "source_root_resume_action_unsupported", diagnostic)
+        return self.apply(config)
+
+    def apply(self, config: SourceRootApplyConfig) -> WorkflowResult:
+        store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        try:
+            plan_artifact = self._validate_apply_plan(store, config.run_id, config.artifact_id)
+        except SourceRootApplyRejected as exc:
+            return self._block_apply(store, config.run_id, "source_root_apply_rejected", exc.diagnostic)
+        except Exception as exc:
+            diagnostic = Diagnostic(
+                code="source_root_apply_rejected",
+                severity=DiagnosticSeverity.ERROR,
+                message=str(exc),
+                details={"exceptionType": type(exc).__name__, "artifactId": config.artifact_id},
+            )
+            return self._block_apply(store, config.run_id, "source_root_apply_rejected", diagnostic)
+
+        run = store.read_run(config.run_id)
+        db_path = str(local_path_from_any(config.db or str(run.config_snapshot.get("db") or "")))
+        run_dir = store.run_dir(config.run_id)
+        apply_dir = run_dir / "apply"
+        logs_dir = run_dir / "logs"
+        ops_root_win = canonicalize_windows_path(str(local_path_from_any(config.windows_ops_root)))
+        scripts_root_win = canonicalize_windows_path(str(local_path_from_any(config.windows_ops_root) / "scripts"))
+
+        if self.powershell_runner is None:
+            from video_pipeline.platform.windows_pwsh_bridge import run_pwsh_json
+
+            powershell_runner = run_pwsh_json
+        else:
+            powershell_runner = self.powershell_runner
+
+        try:
+            apply_meta = powershell_runner(
+                scripts_root_win + r"\apply_move_plan.ps1",
+                ["-PlanJsonl", path_for_powershell(Path(plan_artifact.path)), "-OpsRoot", ops_root_win],
+            )
+            applied_out = str(apply_meta.get("out_jsonl") or "")
+            if not applied_out:
+                raise RuntimeError("apply_move_plan.ps1 did not return out_jsonl")
+            applied_path = local_path_from_any(applied_out)
+            apply_log_artifact = store.register_artifact(
+                config.run_id,
+                artifact_type="source_root_move_apply_log",
+                path=applied_path,
+                producer="apply_move_plan.ps1",
+                artifact_id="source_root_move_apply_log",
+                input_artifact_ids=[plan_artifact.id],
+                metadata={"summary": apply_meta},
+            )
+
+            db_update_raw = self.python_runner(
+                self.py_root / "update_db_paths_from_move_apply.py",
+                [
+                    "--db",
+                    db_path,
+                    "--applied",
+                    str(applied_path),
+                    "--run-kind",
+                    "source_root_apply",
+                    "--event-kind",
+                    "move",
+                    "--detail-source",
+                    "SourceRootWorkflowService.apply",
+                ],
+                str(self.py_root),
+            )
+            db_update_summary = parse_last_json_object_line(db_update_raw)
+            db_update_path = logs_dir / "source_root_db_update.json"
+            write_json(db_update_path, db_update_summary or {"raw": db_update_raw})
+            db_update_artifact = store.register_artifact(
+                config.run_id,
+                artifact_type="source_root_db_update",
+                path=db_update_path,
+                producer="update_db_paths_from_move_apply.py",
+                artifact_id="source_root_db_update",
+                input_artifact_ids=[apply_log_artifact.id],
+                metadata={"summary": db_update_summary},
+            )
+
+            move_stats = aggregate_move_apply(applied_path)
+            stats_path = apply_dir / "source_root_move_apply_stats.json"
+            write_json(stats_path, move_stats)
+            stats_artifact = store.register_artifact(
+                config.run_id,
+                artifact_type="source_root_move_apply_stats",
+                path=stats_path,
+                producer="move_apply_stats.py",
+                artifact_id="source_root_move_apply_stats",
+                input_artifact_ids=[apply_log_artifact.id],
+                metadata={"summary": move_stats},
+            )
+
+            if int(move_stats.get("failed") or 0) > 0:
+                diagnostic = Diagnostic(
+                    code="source_root_apply_move_failures",
+                    severity=DiagnosticSeverity.ERROR,
+                    message="one or more move operations failed during sourceRoot apply",
+                    details={"moveApplyStats": move_stats},
+                )
+                self._record_failure(store, config.run_id, diagnostic)
+                final_run = store.read_run(config.run_id)
+                return WorkflowResult(
+                    ok=False,
+                    run_id=config.run_id,
+                    flow=WorkflowFlow.SOURCE_ROOT,
+                    phase=final_run.phase,
+                    outcome="source_root_apply_failed",
+                    artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
+                    gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
+                    diagnostics=final_run.diagnostics,
+                )
+
+            store.transition_run(config.run_id, WorkflowPhase.APPLIED)
+            store.transition_run(config.run_id, WorkflowPhase.COMPLETE)
+            final_run = store.read_run(config.run_id)
+            return WorkflowResult(
+                ok=True,
+                run_id=config.run_id,
+                flow=WorkflowFlow.SOURCE_ROOT,
+                phase=WorkflowPhase.COMPLETE,
+                outcome="source_root_apply_complete",
+                artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
+                gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
+                diagnostics=final_run.diagnostics,
+            )
+        except Exception as exc:
+            diagnostic = Diagnostic(
+                code="source_root_apply_failed",
+                severity=DiagnosticSeverity.ERROR,
+                message=str(exc),
+                details={"exceptionType": type(exc).__name__, "artifactId": config.artifact_id},
+            )
+            self._record_failure(store, config.run_id, diagnostic)
+            final_run = store.read_run(config.run_id)
+            return WorkflowResult(
+                ok=False,
+                run_id=config.run_id,
+                flow=WorkflowFlow.SOURCE_ROOT,
+                phase=final_run.phase,
+                outcome="source_root_apply_failed",
+                artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
+                gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
+                diagnostics=final_run.diagnostics,
             )
 
     def _dry_run_existing(
@@ -381,10 +559,153 @@ class SourceRootWorkflowService:
                 NextAction(
                     action="review_plan",
                     label="Review sourceRoot move plan",
-                    params={"runId": run_id, "artifactId": plan_artifact.id},
+                    tool="video_pipeline_resume",
+                    params={
+                        "runId": run_id,
+                        "artifactId": plan_artifact.id,
+                        "resumeAction": "apply_source_root_move_plan",
+                    },
                     requires_human_input=True,
                 )
             ],
+            diagnostics=final_run.diagnostics,
+        )
+
+    def _validate_apply_plan(self, store: WorkflowStore, run_id: str, artifact_id: str) -> ArtifactRef:
+        run = store.read_run(run_id)
+        if run.flow != WorkflowFlow.SOURCE_ROOT.value:
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_wrong_flow",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"run is not a sourceRoot workflow: {run.flow}",
+                details={"runId": run_id, "flow": run.flow},
+            ))
+        if run.phase != WorkflowPhase.PLAN_READY.value:
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_wrong_phase",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"sourceRoot apply requires phase plan_ready, got {run.phase}",
+                details={"runId": run_id, "phase": run.phase},
+            ))
+
+        blocking_gates = [
+            gate
+            for gate in run.review_gates.values()
+            if gate.requires_human_review
+            and gate.status in {ReviewGateStatus.OPEN.value, ReviewGateStatus.REJECTED.value}
+        ]
+        if blocking_gates:
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_review_gate_blocked",
+                severity=DiagnosticSeverity.ERROR,
+                message="sourceRoot apply is blocked by unresolved or rejected review gates",
+                details={
+                    "runId": run_id,
+                    "blockingGateIds": [gate.id for gate in blocking_gates],
+                    "blockingGateStatuses": {gate.id: gate.status for gate in blocking_gates},
+                },
+            ))
+
+        plan_artifact = run.artifacts.get(artifact_id)
+        if plan_artifact is None:
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_plan_not_in_run",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"move plan artifact does not belong to run {run_id}: {artifact_id}",
+                details={"runId": run_id, "artifactId": artifact_id},
+            ))
+        if plan_artifact.type != "source_root_move_plan":
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_invalid_artifact_type",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"artifact is not a sourceRoot move plan: {plan_artifact.type}",
+                details={"runId": run_id, "artifactId": artifact_id, "artifactType": plan_artifact.type},
+            ))
+        if plan_artifact.status != ArtifactStatus.AVAILABLE.value:
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_plan_not_available",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"move plan artifact is not available: {plan_artifact.status}",
+                details={"runId": run_id, "artifactId": artifact_id, "artifactStatus": plan_artifact.status},
+            ))
+
+        plan_artifact_ids = [
+            aid
+            for aid in run.artifact_ids
+            if aid in run.artifacts and run.artifacts[aid].type == "source_root_move_plan"
+        ]
+        if not plan_artifact_ids or plan_artifact_ids[-1] != artifact_id:
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_plan_not_current",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"move plan artifact is not current for run {run_id}: {artifact_id}",
+                details={
+                    "runId": run_id,
+                    "artifactId": artifact_id,
+                    "currentArtifactId": plan_artifact_ids[-1] if plan_artifact_ids else None,
+                },
+            ))
+
+        plan_path = Path(plan_artifact.path)
+        if not plan_path.exists():
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_plan_missing",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"move plan artifact file is missing: {plan_path}",
+                details={"runId": run_id, "artifactId": artifact_id, "path": str(plan_path)},
+            ))
+        current_sha = sha256_file(plan_path)
+        if current_sha != plan_artifact.sha256:
+            raise SourceRootApplyRejected(Diagnostic(
+                code="source_root_apply_plan_checksum_mismatch",
+                severity=DiagnosticSeverity.ERROR,
+                message=f"move plan artifact checksum changed: {plan_path}",
+                details={
+                    "runId": run_id,
+                    "artifactId": artifact_id,
+                    "path": str(plan_path),
+                    "expectedSha256": plan_artifact.sha256,
+                    "actualSha256": current_sha,
+                },
+            ))
+        return plan_artifact
+
+    def _block_apply(
+        self,
+        store: WorkflowStore,
+        run_id: str,
+        outcome: str,
+        diagnostic: Diagnostic,
+    ) -> WorkflowResult:
+        try:
+            run = store.read_run(run_id)
+        except Exception:
+            return WorkflowResult(
+                ok=False,
+                run_id=run_id,
+                flow=WorkflowFlow.SOURCE_ROOT,
+                phase=WorkflowPhase.FAILED,
+                outcome=outcome,
+                diagnostics=[diagnostic],
+            )
+
+        run.diagnostics.append(diagnostic)
+        store.write_run(run)
+        if run.flow == WorkflowFlow.SOURCE_ROOT.value and run.phase not in {
+            WorkflowPhase.BLOCKED.value,
+            WorkflowPhase.COMPLETE.value,
+            WorkflowPhase.FAILED.value,
+        }:
+            store.transition_run(run_id, WorkflowPhase.BLOCKED)
+        final_run = store.read_run(run_id)
+        return WorkflowResult(
+            ok=False,
+            run_id=run_id,
+            flow=final_run.flow,
+            phase=final_run.phase,
+            outcome=outcome,
+            artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
+            gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
             diagnostics=final_run.diagnostics,
         )
 

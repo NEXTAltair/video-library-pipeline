@@ -1,7 +1,15 @@
 import json
 from pathlib import Path
 
-from video_pipeline.workflows import SourceRootDryRunConfig, SourceRootWorkflowService
+from video_pipeline.workflows import (
+    SourceRootApplyConfig,
+    SourceRootDryRunConfig,
+    SourceRootWorkflowService,
+    ReviewGateStatus,
+    WorkflowFlow,
+    WorkflowPhase,
+    WorkflowStore,
+)
 
 
 def make_config(tmp_path: Path, run_id: str = "run_source_root", db: str | None = None) -> SourceRootDryRunConfig:
@@ -115,8 +123,12 @@ def test_source_root_dry_run_registers_core_artifacts(tmp_path) -> None:
         {
             "action": "review_plan",
             "label": "Review sourceRoot move plan",
-            "tool": None,
-            "params": {"runId": "run_source_root", "artifactId": "source_root_move_plan"},
+            "tool": "video_pipeline_resume",
+            "params": {
+                "runId": "run_source_root",
+                "artifactId": "source_root_move_plan",
+                "resumeAction": "apply_source_root_move_plan",
+            },
             "requiresHumanInput": True,
         }
     ]
@@ -381,3 +393,244 @@ def test_source_root_dry_run_failure_returns_failed_result_and_diagnostic(tmp_pa
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["phase"] == "failed"
     assert manifest["diagnostics"][0]["message"] == "queue generation failed"
+
+
+def register_plan_ready_run(tmp_path: Path, run_id: str = "run_source_root_apply") -> tuple[SourceRootApplyConfig, Path]:
+    ops_root = tmp_path / "ops"
+    store = WorkflowStore(ops_root)
+    store.init_run(
+        WorkflowFlow.SOURCE_ROOT,
+        run_id=run_id,
+        config_snapshot={"windowsOpsRoot": str(ops_root), "db": str(ops_root / "db" / "mediaops.sqlite")},
+    )
+    plan_path = ops_root / "runs" / run_id / "plan" / "move_plan_from_inventory.jsonl"
+    plan_path.write_text(
+        "\n".join([
+            json.dumps({"_meta": {"kind": "move_plan_from_inventory"}}, ensure_ascii=False),
+            json.dumps(
+                {
+                    "op": "move",
+                    "path_id": "p1",
+                    "src": r"B:\Unwatched\show.mp4",
+                    "dst": r"B:\VideoLibrary\Show\show.mp4",
+                },
+                ensure_ascii=False,
+            ),
+        ])
+        + "\n",
+        encoding="utf-8",
+    )
+    store.register_artifact(
+        run_id,
+        artifact_type="source_root_move_plan",
+        path=plan_path,
+        producer="make_move_plan_from_inventory.py",
+        artifact_id="source_root_move_plan",
+    )
+    store.transition_run(run_id, WorkflowPhase.PLAN_READY)
+    return SourceRootApplyConfig(windows_ops_root=str(ops_root), run_id=run_id), plan_path
+
+
+def test_source_root_apply_rejects_plan_artifact_from_another_run(tmp_path) -> None:
+    ops_root = tmp_path / "ops"
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_a", config_snapshot={"db": str(ops_root / "db.sqlite")})
+    foreign_plan = ops_root / "runs" / "run_a" / "plan" / "foreign.jsonl"
+    foreign_plan.write_text("{}\n", encoding="utf-8")
+    store.register_artifact(
+        "run_a",
+        artifact_type="source_root_move_plan",
+        path=foreign_plan,
+        producer="test",
+        artifact_id="foreign_plan",
+    )
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_b", config_snapshot={"db": str(ops_root / "db.sqlite")})
+    store.transition_run("run_b", WorkflowPhase.PLAN_READY)
+
+    service = SourceRootWorkflowService(py_root=tmp_path)
+    result = service.apply(SourceRootApplyConfig(windows_ops_root=str(ops_root), run_id="run_b", artifact_id="foreign_plan"))
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "blocked"
+    assert payload["outcome"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_plan_not_in_run"
+
+
+def test_source_root_apply_rejects_open_review_gate(tmp_path) -> None:
+    cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_gate_blocked")
+    store = WorkflowStore(Path(cfg.windows_ops_root))
+    store.create_review_gate(
+        cfg.run_id,
+        gate_type="metadata_review",
+        artifact_ids=["metadata_review_yaml_0001"],
+        gate_id="metadata_review",
+    )
+
+    service = SourceRootWorkflowService(py_root=tmp_path)
+    result = service.apply(cfg)
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "blocked"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_review_gate_blocked"
+    assert payload["diagnostics"][-1]["details"]["blockingGateIds"] == ["metadata_review"]
+
+
+def test_source_root_apply_rejects_rejected_review_gate(tmp_path) -> None:
+    cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_gate_rejected")
+    store = WorkflowStore(Path(cfg.windows_ops_root))
+    store.create_review_gate(
+        cfg.run_id,
+        gate_type="metadata_review",
+        artifact_ids=["metadata_review_yaml_0001"],
+        gate_id="metadata_review",
+    )
+    store.update_review_gate(
+        cfg.run_id,
+        "metadata_review",
+        status=ReviewGateStatus.REJECTED,
+        resolution={"reason": "bad metadata"},
+    )
+
+    service = SourceRootWorkflowService(py_root=tmp_path)
+    result = service.apply(cfg)
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "blocked"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_review_gate_blocked"
+    assert payload["diagnostics"][-1]["details"]["blockingGateStatuses"] == {"metadata_review": "rejected"}
+
+
+def test_source_root_apply_rejects_checksum_mismatch(tmp_path) -> None:
+    cfg, plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_stale_plan")
+    plan_path.write_text("{}\n", encoding="utf-8")
+
+    service = SourceRootWorkflowService(py_root=tmp_path)
+    result = service.apply(cfg)
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "blocked"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_plan_checksum_mismatch"
+
+
+def test_source_root_apply_rejects_missing_run_without_crashing(tmp_path) -> None:
+    cfg = SourceRootApplyConfig(windows_ops_root=str(tmp_path / "ops"), run_id="run_missing")
+    service = SourceRootWorkflowService(py_root=tmp_path)
+
+    result = service.apply(cfg)
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "failed"
+    assert payload["outcome"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["details"]["exceptionType"] == "FileNotFoundError"
+
+
+def test_source_root_apply_rejects_terminal_run_without_blocked_transition(tmp_path) -> None:
+    cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_terminal")
+    store = WorkflowStore(Path(cfg.windows_ops_root))
+    store.transition_run(cfg.run_id, WorkflowPhase.COMPLETE)
+
+    service = SourceRootWorkflowService(py_root=tmp_path)
+    result = service.apply(cfg)
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "complete"
+    assert payload["outcome"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_wrong_phase"
+    manifest_path = Path(cfg.windows_ops_root) / "runs" / cfg.run_id / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["phase"] == "complete"
+    assert manifest["diagnostics"][-1]["code"] == "source_root_apply_wrong_phase"
+
+
+def test_source_root_apply_rejects_other_flow_without_blocking_run(tmp_path) -> None:
+    ops_root = tmp_path / "ops"
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.RELOCATE, run_id="run_relocate", config_snapshot={"db": str(ops_root / "db.sqlite")})
+    store.transition_run("run_relocate", WorkflowPhase.PLAN_READY)
+
+    service = SourceRootWorkflowService(py_root=tmp_path)
+    result = service.apply(SourceRootApplyConfig(windows_ops_root=str(ops_root), run_id="run_relocate"))
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["flow"] == "relocate"
+    assert payload["phase"] == "plan_ready"
+    assert payload["outcome"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_wrong_flow"
+    manifest_path = ops_root / "runs" / "run_relocate" / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["flow"] == "relocate"
+    assert manifest["phase"] == "plan_ready"
+    assert manifest["diagnostics"][-1]["code"] == "source_root_apply_wrong_flow"
+
+
+def test_source_root_apply_registers_apply_artifacts_and_completes(tmp_path) -> None:
+    cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_apply_success")
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_powershell_runner(script: str, args: list[str]) -> dict:
+        assert script.endswith(r"\apply_move_plan.ps1")
+        assert "-PlanJsonl" in args
+        out_path = Path(cfg.windows_ops_root) / "move" / "move_apply_test.jsonl"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            "\n".join([
+                json.dumps({"_meta": {"kind": "move_apply"}}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "op": "move",
+                        "ts": "2026-04-25T00:00:00Z",
+                        "path_id": "p1",
+                        "src": r"B:\Unwatched\show.mp4",
+                        "dst": r"B:\VideoLibrary\Show\show.mp4",
+                        "ok": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            ])
+            + "\n",
+            encoding="utf-8",
+        )
+        return {"out_jsonl": str(out_path), "run_id": "apply_test"}
+
+    def fake_python_runner(script: Path, args: list[str], _cwd: str | None = None) -> str:
+        calls.append((script.name, list(args)))
+        assert script.name == "update_db_paths_from_move_apply.py"
+        assert "--db" in args
+        assert "--applied" in args
+        return json.dumps({"updated": 1, "events": 1, "run_kind": "source_root_apply"}, ensure_ascii=False)
+
+    service = SourceRootWorkflowService(
+        python_runner=fake_python_runner,
+        powershell_runner=fake_powershell_runner,
+        py_root=tmp_path,
+    )
+
+    result = service.resume(cfg, action="apply_source_root_move_plan")
+
+    payload = result.to_dict()
+    assert payload["ok"] is True
+    assert payload["phase"] == "complete"
+    assert payload["outcome"] == "source_root_apply_complete"
+    assert [name for name, _args in calls] == ["update_db_paths_from_move_apply.py"]
+
+    manifest_path = Path(cfg.windows_ops_root) / "runs" / cfg.run_id / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["phase"] == "complete"
+    assert manifest["status"] == "complete"
+    assert manifest["artifactIds"] == [
+        "source_root_move_plan",
+        "source_root_move_apply_log",
+        "source_root_db_update",
+        "source_root_move_apply_stats",
+    ]
+    assert manifest["artifacts"]["source_root_move_apply_log"]["inputArtifactIds"] == ["source_root_move_plan"]
+    assert manifest["artifacts"]["source_root_db_update"]["inputArtifactIds"] == ["source_root_move_apply_log"]
+    assert manifest["artifacts"]["source_root_move_apply_stats"]["metadata"]["summary"]["succeeded"] == 1
