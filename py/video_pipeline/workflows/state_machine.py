@@ -9,6 +9,7 @@ VALID_TRANSITIONS: dict[WorkflowPhase, set[WorkflowPhase]] = {
     WorkflowPhase.CREATED: {
         WorkflowPhase.INVENTORY_READY,
         WorkflowPhase.METADATA_EXTRACTED,
+        WorkflowPhase.PLAN_READY,
         WorkflowPhase.BLOCKED,
         WorkflowPhase.FAILED,
     },

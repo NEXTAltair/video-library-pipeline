@@ -27,18 +27,19 @@ def test_valid_adr_transitions_are_accepted() -> None:
 
 def test_invalid_transition_reports_structured_diagnostic() -> None:
     with pytest.raises(InvalidTransitionError) as excinfo:
-        validate_transition(WorkflowPhase.CREATED, WorkflowPhase.PLAN_READY)
+        validate_transition(WorkflowPhase.CREATED, WorkflowPhase.APPLIED)
 
     diagnostic = excinfo.value.diagnostic
     assert diagnostic.code == "workflow_invalid_phase_transition"
     assert diagnostic.severity == DiagnosticSeverity.ERROR
     assert diagnostic.details["fromPhase"] == "created"
-    assert diagnostic.details["toPhase"] == "plan_ready"
+    assert diagnostic.details["toPhase"] == "applied"
     assert diagnostic.details["allowedNextPhases"] == [
         "blocked",
         "failed",
         "inventory_ready",
         "metadata_extracted",
+        "plan_ready",
     ]
 
 
