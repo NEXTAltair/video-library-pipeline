@@ -516,6 +516,39 @@ def test_source_root_apply_rejects_checksum_mismatch(tmp_path) -> None:
     assert payload["diagnostics"][-1]["code"] == "source_root_apply_plan_checksum_mismatch"
 
 
+def test_source_root_apply_rejects_missing_run_without_crashing(tmp_path) -> None:
+    cfg = SourceRootApplyConfig(windows_ops_root=str(tmp_path / "ops"), run_id="run_missing")
+    service = SourceRootWorkflowService(py_root=tmp_path)
+
+    result = service.apply(cfg)
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "failed"
+    assert payload["outcome"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["details"]["exceptionType"] == "FileNotFoundError"
+
+
+def test_source_root_apply_rejects_terminal_run_without_blocked_transition(tmp_path) -> None:
+    cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_terminal")
+    store = WorkflowStore(Path(cfg.windows_ops_root))
+    store.transition_run(cfg.run_id, WorkflowPhase.COMPLETE)
+
+    service = SourceRootWorkflowService(py_root=tmp_path)
+    result = service.apply(cfg)
+
+    payload = result.to_dict()
+    assert payload["ok"] is False
+    assert payload["phase"] == "complete"
+    assert payload["outcome"] == "source_root_apply_rejected"
+    assert payload["diagnostics"][-1]["code"] == "source_root_apply_wrong_phase"
+    manifest_path = Path(cfg.windows_ops_root) / "runs" / cfg.run_id / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["phase"] == "complete"
+    assert manifest["diagnostics"][-1]["code"] == "source_root_apply_wrong_phase"
+
+
 def test_source_root_apply_registers_apply_artifacts_and_completes(tmp_path) -> None:
     cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_apply_success")
     calls: list[tuple[str, list[str]]] = []

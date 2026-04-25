@@ -677,10 +677,25 @@ class SourceRootWorkflowService:
         outcome: str,
         diagnostic: Diagnostic,
     ) -> WorkflowResult:
-        run = store.read_run(run_id)
+        try:
+            run = store.read_run(run_id)
+        except Exception:
+            return WorkflowResult(
+                ok=False,
+                run_id=run_id,
+                flow=WorkflowFlow.SOURCE_ROOT,
+                phase=WorkflowPhase.FAILED,
+                outcome=outcome,
+                diagnostics=[diagnostic],
+            )
+
         run.diagnostics.append(diagnostic)
         store.write_run(run)
-        if run.phase != WorkflowPhase.BLOCKED.value:
+        if run.phase not in {
+            WorkflowPhase.BLOCKED.value,
+            WorkflowPhase.COMPLETE.value,
+            WorkflowPhase.FAILED.value,
+        }:
             store.transition_run(run_id, WorkflowPhase.BLOCKED)
         final_run = store.read_run(run_id)
         return WorkflowResult(
