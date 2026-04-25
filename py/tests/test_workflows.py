@@ -94,6 +94,15 @@ def test_init_run_fails_for_existing_run_id_without_clobbering_manifest(tmp_path
     assert after["flow"] == "source_root"
 
 
+def test_init_run_validates_flow_before_creating_run_directory(tmp_path) -> None:
+    store = WorkflowStore(tmp_path)
+
+    with pytest.raises(ValueError):
+        store.init_run("bad_flow", run_id="run_bad_flow")
+
+    assert not (tmp_path / "runs" / "run_bad_flow").exists()
+
+
 def test_transition_run_updates_phase_status_and_manifest(tmp_path) -> None:
     store = WorkflowStore(tmp_path)
     store.init_run(WorkflowFlow.RELOCATE, run_id="run_transition")

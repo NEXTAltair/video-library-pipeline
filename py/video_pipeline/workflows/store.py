@@ -68,6 +68,7 @@ class WorkflowStore:
         config_snapshot: dict[str, Any] | None = None,
     ) -> WorkflowRun:
         rid = validate_run_id(run_id or generate_run_id())
+        flow_value = WorkflowFlow(flow).value
         run_path = self.run_dir(rid)
         if run_path.exists():
             raise FileExistsError(f"workflow run already exists: {rid}")
@@ -77,7 +78,7 @@ class WorkflowStore:
         now = now_iso()
         run = WorkflowRun(
             run_id=rid,
-            flow=WorkflowFlow(flow).value,
+            flow=flow_value,
             phase=WorkflowPhase.CREATED.value,
             status=phase_status(WorkflowPhase.CREATED).value,
             created_at=now,
