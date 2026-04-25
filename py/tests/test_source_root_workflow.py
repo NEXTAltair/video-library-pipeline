@@ -54,7 +54,10 @@ def test_source_root_dry_run_registers_core_artifacts(tmp_path) -> None:
             outdir = Path(args[args.index("--outdir") + 1])
             output_path = outdir / "llm_filename_extract_output_0001_0001.jsonl"
             output_path.write_text(
-                json.dumps({"path_id": "p1", "program_title": "Show", "air_date": "2026-04-25"}, ensure_ascii=False)
+                json.dumps(
+                    {"path_id": "p1", "program_title": "Show", "air_date": "2026-04-25", "needs_review": False},
+                    ensure_ascii=False,
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -64,6 +67,18 @@ def test_source_root_dry_run_registers_core_artifacts(tmp_path) -> None:
                     "outputJsonlPaths": [str(output_path)],
                     "latestOutputJsonlPath": str(output_path),
                     "processed": 1,
+                },
+                ensure_ascii=False,
+            )
+        if script.name == "export_program_yaml.py":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "outputPath": None,
+                    "reviewSummary": {"rowsNeedingReview": 0},
+                    "reviewCandidates": [],
+                    "reviewCandidatesTruncated": False,
+                    "skippedReason": "no_reviewable_rows",
                 },
                 ensure_ascii=False,
             )
@@ -128,7 +143,146 @@ def test_source_root_dry_run_registers_core_artifacts(tmp_path) -> None:
         "ingest_inventory_jsonl.py",
         "make_metadata_queue_from_inventory.py",
         "run_metadata_batches_promptv1.py",
+        "export_program_yaml.py",
         "make_move_plan_from_inventory.py",
+    ]
+
+
+def test_source_root_dry_run_registers_review_yaml_and_gate_when_review_required(tmp_path) -> None:
+    cfg = make_config(tmp_path, run_id="run_source_root_review")
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_powershell_runner(_script: str, args: list[str]) -> dict:
+        out_path = Path(args[args.index("-OutJsonl") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            "\n".join([
+                json.dumps({"_meta": {"kind": "unwatched_inventory"}}, ensure_ascii=False),
+                json.dumps({"path": r"B:\Unwatched\show.mp4", "name": "show.mp4"}, ensure_ascii=False),
+            ])
+            + "\n",
+            encoding="utf-8",
+        )
+        return {"out_jsonl": str(out_path), "warning_count": 0}
+
+    def fake_python_runner(script: Path, args: list[str], _cwd: str | None = None) -> str:
+        calls.append((script.name, list(args)))
+        if script.name == "make_metadata_queue_from_inventory.py":
+            out_path = Path(args[args.index("--out") + 1])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                "\n".join([
+                    json.dumps({"_meta": {"kind": "metadata_queue"}}, ensure_ascii=False),
+                    json.dumps({"path_id": "p1", "path": r"B:\Unwatched\show.mp4", "name": "show.mp4"}, ensure_ascii=False),
+                ])
+                + "\n",
+                encoding="utf-8",
+            )
+        elif script.name == "run_metadata_batches_promptv1.py":
+            outdir = Path(args[args.index("--outdir") + 1])
+            output_path = outdir / "llm_filename_extract_output_0001_0001.jsonl"
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "path_id": "p1",
+                        "path": r"B:\Unwatched\show.mp4",
+                        "program_title": "UNKNOWN",
+                        "air_date": "2026-04-25",
+                        "needs_review": True,
+                        "needs_review_reason": "unknown_program_title",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return json.dumps({"ok": True, "outputJsonlPaths": [str(output_path)]}, ensure_ascii=False)
+        elif script.name == "export_program_yaml.py":
+            out_path = Path(args[args.index("--output") + 1])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text("hints: []\n", encoding="utf-8")
+            return json.dumps(
+                {
+                    "ok": True,
+                    "sourceJsonlPath": args[args.index("--source-jsonl") + 1],
+                    "outputPath": str(out_path),
+                    "reviewSummary": {
+                        "rowsNeedingReview": 1,
+                        "needsReviewFlagRows": 1,
+                        "fieldCounts": {"needs_review": 1},
+                        "reasonCounts": {"unknown_program_title": 1},
+                    },
+                    "reviewCandidates": [{"pathId": "p1", "reasons": ["unknown_program_title"]}],
+                    "reviewCandidatesTruncated": False,
+                },
+                ensure_ascii=False,
+            )
+        elif script.name == "make_move_plan_from_inventory.py":
+            raise AssertionError("move plan must not be generated while metadata review gate is open")
+        return json.dumps({"ok": True}, ensure_ascii=False)
+
+    service = SourceRootWorkflowService(
+        python_runner=fake_python_runner,
+        powershell_runner=fake_powershell_runner,
+        py_root=tmp_path,
+    )
+
+    result = service.dry_run(cfg)
+
+    assert result.ok is False
+    payload = result.to_dict()
+    assert payload["phase"] == "review_required"
+    assert payload["outcome"] == "source_root_metadata_review_required"
+    assert payload["gates"] == [
+        {
+            "id": "metadata_review",
+            "type": "metadata_review",
+            "status": "open",
+            "artifactIds": ["metadata_review_yaml_0001"],
+            "requiresHumanReview": True,
+            "openedAt": payload["gates"][0]["openedAt"],
+            "resolvedAt": None,
+            "resolution": {},
+        }
+    ]
+    assert payload["nextActions"] == [
+        {
+            "action": "review_metadata",
+            "label": "Review extracted metadata YAML",
+            "tool": "video_pipeline_resume",
+            "params": {
+                "runId": "run_source_root_review",
+                "gateId": "metadata_review",
+                "artifactIds": ["metadata_review_yaml_0001"],
+                "reviewYamlPaths": [
+                    str(Path(cfg.windows_ops_root) / "runs" / "run_source_root_review" / "review" / "metadata_review_0001.yaml")
+                ],
+                "resumeAction": "apply_reviewed_metadata",
+            },
+            "requiresHumanInput": True,
+        }
+    ]
+
+    manifest_path = Path(cfg.windows_ops_root) / "runs" / "run_source_root_review" / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["phase"] == "review_required"
+    assert manifest["artifactIds"] == [
+        "source_root_inventory",
+        "metadata_queue",
+        "metadata_extract_output_0001",
+        "metadata_review_yaml_0001",
+    ]
+    assert manifest["reviewGateIds"] == ["metadata_review"]
+    review_artifact = manifest["artifacts"]["metadata_review_yaml_0001"]
+    assert review_artifact["type"] == "metadata_review_yaml"
+    assert review_artifact["inputArtifactIds"] == ["metadata_extract_output_0001"]
+    assert review_artifact["metadata"]["reviewSummary"]["rowsNeedingReview"] == 1
+    assert manifest["reviewGates"]["metadata_review"]["artifactIds"] == ["metadata_review_yaml_0001"]
+    assert [name for name, _args in calls] == [
+        "ingest_inventory_jsonl.py",
+        "make_metadata_queue_from_inventory.py",
+        "run_metadata_batches_promptv1.py",
+        "export_program_yaml.py",
     ]
 
 
@@ -167,6 +321,8 @@ def test_source_root_dry_run_normalizes_windows_db_path_for_python_stages(tmp_pa
             output_path = outdir / "llm_filename_extract_output_0001_0001.jsonl"
             output_path.write_text("{}\n", encoding="utf-8")
             return json.dumps({"ok": True, "outputJsonlPaths": [str(output_path)]}, ensure_ascii=False)
+        elif script.name == "export_program_yaml.py":
+            return json.dumps({"ok": True, "outputPath": None, "reviewSummary": {"rowsNeedingReview": 0}}, ensure_ascii=False)
         elif script.name == "make_move_plan_from_inventory.py":
             out_path = Path(args[args.index("--out") + 1])
             out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,7 +341,7 @@ def test_source_root_dry_run_normalizes_windows_db_path_for_python_stages(tmp_pa
     assert result.ok is True
     expected_db = "/mnt/b/_AI_WORK/db/mediaops.sqlite"
     assert calls
-    assert all(args[args.index("--db") + 1] == expected_db for _name, args in calls)
+    assert all(args[args.index("--db") + 1] == expected_db for _name, args in calls if "--db" in args)
 
     manifest_path = Path(cfg.windows_ops_root) / "runs" / "run_source_root_windows_db" / "run.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

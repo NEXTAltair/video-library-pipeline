@@ -152,6 +152,7 @@ class SourceRootWorkflowService:
         run_dir = store.run_dir(run_id)
         inventory_dir = run_dir / "inventory"
         metadata_dir = run_dir / "metadata"
+        review_dir = run_dir / "review"
         plan_dir = run_dir / "plan"
         inventory_path = inventory_dir / "inventory_unwatched.jsonl"
         queue_path = metadata_dir / "queue_unwatched_batch.jsonl"
@@ -258,6 +259,82 @@ class SourceRootWorkflowService:
                 )
             )
         store.transition_run(run_id, WorkflowPhase.METADATA_EXTRACTED)
+
+        review_artifacts: list[ArtifactRef] = []
+        for idx, metadata_artifact in enumerate(metadata_artifacts, start=1):
+            review_output_path = review_dir / f"metadata_review_{idx:04d}.yaml"
+            review_raw = self.python_runner(
+                self.py_root / "export_program_yaml.py",
+                [
+                    "--source-jsonl",
+                    metadata_artifact.path,
+                    "--output",
+                    str(review_output_path),
+                    "--only-if-reviewable",
+                ],
+                str(self.py_root),
+            )
+            review_summary = parse_last_json_object_line(review_raw)
+            if review_summary.get("ok") is not True:
+                raise RuntimeError(
+                    f"failed to export review YAML for {metadata_artifact.path}: {review_summary or review_raw}"
+                )
+            review_yaml_path = review_summary.get("outputPath")
+            if not isinstance(review_yaml_path, str) or not review_yaml_path:
+                continue
+            review_artifacts.append(
+                store.register_artifact(
+                    run_id,
+                    artifact_type="metadata_review_yaml",
+                    path=review_yaml_path,
+                    producer="export_program_yaml.py",
+                    artifact_id=f"metadata_review_yaml_{idx:04d}",
+                    input_artifact_ids=[metadata_artifact.id],
+                    metadata={
+                        "sourceJsonlPath": metadata_artifact.path,
+                        "reviewSummary": review_summary.get("reviewSummary") or {},
+                        "reviewCandidates": review_summary.get("reviewCandidates") or [],
+                        "reviewCandidatesTruncated": bool(review_summary.get("reviewCandidatesTruncated")),
+                    },
+                )
+            )
+
+        if review_artifacts:
+            gate = store.create_review_gate(
+                run_id,
+                gate_type="metadata_review",
+                artifact_ids=[artifact.id for artifact in review_artifacts],
+                gate_id="metadata_review",
+            )
+            store.transition_run(run_id, WorkflowPhase.REVIEW_REQUIRED)
+            final_run = store.read_run(run_id)
+            review_yaml_paths = [artifact.path for artifact in review_artifacts]
+            return WorkflowResult(
+                ok=False,
+                run_id=run_id,
+                flow=WorkflowFlow.SOURCE_ROOT,
+                phase=WorkflowPhase.REVIEW_REQUIRED,
+                outcome="source_root_metadata_review_required",
+                artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
+                gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
+                next_actions=[
+                    NextAction(
+                        action="review_metadata",
+                        label="Review extracted metadata YAML",
+                        tool="video_pipeline_resume",
+                        params={
+                            "runId": run_id,
+                            "gateId": gate.id,
+                            "artifactIds": [artifact.id for artifact in review_artifacts],
+                            "reviewYamlPaths": review_yaml_paths,
+                            "resumeAction": "apply_reviewed_metadata",
+                        },
+                        requires_human_input=True,
+                    )
+                ],
+                diagnostics=final_run.diagnostics,
+            )
+
         store.transition_run(run_id, WorkflowPhase.METADATA_ACCEPTED)
 
         plan_args = [
