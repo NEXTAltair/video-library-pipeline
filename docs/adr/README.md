@@ -9,13 +9,13 @@
 | [ADR-0001](0001-plugin-sdk-testing.md) | Accepted | OpenClaw SDK testing に沿ったプラグインテスト方針 |
 | [ADR-0002](0002-pipeline-architecture-and-review-gates.md) | Accepted | 全体パイプライン、Stage、Skillフロー、ヒューマンレビューゲート |
 | [ADR-0003](0003-windows-powershell-filesystem-boundary.md) | Accepted | WSL2/Windows境界、PowerShellスクリプト、長パス・Unicode対応 |
-| [ADR-0004](0004-tool-orchestration-and-follow-up-calls.md) | Accepted | ツール構成、followUpToolCalls、LLMサブエージェント |
+| [ADR-0004](0004-tool-orchestration-and-follow-up-calls.md) | Accepted (Legacy) | V1 ツール構成、followUpToolCalls、LLMサブエージェント |
 | [ADR-0005](0005-metadata-and-artifact-lifecycle.md) | Accepted | JSONL/YAMLアーティファクト、`windowsOpsRoot`、source遷移 |
 | [ADR-0006](0006-mediaops-db-routing-and-safety.md) | Accepted | `mediaops.sqlite`、ジャンルルーティング、安全機構 |
 | [ADR-0007](0007-openclaw-sdk-recommended-plugin-implementation.md) | Accepted | OpenClaw SDK公式docsに基づくplugin推奨実装方針 |
-| [ADR-0008](0008-v2-workflow-kernel-and-run-based-tool-surface.md) | Proposed | V2再設計向けのrun-based workflow kernelと公開tool surface方針 |
+| [ADR-0008](0008-v2-workflow-kernel-and-run-based-tool-surface.md) | Accepted | V2 run-based workflow kernel と公開tool surface方針 |
 
-`ADR-0008` は将来の V2 再設計方針を定義する `Proposed` ADR であり、現行挙動そのものを記述したものではない。
+`ADR-0008` は #108 以降の現行 V2 公開 tool surface の基準である。`ADR-0004` は V1/legacy orchestration の背景として残すが、現行の公開 tool 一覧ではない。
 
 ## メンテナンスルール
 

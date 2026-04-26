@@ -1,245 +1,27 @@
 ---
 name: video-library-pipeline-folder-cleanup
-description: Fix contaminated folder names under by_program/ with operator-directed input as the primary path. Use when the user says "このフォルダが間違い", "フォルダ名がおかしい", "サブタイトルがフォルダに入ってる", "folder names look wrong", or "フォルダ分けが変".
+description: V2 migration note for folder contamination cleanup; direct legacy cleanup tools are not public in the V2 surface.
 metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipeline"]}}}
 ---
 
-# Folder contamination cleanup (user-specified primary)
+# Folder Cleanup In V2
 
-## !! Critical rules !!
+Folder contamination cleanup is not exposed as a standalone V2 public workflow in #109.
 
-- **No exec / shell commands.** Use plugin tools only (+ file write for review YAML).
-- **suggestedTitle is a proposal, not a decision.** Always present to user for review. Some folder names that contain separators ARE the complete canonical title.
-- Folder name = `program_title` only. Subtitle, episode info, or guest names in folder names = contamination.
-- **Selective approval is the default.** User may approve some, reject others, or override suggestedTitle.
-- Primary entry is **operator-specified wrong target** (path/title), not auto-detect full scan.
+## Current Rule
 
-## When to use this skill
+- Do not call hidden legacy cleanup or title-repair tools directly.
+- Do not use shell commands to inspect Windows library paths.
+- If a relocate run returns a review gate or next action related to metadata/title cleanup, follow that run-scoped action.
+- Otherwise, report that folder cleanup needs a future V2 workflow or an explicit maintenance/admin path.
 
-- "フォルダ名がおかしい" / "フォルダ分けが変" / "サブタイトルがフォルダに入ってる"
-- "このフォルダが間違い" / user points to a specific wrong folder or title
-- "folder names look wrong" / "folder cleanup"
-- Folder names contain `▽▼◇「` or episode descriptions beyond the program title
-- "NHKスペシャル関連のフォルダを全部見せて" / bulk review of a series/family
+## What To Preserve For Future V2 Work
 
-## Tool sequence
-
-> **Execution rule:** Steps 1→2 run consecutively without waiting for user confirmation.
-> Pause at step 3 for user to edit the review YAML.
-
-### Step 1: Validate and get config
-
-```
-video_pipeline_validate {"checkWindowsInterop": true, "intent": "relocate"}
-```
-
-Stop and report if `ok=false`.
-
-From the result, extract **`windowsOpsRoot`** (e.g. `B:\_AI_WORK`). The WSL-equivalent path is needed for file writes — convert by replacing the drive letter: `B:\...` → `/mnt/b/...`. The `llm/` subdirectory under this path is where all review YAML files go (same location as `program_aliases_review_*.yaml` from extract-review).
-
-### Step 2: Resolve target + detect contamination (primary: user-specified)
-
-When the user gives a concrete bad folder/path/title, call with explicit target:
-
-```json
-video_pipeline_detect_folder_contamination {
-  "programTitle": "<exact wrong title, if known>",
-  "representativePathLike": "%<representative path fragment>%"
-}
-```
-
-- Use `programTitle` when the user points to a wrong title directly.
-- Use `representativePathLike` when the user points to a concrete bad folder/path.
-- If both are known, pass both for precise narrowing.
-- Use `pathIds` only when specific ids are already known.
-
-**Direct correction** (operator already knows BOTH the wrong title and the correct title):
-
-```json
-video_pipeline_detect_folder_contamination {
-  "programTitle": "<exact wrong title>",
-  "canonicalTitle": "<correct canonical title>"
-}
-```
-
-or with path fragment:
-
-```json
-video_pipeline_detect_folder_contamination {
-  "representativePathLike": "%<path fragment>%",
-  "canonicalTitle": "<correct canonical title>"
-}
-```
-
-When `canonicalTitle` is supplied, the tool resolves affected records AND builds `updateInstructions` directly. The result has `operatorForced=true` and includes `followUpToolCalls` pointing to `update_program_titles`. **Skip step 3 (YAML review)** and proceed directly to step 4 dry-run.
-
-**Bulk search by series/family** (operator wants to review all titles containing a keyword):
-
-```json
-video_pipeline_detect_folder_contamination {
-  "programTitleContains": "NHKスペシャル"
-}
-```
-
-Returns `resolvedTargets[]` with ALL title groups whose `program_title` contains the keyword. Each entry may have `suggestedTitle` + `matchSource` if auto-detection found a candidate. Auto-detected contamination also appears in `contaminatedTitles[]` as usual. Proceed to step 3 to write review YAML for all `resolvedTargets` groups.
-
-Fallback audit mode (when user does **not** provide a concrete target):
-
-```
-video_pipeline_detect_folder_contamination {}
-```
-
-Branch on result:
-
-**Targeted mode** (`mode == "targeted"`):
-- `scannedRows == 0` → No records found for the given target. Report not found, stop.
-- `operatorForced == true` → Operator supplied `canonicalTitle`. `updateInstructions` already built. **Skip step 3**, proceed directly to step 4 dry-run.
-- `totalContaminatedTitles > 0` → Auto-suggestion available. Proceed to step 3 (**auto-suggestion path**). Keep detection result in context — `pathIds` and other details needed in step 4.
-- `totalContaminatedTitles == 0` AND `resolvedTargets` non-empty → No auto-suggestion. Proceed to step 3 (**operator-forced path** — YAML with empty `canonical_title`). Keep `resolvedTargets` in context for step 4.
-
-**Scan-all mode** (`mode == "scan_all"`):
-- `totalContaminatedTitles == 0` → Report clean, stop.
-- `totalContaminatedTitles > 0` → Proceed to step 3 (auto-suggestion path).
-
-### Step 3: Write review YAML to `{windowsOpsRoot}/llm/`
-
-**Output path** (required): `{wsl_windowsOpsRoot}/llm/program_aliases_review_{YYYYMMDD_HHMMSS}.yaml`
-
-Example: if `windowsOpsRoot` = `B:\_AI_WORK`, write to `/mnt/b/_AI_WORK/llm/program_aliases_review_20260323_211200.yaml`.
-
-Use the **same human-facing review shape as extract-review** (`canonical_title` + `aliases`):
-
-```yaml
-# Folder contamination title review (same schema as extract-review)
-# - canonical_title を編集して採用タイトルを決める
-# - aliases は現在の混入タイトル（必要なら追加/整理）
-# - エントリ削除はスキップ
-hints:
-  - canonical_title: "ヒューマニエンス"
-    aliases:
-      - "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
-```
-
-**Auto-suggestion path** (from `contaminatedTitles`):
-- `canonical_title` ← `suggestedTitle`
-- `aliases[]` includes the current contaminated `programTitle`
-
-**Bulk search path** (from `resolvedTargets` with `programTitleContains`):
-- For each `resolvedTarget` entry:
-  - If `suggestedTitle` exists → `canonical_title` ← `suggestedTitle` (pre-filled)
-  - If no `suggestedTitle` → `canonical_title` ← `""` (operator fills in)
-- `aliases[]` includes the current `programTitle` from each `resolvedTarget`
-- Add comment at top: `# !! canonical_title を確認/修正してください。空欄は正しいタイトルを入力 !!`
-
-**Operator-forced path** (from `resolvedTargets`, no auto-suggestion):
-- `canonical_title` ← `""` (empty — operator must fill in the correct title)
-- `aliases[]` includes the current `programTitle` from `resolvedTargets`
-- Add comment at top of YAML: `# !! canonical_title が空欄のエントリは正しいタイトルを入力してください !!`
-
-Example for operator-forced path:
-```yaml
-# !! canonical_title が空欄のエントリは正しいタイトルを入力してください !!
-# Folder contamination title review (same schema as extract-review)
-# - canonical_title を編集して採用タイトルを決める
-# - aliases は現在の混入タイトル（必要なら追加/整理）
-# - エントリ削除はスキップ
-hints:
-  - canonical_title: ""
-    aliases:
-      - "ヒューマニエンス 選「自律神経」あなたを操るもう一人のあなた"
-```
-
-Do NOT include `pathIds`, `confidence`, `matchSource`, `affectedFiles`, or other machine data in the YAML. The agent already has this from the step 2 result.
-
-Present the file path to the user and wait for them to finish editing.
-
-**[User review gate]** — User edits the YAML:
-- Entry kept, `canonical_title` filled in / unchanged → accept as new_title
-- Entry deleted → skip
-- In operator-forced path: entries with empty `canonical_title` after editing → warn user and skip
-
-### Step 4: Read YAML and build title updates
-
-After user signals completion, read the edited YAML and build `alias -> canonical_title` mappings.
-For each mapping:
-
-1. Read `hints[].canonical_title` as `new_title`. Skip entries where `new_title` is empty.
-2. For each alias in `hints[].aliases[]`, look up `pathIds` from the step 2 detection result:
-   - First check `contaminatedTitles` (auto-suggestion path) by matching `programTitle`
-   - If not found there, check `resolvedTargets` (operator-forced path) by matching `programTitle`
-3. Build one `{ "path_id": "<id>", "new_title": "<new_title>" }` per path_id
-
-Then dry-run:
-
-```
-video_pipeline_update_program_titles {
-  "updates": <constructed updates array>,
-  "dryRun": true
-}
-```
-
-Show preview. If the user says "OK":
-
-```
-video_pipeline_update_program_titles {
-  "updates": <same array>,
-  "dryRun": false
-}
-```
-
-### Step 5: Relocate dry-run
-
-After title correction, run relocate to move files to correct folders.
-Use `affectedRoots` returned by `video_pipeline_update_program_titles` as the `roots` value.
-`affectedRoots` は以下の優先順位で推論される:
-1. **layout検出** — `<root>\<prog>\<YYYY>\<MM>\<file>` の年月構造からルートを特定
-2. **old_titleマッチ** — 変更前の `program_title` (および `safe_dir_name` 変換後) でパスセグメントを検索
-3. **ドライブルートフォールバック** — `B:\` など (スキャン範囲が広くなるため避けたい)
-
-```
-video_pipeline_relocate_existing_files {
-  "apply": false,
-  "roots": [<parent directory of affected folders>],
-  "queueMissingMetadata": true,
-  "writeMetadataQueueOnDryRun": true
-}
-```
-
-Present relocate plan to user: number of files, source → destination paths.
-
-**[User confirmation gate]** — User approves relocation plan.
-
-### Step 6: Relocate apply
-
-```
-video_pipeline_relocate_existing_files {
-  "apply": true,
-  "planPath": "<planPath from step 5 dry-run result>"
-}
-```
-
-### Step 7: Completion report
-
-- Report: contaminated folders fixed, files relocated.
-- Distinguish "title correction" from "physical move".
-- If any files had `missingMetadata`, note they need extraction before relocation.
+- Folder name should equal `program_title` only.
+- Subtitle, episode descriptions, guest names, and separator tails do not belong in the folder title.
+- Human review should use run-scoped artifacts and review gates.
+- Any future cleanup flow must resume by `runId` and artifact IDs, not by latest YAML or ad-hoc path scans.
 
 ## Handoff
 
-- If `requiresMetadataPreparation=true` after relocate dry-run, hand off to `skills/extract-review/SKILL.md` for metadata extraction, then restart from step 5.
-- For the relocate portion (steps 5-6), follow the same rules as `skills/relocate-review/SKILL.md`.
-
-## roots specification rule
-
-- Always specify the **parent directory** as roots, not individual contaminated folders.
-  - Correct: `roots=["B:\\VideoLibrary"]`
-  - Wrong: `roots=["B:\\VideoLibrary\\ヒューマニエンス 選「自律神経」..."]`
-- This ensures sibling contaminated folders are all included in the scan.
-
-## Review UX compatibility rule (issue #72)
-
-- Folder-cleanup review YAML is intentionally aligned to the extract-review mental model:
-  - `hints[]`
-  - `canonical_title`
-  - `aliases[]`
-- Do not introduce a folder-cleanup-only editable schema unless the common review contract is revised for all workflows together.
+If the user's actual goal is to relocate existing files and no direct title cleanup is required, use `skills/relocate-review/SKILL.md`.
