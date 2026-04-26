@@ -1,0 +1,77 @@
+{
+  "ok": false,
+  "runId": "run_contract_source_review",
+  "flow": "source_root",
+  "phase": "review_required",
+  "outcome": "source_root_metadata_review_required",
+  "artifacts": [
+    {
+      "id": "metadata_extract_output_0001",
+      "type": "metadata_extract_output",
+      "path": "/ops/runs/run_contract_source_review/metadata/llm_filename_extract_output_0001_0001.jsonl",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "createdAt": "2026-04-26T00:00:00+00:00",
+      "producer": "run_metadata_batches_promptv1.py",
+      "status": "available",
+      "inputArtifactIds": ["metadata_queue"],
+      "metadata": {
+        "summary": {
+          "processed": 1
+        }
+      }
+    },
+    {
+      "id": "metadata_review_yaml_0001",
+      "type": "metadata_review_yaml",
+      "path": "/ops/runs/run_contract_source_review/review/metadata_review_0001.yaml",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "createdAt": "2026-04-26T00:01:00+00:00",
+      "producer": "export_program_yaml.py",
+      "status": "available",
+      "inputArtifactIds": ["metadata_extract_output_0001"],
+      "metadata": {
+        "sourceJsonlPath": "/ops/runs/run_contract_source_review/metadata/llm_filename_extract_output_0001_0001.jsonl",
+        "reviewSummary": {
+          "rowsNeedingReview": 1
+        }
+      }
+    }
+  ],
+  "gates": [
+    {
+      "id": "metadata_review",
+      "type": "metadata_review",
+      "status": "open",
+      "artifactIds": ["metadata_review_yaml_0001"],
+      "requiresHumanReview": true,
+      "openedAt": "2026-04-26T00:01:00+00:00",
+      "resolvedAt": null,
+      "resolution": {}
+    }
+  ],
+  "nextActions": [
+    {
+      "action": "review_metadata",
+      "label": "Review extracted metadata YAML",
+      "tool": "video_pipeline_resume",
+      "params": {
+        "runId": "run_contract_source_review",
+        "gateId": "metadata_review",
+        "artifactIds": ["metadata_review_yaml_0001"],
+        "reviewYamlPaths": ["/ops/runs/run_contract_source_review/review/metadata_review_0001.yaml"],
+        "resumeAction": "apply_reviewed_metadata"
+      },
+      "requiresHumanInput": true
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "metadata_review_required",
+      "severity": "info",
+      "message": "metadata review is required",
+      "details": {
+        "reviewCandidates": 1
+      }
+    }
+  ]
+}
