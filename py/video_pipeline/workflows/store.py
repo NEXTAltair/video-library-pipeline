@@ -208,3 +208,18 @@ class WorkflowStore:
         run.updated_at = now_iso()
         self.write_run(run)
         return gate
+
+    def update_review_gate_artifacts(
+        self,
+        run_id: str,
+        gate_id: str,
+        *,
+        artifact_ids: list[str],
+    ) -> ReviewGate:
+        run = self.read_run(run_id)
+        gate = run.review_gates[gate_id]
+        gate.artifact_ids = list(artifact_ids)
+        run.review_gates[gate_id] = gate
+        run.updated_at = now_iso()
+        self.write_run(run)
+        return gate

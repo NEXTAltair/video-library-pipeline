@@ -861,7 +861,7 @@ class RelocateWorkflowService:
     ) -> Any:
         run = store.read_run(run_id)
         if gate_id in run.review_gates and run.review_gates[gate_id].status == ReviewGateStatus.OPEN.value:
-            return run.review_gates[gate_id]
+            return store.update_review_gate_artifacts(run_id, gate_id, artifact_ids=artifact_ids)
         if gate_id in run.review_gates:
             gate_id = next_gate_id(run, gate_id)
         return store.create_review_gate(
