@@ -128,6 +128,9 @@ class RelocateWorkflowHarness:
         service = RelocateWorkflowService(python_runner=self.python_runner, py_root=self.tmp_path)
         return service.dry_run(self.cfg)
 
+    def service(self) -> RelocateWorkflowService:
+        return RelocateWorkflowService(python_runner=self.python_runner, py_root=self.tmp_path)
+
     def manifest(self) -> dict:
         manifest_path = Path(self.cfg.windows_ops_root) / "runs" / self.cfg.run_id / "run.json"
         return json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -200,12 +203,95 @@ def test_relocate_dry_run_suspicious_title_creates_review_gate(tmp_path) -> None
     assert payload["gates"][0]["artifactIds"] == ["relocate_diagnostics"]
 
 
-def test_relocate_metadata_resume_actions_do_not_block_review_required_run(tmp_path) -> None:
+def test_relocate_metadata_resume_action_rechecks_run_and_reaches_plan_ready(tmp_path) -> None:
     harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_resume_gap", scenario="metadata_gap")
     harness.dry_run()
-    service = RelocateWorkflowService(py_root=tmp_path)
+    store = WorkflowStore(Path(harness.cfg.windows_ops_root))
+    store.create_review_gate(
+        harness.cfg.run_id,
+        gate_type="relocate_metadata_review",
+        artifact_ids=["relocate_metadata_queue"],
+        gate_id="relocate_metadata_review",
+    )
+    harness.scenario = "plan_ready"
 
-    result = service.resume(
+    result = harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="prepare_relocate_metadata",
+    )
+
+    payload = result.to_dict()
+    assert payload["ok"] is True
+    assert payload["phase"] == "plan_ready"
+    assert payload["outcome"] == "relocate_plan_ready"
+    assert payload["nextActions"][0]["action"] == "review_plan"
+    assert payload["nextActions"][0]["params"] == {
+        "runId": "run_relocate_resume_gap",
+        "artifactId": "relocate_plan_0002",
+        "resumeAction": "apply_relocate_move_plan",
+    }
+    manifest = harness.manifest()
+    assert manifest["phase"] == "plan_ready"
+    assert manifest["artifacts"]["relocate_plan_0002"]["inputArtifactIds"] == ["relocate_diagnostics_0002"]
+    assert manifest["reviewGates"]["relocate_metadata_review"]["status"] == "approved"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["resolution"] == {
+        "action": "relocate_metadata_recheck_plan_ready"
+    }
+
+
+def test_relocate_metadata_recheck_approves_rejected_gate_before_plan_ready(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_rejected_gate", scenario="suspicious")
+    harness.dry_run()
+    store = WorkflowStore(Path(harness.cfg.windows_ops_root))
+    store.update_review_gate(
+        harness.cfg.run_id,
+        "relocate_metadata_review",
+        status=ReviewGateStatus.REJECTED,
+        resolution={"action": "operator_rejected"},
+    )
+    harness.scenario = "plan_ready"
+
+    result = harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="prepare_relocate_metadata",
+    )
+
+    payload = result.to_dict()
+    assert payload["ok"] is True
+    assert payload["phase"] == "plan_ready"
+    manifest = harness.manifest()
+    assert manifest["reviewGates"]["relocate_metadata_review"]["status"] == "approved"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["resolution"] == {
+        "action": "relocate_metadata_recheck_plan_ready"
+    }
+
+
+def test_relocate_review_resume_action_approves_gate_and_reaches_plan_ready(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_resume_review", scenario="suspicious")
+    harness.dry_run()
+    harness.scenario = "plan_ready"
+
+    result = harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="review_relocate_metadata",
+    )
+
+    payload = result.to_dict()
+    assert payload["ok"] is True
+    assert payload["phase"] == "plan_ready"
+    assert payload["outcome"] == "relocate_plan_ready"
+    assert payload["nextActions"][0]["action"] == "review_plan"
+    manifest = harness.manifest()
+    assert manifest["phase"] == "plan_ready"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["status"] == "approved"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["resolution"] == {"action": "review_relocate_metadata"}
+
+
+def test_relocate_metadata_recheck_refreshes_open_gate_artifacts(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_recheck_still_blocked", scenario="suspicious")
+    harness.dry_run()
+
+    result = harness.service().resume(
         RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
         action="prepare_relocate_metadata",
     )
@@ -213,32 +299,36 @@ def test_relocate_metadata_resume_actions_do_not_block_review_required_run(tmp_p
     payload = result.to_dict()
     assert payload["ok"] is False
     assert payload["phase"] == "review_required"
-    assert payload["outcome"] == "relocate_metadata_preparation_pending"
-    assert payload["nextActions"][0]["action"] == "prepare_relocate_metadata"
+    assert payload["outcome"] == "relocate_metadata_review_still_required"
+    assert payload["nextActions"][0]["params"] == {
+        "runId": "run_relocate_recheck_still_blocked",
+        "gateId": "relocate_metadata_review",
+        "artifactIds": ["relocate_diagnostics_0002"],
+    }
     manifest = harness.manifest()
-    assert manifest["phase"] == "review_required"
-    assert payload["diagnostics"][-1]["code"] == "relocate_metadata_preparation_required"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["status"] == "open"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["artifactIds"] == ["relocate_diagnostics_0002"]
 
 
-def test_relocate_review_resume_action_keeps_gate_open_without_blocking(tmp_path) -> None:
-    harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_resume_review", scenario="suspicious")
+def test_relocate_metadata_recheck_approves_gate_before_complete(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_recheck_complete", scenario="suspicious")
     harness.dry_run()
-    service = RelocateWorkflowService(py_root=tmp_path)
+    harness.scenario = "already_correct"
 
-    result = service.resume(
+    result = harness.service().resume(
         RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
-        action="review_relocate_metadata",
+        action="prepare_relocate_metadata",
     )
 
     payload = result.to_dict()
-    assert payload["ok"] is False
-    assert payload["phase"] == "review_required"
-    assert payload["outcome"] == "relocate_metadata_review_pending"
-    assert payload["nextActions"][0]["action"] == "review_relocate_metadata"
-    assert payload["nextActions"][0]["params"]["gateId"] == "relocate_metadata_review"
+    assert payload["ok"] is True
+    assert payload["phase"] == "complete"
+    assert payload["outcome"] == "relocate_already_correct"
     manifest = harness.manifest()
-    assert manifest["phase"] == "review_required"
-    assert manifest["reviewGates"]["relocate_metadata_review"]["status"] == "open"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["status"] == "approved"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["resolution"] == {
+        "action": "relocate_metadata_recheck_complete"
+    }
 
 
 def test_relocate_dry_run_already_correct_requires_explicit_count(tmp_path) -> None:

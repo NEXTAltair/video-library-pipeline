@@ -9,9 +9,11 @@ from typing import Any
 
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
 from video_pipeline.workflows import (
+    NextAction,
     RelocateApplyConfig,
     RelocateDryRunConfig,
     RelocateWorkflowService,
+    ReviewGateStatus,
     SourceRootApplyConfig,
     SourceRootDryRunConfig,
     SourceRootWorkflowService,
@@ -42,10 +44,126 @@ def _store(windows_ops_root: str) -> WorkflowStore:
 
 def _run_to_status(run: Any, *, include_artifacts: bool) -> dict[str, Any]:
     payload = run.to_dict()
+    payload["nextActions"] = [action.to_dict() for action in _next_actions_for_run(run)]
     if not include_artifacts:
         payload.pop("artifacts", None)
         payload.pop("reviewGates", None)
     return payload
+
+
+def _latest_artifact_id(run: Any, artifact_type: str) -> str | None:
+    for artifact_id in reversed(run.artifact_ids):
+        artifact = run.artifacts.get(artifact_id)
+        if artifact is not None and artifact.type == artifact_type:
+            return artifact.id
+    return None
+
+
+def _next_actions_for_run(run: Any) -> list[NextAction]:
+    if run.phase == "plan_ready":
+        if run.flow == "source_root":
+            plan_id = _latest_artifact_id(run, "source_root_move_plan")
+            if plan_id:
+                return [
+                    NextAction(
+                        action="review_plan",
+                        label="Review sourceRoot move plan",
+                        tool="video_pipeline_resume",
+                        params={
+                            "runId": run.run_id,
+                            "artifactId": plan_id,
+                            "resumeAction": "apply_source_root_move_plan",
+                        },
+                        requires_human_input=True,
+                    )
+                ]
+        if run.flow == "relocate":
+            plan_id = _latest_artifact_id(run, "relocate_plan")
+            if plan_id:
+                return [
+                    NextAction(
+                        action="review_plan",
+                        label="Review relocate move plan",
+                        tool="video_pipeline_resume",
+                        params={
+                            "runId": run.run_id,
+                            "artifactId": plan_id,
+                            "resumeAction": "apply_relocate_move_plan",
+                        },
+                        requires_human_input=True,
+                    )
+                ]
+    if run.phase != "review_required":
+        return []
+
+    open_gates = [
+        gate
+        for gate_id in run.review_gate_ids
+        if (gate := run.review_gates.get(gate_id)) is not None and gate.status == ReviewGateStatus.OPEN.value
+    ]
+    if run.flow == "source_root":
+        metadata_gate = next((gate for gate in open_gates if gate.type == "metadata_review"), None)
+        if metadata_gate is None:
+            return []
+        review_yaml_paths = [
+            run.artifacts[artifact_id].path
+            for artifact_id in metadata_gate.artifact_ids
+            if artifact_id in run.artifacts and run.artifacts[artifact_id].type == "metadata_review_yaml"
+        ]
+        return [
+            NextAction(
+                action="review_metadata",
+                label="Review extracted metadata YAML",
+                tool="video_pipeline_resume",
+                params={
+                    "runId": run.run_id,
+                    "gateId": metadata_gate.id,
+                    "artifactIds": list(metadata_gate.artifact_ids),
+                    "reviewYamlPaths": review_yaml_paths,
+                    "resumeAction": "apply_reviewed_metadata",
+                },
+                requires_human_input=True,
+            )
+        ]
+    if run.flow == "relocate":
+        queue_id = _latest_artifact_id(run, "relocate_metadata_queue")
+        diagnostics_id = _latest_artifact_id(run, "relocate_diagnostics")
+        review_gate = next((gate for gate in open_gates if gate.type == "relocate_metadata_review"), None)
+        if review_gate is not None:
+            return [
+                NextAction(
+                    action="review_relocate_metadata",
+                    label="Review blocked relocate metadata",
+                    tool="video_pipeline_resume",
+                    params={
+                        "runId": run.run_id,
+                        "gateId": review_gate.id,
+                        "artifactIds": list(review_gate.artifact_ids),
+                    },
+                    requires_human_input=True,
+                )
+            ]
+        if queue_id:
+            return [
+                NextAction(
+                    action="prepare_relocate_metadata",
+                    label="Prepare missing or blocked relocate metadata",
+                    tool="video_pipeline_resume",
+                    params={"runId": run.run_id, "artifactIds": [queue_id]},
+                    requires_human_input=review_gate is not None,
+                )
+            ]
+        if diagnostics_id:
+            return [
+                NextAction(
+                    action="prepare_relocate_metadata",
+                    label="Prepare missing or blocked relocate metadata",
+                    tool="video_pipeline_resume",
+                    params={"runId": run.run_id, "artifactIds": [diagnostics_id]},
+                    requires_human_input=False,
+                )
+            ]
+    return []
 
 
 def _cmd_start(args: argparse.Namespace) -> dict[str, Any]:
