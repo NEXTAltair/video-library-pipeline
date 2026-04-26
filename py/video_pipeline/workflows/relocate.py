@@ -517,7 +517,7 @@ class RelocateWorkflowService:
         has_review_blocker = suspicious > 0 or needs_review > 0 or unreviewed > 0
 
         if planned_moves > 0 and plan_artifact is not None:
-            self._approve_open_metadata_gates(store, run_id, "relocate_metadata_recheck_plan_ready")
+            self._approve_blocking_metadata_gates(store, run_id, "relocate_metadata_recheck_plan_ready")
             self._advance_to_phase(store, run_id, WorkflowPhase.PLAN_READY)
             return self._result(
                 ok=True,
@@ -599,6 +599,7 @@ class RelocateWorkflowService:
             )
 
         if already_correct > 0 and planned_moves == 0:
+            self._approve_blocking_metadata_gates(store, run_id, "relocate_metadata_recheck_complete")
             self._advance_to_phase(store, run_id, WorkflowPhase.COMPLETE)
             return self._result(
                 ok=True,
@@ -608,6 +609,7 @@ class RelocateWorkflowService:
                 outcome="relocate_already_correct",
             )
 
+        self._approve_blocking_metadata_gates(store, run_id, "relocate_metadata_recheck_complete")
         self._advance_to_phase(store, run_id, WorkflowPhase.COMPLETE)
         return self._result(
             ok=True,
@@ -871,14 +873,14 @@ class RelocateWorkflowService:
             gate_id=gate_id,
         )
 
-    def _approve_open_metadata_gates(self, store: WorkflowStore, run_id: str, action: str) -> None:
+    def _approve_blocking_metadata_gates(self, store: WorkflowStore, run_id: str, action: str) -> None:
         run = store.read_run(run_id)
         for gate_id in run.review_gate_ids:
             gate = run.review_gates.get(gate_id)
             if (
                 gate is not None
                 and gate.type == "relocate_metadata_review"
-                and gate.status == ReviewGateStatus.OPEN.value
+                and gate.status in {ReviewGateStatus.OPEN.value, ReviewGateStatus.REJECTED.value}
             ):
                 store.update_review_gate(
                     run_id,
