@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { translateWorkflowResult, type WorkflowResultPayload } from "./workflow-result-translator";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const FIXTURES_ROOT = resolve(HERE, "../../tests/fixtures");
 
 function basePayload(overrides: Partial<WorkflowResultPayload> = {}): WorkflowResultPayload {
   return {
@@ -17,6 +23,33 @@ function basePayload(overrides: Partial<WorkflowResultPayload> = {}): WorkflowRe
 }
 
 describe("translateWorkflowResult", () => {
+  it("consumes the shared sourceRoot review-required Python contract fixture", () => {
+    const fixture = JSON.parse(
+      readFileSync(resolve(FIXTURES_ROOT, "v2_workflow_result_source_root_review_required.json"), "utf-8"),
+    ) as WorkflowResultPayload;
+
+    const result = translateWorkflowResult(fixture);
+
+    expect(result.runId).toBe("run_contract_source_review");
+    expect(result.phase).toBe("review_required");
+    expect(result.nextActions).toHaveLength(1);
+    expect(result.followUpToolCalls).toEqual([
+      {
+        tool: "video_pipeline_resume",
+        reason: "review_metadata",
+        params: {
+          runId: "run_contract_source_review",
+          gateId: "metadata_review",
+          artifactIds: ["metadata_review_yaml_0001"],
+          reviewYamlPaths: ["/ops/runs/run_contract_source_review/review/metadata_review_0001.yaml"],
+          resumeAction: "apply_reviewed_metadata",
+        },
+        requiresHumanReview: true,
+      },
+    ]);
+    expect(result.nextStep).toContain("Review");
+  });
+
   it("maps sourceRoot plan-ready nextActions to followUpToolCalls", () => {
     const result = translateWorkflowResult(basePayload({
       phase: "plan_ready",
