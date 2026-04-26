@@ -12,6 +12,7 @@ metadata: {"openclaw":{"emoji":"📁","requires":{"plugins":["video-library-pipe
 - Start with `video_pipeline_start {"flow":"relocate"}`.
 - Do not call hidden legacy relocation tools directly.
 - Destination layout is determined by workflow logic and drive routes. Do not ask the user to choose drives or folder taxonomy.
+- Relocate metadata follow-up actions `prepare_relocate_metadata` and `review_relocate_metadata` do not currently advance the V2 workflow. Do not replay them as progress actions; report the #125 workflow gap.
 
 ## Roots Rule
 
@@ -46,7 +47,9 @@ metadata: {"openclaw":{"emoji":"📁","requires":{"plugins":["video-library-pipe
    - `phase == "review_required"`: inspect gate artifacts and hand off to `skills/extract-review/SKILL.md` or report required review.
    - `phase == "complete"`: report the outcome, such as already-correct.
    - `phase == "blocked"` or `phase == "failed"`: report diagnostics and stop.
-4. Resume only through returned follow-up params:
+4. Resume only through supported returned follow-up params:
+   - If the returned action is `prepare_relocate_metadata` or `review_relocate_metadata`, stop and report that relocate metadata continuation is not yet supported by the V2 public surface. This gap is tracked in #125.
+   - Otherwise execute only supported returned follow-up params:
    ```json
    video_pipeline_resume {
      "runId": "<runId>",
@@ -60,7 +63,8 @@ metadata: {"openclaw":{"emoji":"📁","requires":{"plugins":["video-library-pipe
 - The `artifactId` belongs to the same `runId`.
 - Open review gates are resolved before apply.
 - No latest-plan or path guessing is used.
+- Relocate metadata actions are not treated as apply/progress actions until #125 is implemented.
 
 ## Unsupported Legacy Cleanup
 
-Some older folder-contamination and direct-title-repair flows depended on hidden legacy public tools. In V2 public operation, report that those flows require a future V2 workflow unless the current run returns an explicit `video_pipeline_resume` action for them.
+Some older folder-contamination and direct-title-repair flows depended on hidden legacy public tools. In V2 public operation, report that those flows require a future V2 workflow unless the current run returns an explicit supported `video_pipeline_resume` action for them. Relocate metadata actions that only return another pending metadata action are workflow gaps tracked in #125, not supported continuation paths.
