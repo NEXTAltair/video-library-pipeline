@@ -231,6 +231,33 @@ def test_source_root_fixture_review_yaml_handoff_round_trip(tmp_path) -> None:
     assert Path(review_path).read_text(encoding="utf-8") == "hints: []\n"
 
 
+def test_source_root_resume_apply_reviewed_metadata_closes_gate_and_plans(tmp_path) -> None:
+    harness = SourceRootWorkflowHarness(tmp_path, run_id="run_fixture_review_resume", needs_review=True)
+    initial = harness.service().dry_run(harness.cfg).to_dict()
+    assert initial["phase"] == "review_required"
+
+    harness.needs_review = False
+    result = harness.service().resume(
+        SourceRootApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="apply_reviewed_metadata",
+    )
+
+    payload = result.to_dict()
+    assert payload["ok"] is True
+    assert payload["phase"] == "plan_ready"
+    assert payload["outcome"] == "source_root_dry_run_complete"
+    assert payload["gates"][0]["status"] == "approved"
+    assert payload["nextActions"][0]["params"] == {
+        "runId": "run_fixture_review_resume",
+        "artifactId": "source_root_move_plan",
+        "resumeAction": "apply_source_root_move_plan",
+    }
+    manifest = harness.manifest()
+    assert manifest["phase"] == "plan_ready"
+    assert manifest["reviewGates"]["metadata_review"]["status"] == "approved"
+    assert "source_root_move_plan" in manifest["artifacts"]
+
+
 def test_source_root_dry_run_registers_core_artifacts(tmp_path) -> None:
     cfg = make_config(tmp_path)
     calls: list[tuple[str, list[str]]] = []

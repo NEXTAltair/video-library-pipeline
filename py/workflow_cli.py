@@ -173,7 +173,8 @@ def _cmd_inspect_artifact(args: argparse.Namespace) -> dict[str, Any]:
         "relatedGates": related_gates,
     }
     if args.include_content_preview and path.exists() and path.is_file():
-        out["contentPreview"] = path.read_text(encoding="utf-8", errors="replace")[: args.preview_bytes]
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            out["contentPreview"] = f.read(args.preview_bytes)
     return out
 
 
