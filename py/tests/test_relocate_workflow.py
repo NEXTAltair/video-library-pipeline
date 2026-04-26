@@ -251,7 +251,12 @@ def test_relocate_dry_run_already_correct_requires_explicit_count(tmp_path) -> N
     assert payload["outcome"] == "relocate_already_correct"
 
 
-def register_relocate_plan_ready_run(tmp_path: Path, run_id: str = "run_relocate_apply") -> tuple[RelocateApplyConfig, Path]:
+def register_relocate_plan_ready_run(
+    tmp_path: Path,
+    run_id: str = "run_relocate_apply",
+    *,
+    on_dst_exists: str = "error",
+) -> tuple[RelocateApplyConfig, Path]:
     ops_root = tmp_path / "ops"
     db_path = ops_root / "db" / "mediaops.sqlite"
     db_path.parent.mkdir(parents=True)
@@ -261,7 +266,7 @@ def register_relocate_plan_ready_run(tmp_path: Path, run_id: str = "run_relocate
     store.init_run(
         WorkflowFlow.RELOCATE,
         run_id=run_id,
-        config_snapshot={"windowsOpsRoot": str(ops_root), "db": str(db_path), "onDstExists": "error"},
+        config_snapshot={"windowsOpsRoot": str(ops_root), "db": str(db_path), "onDstExists": on_dst_exists},
     )
     plan_path = ops_root / "runs" / run_id / "plan" / "relocate_plan.jsonl"
     plan_path.write_text(
@@ -431,3 +436,56 @@ def test_relocate_apply_registers_artifacts_after_backup_and_completes(tmp_path)
         "relocate_plan",
         "relocate_db_backup",
     ]
+
+
+def test_relocate_apply_uses_run_scoped_on_dst_exists_policy(tmp_path) -> None:
+    cfg, _plan_path = register_relocate_plan_ready_run(
+        tmp_path,
+        run_id="run_relocate_apply_rename_suffix",
+        on_dst_exists="rename_suffix",
+    )
+
+    def fake_python_runner(script: Path, args: list[str], _cwd: str | None = None) -> str:
+        if script.name == "backup_mediaops_db.py" and args[args.index("--action") + 1] == "backup":
+            backup_path = Path(cfg.windows_ops_root) / "db" / "mediaops.sqlite.bak_20260426_pre_relocate_apply"
+            backup_path.write_text("db backup", encoding="utf-8")
+            return json.dumps({"ok": True, "action": "backup", "backup_path": str(backup_path), "error": ""}, ensure_ascii=False)
+        if script.name == "backup_mediaops_db.py" and args[args.index("--action") + 1] == "rotate":
+            return json.dumps({"ok": True, "action": "rotate", "deleted_count": 0}, ensure_ascii=False)
+        if script.name == "update_db_paths_from_move_apply.py":
+            return json.dumps({"updated": 1, "events": 1, "run_kind": "relocate"}, ensure_ascii=False)
+        return json.dumps({"ok": True}, ensure_ascii=False)
+
+    def fake_powershell_runner(_script: str, args: list[str]) -> dict:
+        assert args[args.index("-OnDstExists") + 1] == "rename_suffix"
+        out_path = Path(cfg.windows_ops_root) / "move" / "relocate_apply_rename_suffix.jsonl"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            "\n".join([
+                json.dumps({"_meta": {"kind": "move_apply"}}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "op": "move",
+                        "ts": "2026-04-26T00:00:00Z",
+                        "path_id": "p1",
+                        "src": r"B:\VideoLibrary\Old\show.mp4",
+                        "dst": r"B:\VideoLibrary\Show\show.mp4",
+                        "ok": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            ])
+            + "\n",
+            encoding="utf-8",
+        )
+        return {"out_jsonl": str(out_path), "run_id": "apply_test"}
+
+    service = RelocateWorkflowService(
+        python_runner=fake_python_runner,
+        powershell_runner=fake_powershell_runner,
+        py_root=tmp_path,
+    )
+
+    result = service.apply(cfg)
+
+    assert result.to_dict()["outcome"] == "relocate_apply_complete"

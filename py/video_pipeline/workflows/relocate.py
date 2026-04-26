@@ -68,7 +68,7 @@ class RelocateApplyConfig:
     run_id: str
     artifact_id: str = "relocate_plan"
     db: str | None = None
-    on_dst_exists: str = "error"
+    on_dst_exists: str | None = None
 
 
 def local_path_from_any(path_str: str) -> Path:
