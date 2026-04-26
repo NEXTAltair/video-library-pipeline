@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  applyReviewedExecute: vi.fn(),
+}));
+
 vi.mock("./runtime", async () => {
   const actual = await vi.importActual<typeof import("./runtime")>("./runtime");
   return {
@@ -9,6 +13,17 @@ vi.mock("./runtime", async () => {
     toToolResult: vi.fn((obj: Record<string, unknown>) => obj),
   };
 });
+
+vi.mock("./tool-apply-reviewed-metadata", () => ({
+  registerToolApplyReviewedMetadata: (api: { registerTool: (def: unknown) => void }) => {
+    api.registerTool({
+      name: "video_pipeline_apply_reviewed_metadata",
+      description: "mock",
+      parameters: {},
+      execute: mocks.applyReviewedExecute,
+    });
+  },
+}));
 
 import { registerWorkflowTools } from "./tool-workflows";
 import { runCmd } from "./runtime";
@@ -204,6 +219,88 @@ describe("V2 workflow tools", () => {
       ok: true,
       hasFollowUpToolCalls: false,
       followUpToolCalls: [],
+    });
+  });
+
+  it("applies reviewed sourceRoot metadata before resuming the workflow", async () => {
+    mocks.applyReviewedExecute.mockResolvedValue({ ok: true, rows: 1, sourceYamlPath: "/ops/review.yaml" });
+    vi.mocked(runCmd).mockReturnValue(cmdResult({
+      ok: true,
+      runId: "run_source_review",
+      flow: "source_root",
+      phase: "plan_ready",
+      outcome: "source_root_dry_run_complete",
+      artifacts: [],
+      gates: [{ id: "metadata_review", status: "approved" }],
+      nextActions: [
+        {
+          action: "review_plan",
+          tool: "video_pipeline_resume",
+          params: {
+            runId: "run_source_review",
+            artifactId: "source_root_move_plan",
+            resumeAction: "apply_source_root_move_plan",
+          },
+          requiresHumanInput: true,
+        },
+      ],
+      diagnostics: [],
+    }));
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+
+    const result = await getRegisteredTool(api, "video_pipeline_resume").execute("call-review", {
+      runId: "run_source_review",
+      resumeAction: "apply_reviewed_metadata",
+      reviewYamlPaths: ["/ops/review.yaml"],
+    });
+
+    expect(mocks.applyReviewedExecute).toHaveBeenCalledWith("internal-apply-reviewed-metadata", {
+      sourceYamlPath: "/ops/review.yaml",
+      markHumanReviewed: true,
+    });
+    expect(runCmd).toHaveBeenCalledWith("uv", expect.arrayContaining([
+      "resume",
+      "--run-id",
+      "run_source_review",
+      "--action",
+      "apply_reviewed_metadata",
+    ]), "/ext/py");
+    expect(result).toMatchObject({
+      ok: true,
+      phase: "plan_ready",
+      reviewedMetadataResults: [{ ok: true, rows: 1, sourceYamlPath: "/ops/review.yaml" }],
+      followUpToolCalls: [
+        {
+          tool: "video_pipeline_resume",
+          reason: "review_plan",
+          params: {
+            runId: "run_source_review",
+            artifactId: "source_root_move_plan",
+            resumeAction: "apply_source_root_move_plan",
+          },
+          requiresHumanReview: true,
+        },
+      ],
+    });
+  });
+
+  it("does not resume when reviewed metadata application fails", async () => {
+    mocks.applyReviewedExecute.mockResolvedValue({ ok: false, error: "bad yaml" });
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+
+    const result = await getRegisteredTool(api, "video_pipeline_resume").execute("call-review-fail", {
+      runId: "run_source_review",
+      resumeAction: "apply_reviewed_metadata",
+      reviewYamlPaths: ["/ops/review.yaml"],
+    });
+
+    expect(runCmd).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      outcome: "source_root_review_metadata_apply_failed",
+      error: "bad yaml",
     });
   });
 

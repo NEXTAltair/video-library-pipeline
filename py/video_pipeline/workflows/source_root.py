@@ -165,6 +165,8 @@ class SourceRootWorkflowService:
             )
 
     def resume(self, config: SourceRootApplyConfig, *, action: str = "apply_source_root_move_plan") -> WorkflowResult:
+        if action == "apply_reviewed_metadata":
+            return self._resume_reviewed_metadata(config)
         if action != "apply_source_root_move_plan":
             store = WorkflowStore(local_path_from_any(config.windows_ops_root))
             diagnostic = Diagnostic(
@@ -175,6 +177,59 @@ class SourceRootWorkflowService:
             )
             return self._block_apply(store, config.run_id, "source_root_resume_action_unsupported", diagnostic)
         return self.apply(config)
+
+    def _resume_reviewed_metadata(self, config: SourceRootApplyConfig) -> WorkflowResult:
+        store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        try:
+            run = store.read_run(config.run_id)
+            if run.flow != WorkflowFlow.SOURCE_ROOT.value:
+                raise SourceRootApplyRejected(Diagnostic(
+                    code="source_root_review_wrong_flow",
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"run is not a sourceRoot workflow: {run.flow}",
+                    details={"runId": config.run_id, "flow": run.flow},
+                ))
+            if run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
+                raise SourceRootApplyRejected(Diagnostic(
+                    code="source_root_review_wrong_phase",
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"sourceRoot metadata review requires phase review_required, got {run.phase}",
+                    details={"runId": config.run_id, "phase": run.phase},
+                ))
+            gate = run.review_gates.get("metadata_review")
+            if gate is None:
+                raise SourceRootApplyRejected(Diagnostic(
+                    code="source_root_review_gate_missing",
+                    severity=DiagnosticSeverity.ERROR,
+                    message="metadata_review gate is missing",
+                    details={"runId": config.run_id},
+                ))
+            if gate.status != ReviewGateStatus.OPEN.value:
+                raise SourceRootApplyRejected(Diagnostic(
+                    code="source_root_review_gate_not_open",
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"metadata_review gate is not open: {gate.status}",
+                    details={"runId": config.run_id, "gateId": gate.id, "gateStatus": gate.status},
+                ))
+
+            store.update_review_gate(
+                config.run_id,
+                gate.id,
+                status=ReviewGateStatus.APPROVED,
+                resolution={"action": "apply_reviewed_metadata"},
+            )
+            store.transition_run(config.run_id, WorkflowPhase.METADATA_ACCEPTED)
+            return self._plan_after_metadata_accepted(store, config.run_id)
+        except SourceRootApplyRejected as exc:
+            return self._block_apply(store, config.run_id, "source_root_review_rejected", exc.diagnostic)
+        except Exception as exc:
+            diagnostic = Diagnostic(
+                code="source_root_review_failed",
+                severity=DiagnosticSeverity.ERROR,
+                message=str(exc),
+                details={"exceptionType": type(exc).__name__},
+            )
+            return self._block_apply(store, config.run_id, "source_root_review_failed", diagnostic)
 
     def apply(self, config: SourceRootApplyConfig) -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
@@ -514,12 +569,35 @@ class SourceRootWorkflowService:
             )
 
         store.transition_run(run_id, WorkflowPhase.METADATA_ACCEPTED)
+        return self._plan_after_metadata_accepted(store, run_id)
+
+    def _plan_after_metadata_accepted(self, store: WorkflowStore, run_id: str) -> WorkflowResult:
+        run = store.read_run(run_id)
+        run_dir = store.run_dir(run_id)
+        plan_path = run_dir / "plan" / "move_plan_from_inventory.jsonl"
+        config_snapshot = run.config_snapshot
+        db_path = str(local_path_from_any(str(config_snapshot.get("db") or "")))
+        source_root_win = canonicalize_windows_path(str(config_snapshot.get("sourceRoot") or ""))
+        dest_root_win = canonicalize_windows_path(str(config_snapshot.get("destRoot") or ""))
+        drive_routes = str(config_snapshot.get("driveRoutes") or "")
+        max_files_per_run = int(config_snapshot.get("maxFilesPerRun") or 200)
+        allow_needs_review = bool(config_snapshot.get("allowNeedsReview"))
+
+        inventory_artifact = run.artifacts.get("source_root_inventory")
+        queue_artifact = run.artifacts.get("metadata_queue")
+        metadata_artifacts = [
+            run.artifacts[aid]
+            for aid in run.artifact_ids
+            if aid in run.artifacts and run.artifacts[aid].type == "metadata_extract_output"
+        ]
+        if inventory_artifact is None or queue_artifact is None or not metadata_artifacts:
+            raise RuntimeError("sourceRoot planning requires inventory, metadata queue, and metadata output artifacts")
 
         plan_args = [
             "--db",
             db_path,
             "--inventory",
-            str(inventory_path),
+            inventory_artifact.path,
             "--source-root",
             source_root_win,
             "--dest-root",
@@ -527,11 +605,11 @@ class SourceRootWorkflowService:
             "--out",
             str(plan_path),
             "--limit",
-            str(int(config.max_files_per_run)),
+            str(max_files_per_run),
         ]
-        if config.drive_routes:
-            plan_args.extend(["--drive-routes", config.drive_routes])
-        if config.allow_needs_review:
+        if drive_routes:
+            plan_args.extend(["--drive-routes", drive_routes])
+        if allow_needs_review:
             plan_args.append("--allow-needs-review")
         plan_raw = self.python_runner(self.py_root / "make_move_plan_from_inventory.py", plan_args, str(self.py_root))
         plan_summary = parse_last_json_object_line(plan_raw)

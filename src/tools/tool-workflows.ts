@@ -1,5 +1,6 @@
 import { parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj, GetCfgFn, PluginApi } from "./types";
+import { registerToolApplyReviewedMetadata } from "./tool-apply-reviewed-metadata";
 import { translateWorkflowResult, type WorkflowResultPayload } from "../workflows/workflow-result-translator";
 
 function stringArray(value: unknown): string[] {
@@ -44,6 +45,56 @@ function isWorkflowResultPayload(value: AnyObj): value is WorkflowResultPayload 
 function workflowToolResult(parsed: AnyObj): AnyObj {
   if (isWorkflowResultPayload(parsed)) return translateWorkflowResult(parsed);
   return parsed;
+}
+
+function objectFromToolResult(value: unknown): AnyObj {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const maybeResult = value as AnyObj;
+    const text = maybeResult.content?.[0]?.text;
+    if (typeof text === "string") {
+      const parsed = parseJsonObject(text);
+      if (parsed) return parsed;
+    }
+    return maybeResult;
+  }
+  return { ok: false, error: "tool returned a non-object result" };
+}
+
+function getInternalApplyReviewedMetadataTool(api: PluginApi, getCfg: GetCfgFn) {
+  let tool: { execute: (id: string, params: AnyObj) => Promise<unknown> } | null = null;
+  const internalApi: PluginApi = {
+    ...api,
+    registerTool(def) {
+      tool = def;
+    },
+    on: api.on ?? (() => undefined),
+  };
+  registerToolApplyReviewedMetadata(internalApi, getCfg);
+  if (!tool) throw new Error("failed to initialize internal reviewed metadata tool");
+  return tool;
+}
+
+async function applyReviewedMetadataForResume(api: PluginApi, getCfg: GetCfgFn, params: AnyObj): Promise<AnyObj[]> {
+  const reviewYamlPaths = stringArray(params.reviewYamlPaths);
+  if (reviewYamlPaths.length === 0) {
+    return [{
+      ok: false,
+      error: "resumeAction=apply_reviewed_metadata requires reviewYamlPaths from nextActions params",
+      runId: params.runId,
+    }];
+  }
+
+  const tool = getInternalApplyReviewedMetadataTool(api, getCfg);
+  const results: AnyObj[] = [];
+  for (const sourceYamlPath of reviewYamlPaths) {
+    const result = objectFromToolResult(await tool.execute("internal-apply-reviewed-metadata", {
+      sourceYamlPath,
+      markHumanReviewed: true,
+    }));
+    results.push(result);
+    if (result.ok !== true) break;
+  }
+  return results;
 }
 
 function registerStart(api: PluginApi, getCfg: GetCfgFn) {
@@ -141,6 +192,25 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
       if (action) args.push("--action", action);
       if (typeof params.artifactId === "string" && params.artifactId.trim()) args.push("--artifact-id", params.artifactId.trim());
       if (typeof params.onDstExists === "string" && params.onDstExists.trim()) args.push("--on-dst-exists", params.onDstExists.trim());
+      if (action === "apply_reviewed_metadata") {
+        const metadataResults = await applyReviewedMetadataForResume(api, getCfg, params);
+        const failed = metadataResults.find((result) => result.ok !== true);
+        if (failed) {
+          return toToolResult({
+            ok: false,
+            tool: "video_pipeline_resume",
+            runId: params.runId,
+            action,
+            outcome: "source_root_review_metadata_apply_failed",
+            reviewedMetadataResults: metadataResults,
+            error: failed.error ?? "failed to apply reviewed metadata",
+          });
+        }
+        return runWorkflowCli("resume", args, (parsed) => ({
+          ...workflowToolResult(parsed),
+          reviewedMetadataResults: metadataResults,
+        }));
+      }
       return runWorkflowCli("resume", args, workflowToolResult);
     },
   });
