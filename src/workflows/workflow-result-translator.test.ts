@@ -202,4 +202,42 @@ describe("translateWorkflowResult", () => {
     expect(result.followUpToolCalls).toEqual([]);
     expect(result.hasFollowUpToolCalls).toBe(false);
   });
+
+  it("filters malformed nextActions entries before reading fields", () => {
+    const result = translateWorkflowResult({
+      ...basePayload(),
+      nextActions: [
+        null,
+        "review_plan",
+        42,
+        ["not", "an", "object"],
+        { label: "Missing action", tool: "video_pipeline_resume" },
+        {
+          action: "review_plan",
+          label: "Review sourceRoot move plan",
+          tool: "video_pipeline_resume",
+          params: { runId: "run_fixture" },
+          requiresHumanInput: true,
+        },
+      ] as unknown as WorkflowResultPayload["nextActions"],
+    });
+
+    expect(result.nextActions).toEqual([
+      {
+        action: "review_plan",
+        label: "Review sourceRoot move plan",
+        tool: "video_pipeline_resume",
+        params: { runId: "run_fixture" },
+        requiresHumanInput: true,
+      },
+    ]);
+    expect(result.followUpToolCalls).toEqual([
+      {
+        tool: "video_pipeline_resume",
+        reason: "review_plan",
+        params: { runId: "run_fixture" },
+        requiresHumanReview: true,
+      },
+    ]);
+  });
 });

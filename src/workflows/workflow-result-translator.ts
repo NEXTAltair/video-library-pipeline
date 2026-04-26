@@ -46,10 +46,24 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function paramsOrEmpty(value: unknown): JsonObject {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? { ...(value as JsonObject) }
-    : {};
+  return isJsonObject(value) ? { ...value } : {};
+}
+
+function toWorkflowNextAction(value: unknown): WorkflowNextAction | null {
+  if (!isJsonObject(value) || !isNonEmptyString(value.action)) return null;
+
+  return {
+    action: value.action,
+    ...(isNonEmptyString(value.label) ? { label: value.label } : {}),
+    ...(typeof value.tool === "string" || value.tool === null ? { tool: value.tool } : {}),
+    params: paramsOrEmpty(value.params),
+    requiresHumanInput: value.requiresHumanInput === true,
+  };
 }
 
 function toFollowUpToolCall(action: WorkflowNextAction): WorkflowFollowUpToolCall | null {
@@ -73,7 +87,9 @@ function nextStepFor(followUpToolCalls: WorkflowFollowUpToolCall[]): string | un
 }
 
 export function translateWorkflowResult(payload: WorkflowResultPayload): TranslatedWorkflowResult {
-  const nextActions = arrayOrEmpty<WorkflowNextAction>(payload.nextActions);
+  const nextActions = arrayOrEmpty<unknown>(payload.nextActions)
+    .map((action) => toWorkflowNextAction(action))
+    .filter((action): action is WorkflowNextAction => action !== null);
   const followUpToolCalls = nextActions
     .map((action) => toFollowUpToolCall(action))
     .filter((call): call is WorkflowFollowUpToolCall => call !== null);
