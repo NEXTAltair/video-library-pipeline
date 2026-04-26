@@ -16,6 +16,7 @@ from .models import (
 )
 from .state_machine import InvalidTransitionError, can_transition, validate_transition
 from .store import WorkflowStore
+from .relocate import RelocateApplyConfig, RelocateDryRunConfig, RelocateWorkflowService
 from .source_root import SourceRootApplyConfig, SourceRootDryRunConfig, SourceRootWorkflowService
 
 __all__ = [
@@ -25,6 +26,9 @@ __all__ = [
     "DiagnosticSeverity",
     "InvalidTransitionError",
     "NextAction",
+    "RelocateApplyConfig",
+    "RelocateDryRunConfig",
+    "RelocateWorkflowService",
     "ReviewGate",
     "ReviewGateStatus",
     "SourceRootApplyConfig",
