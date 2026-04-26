@@ -83,6 +83,24 @@ def read_jsonl_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def next_artifact_id(run: Any, base_id: str) -> str:
+    if base_id not in run.artifacts:
+        return base_id
+    idx = 2
+    while f"{base_id}_{idx:04d}" in run.artifacts:
+        idx += 1
+    return f"{base_id}_{idx:04d}"
+
+
+def next_gate_id(run: Any, base_id: str) -> str:
+    if base_id not in run.review_gates:
+        return base_id
+    idx = 2
+    while f"{base_id}_{idx:04d}" in run.review_gates:
+        idx += 1
+    return f"{base_id}_{idx:04d}"
+
+
 class RelocateWorkflowService:
     def __init__(
         self,
@@ -392,7 +410,10 @@ class RelocateWorkflowService:
         plan_dir = run_dir / "plan"
         metadata_dir = run_dir / "metadata"
         logs_dir = run_dir / "logs"
-        summary_path = logs_dir / "relocate_summary.json"
+        run = store.read_run(run_id)
+        diagnostics_id = next_artifact_id(run, "relocate_diagnostics")
+        diagnostics_suffix = "" if diagnostics_id == "relocate_diagnostics" else diagnostics_id.removeprefix("relocate_diagnostics")
+        summary_path = logs_dir / f"relocate_summary{diagnostics_suffix}.json"
 
         args = [
             "--db",
@@ -441,7 +462,7 @@ class RelocateWorkflowService:
             artifact_type="relocate_diagnostics",
             path=summary_path,
             producer="relocate_existing_files.py",
-            artifact_id="relocate_diagnostics",
+            artifact_id=diagnostics_id,
             metadata={"summary": summary},
         )
 
@@ -449,7 +470,9 @@ class RelocateWorkflowService:
         plan_path_raw = summary.get("planPath")
         if isinstance(plan_path_raw, str) and plan_path_raw:
             plan_source = local_path_from_any(plan_path_raw)
-            plan_target = plan_dir / "relocate_plan.jsonl"
+            run = store.read_run(run_id)
+            plan_id = next_artifact_id(run, "relocate_plan")
+            plan_target = plan_dir / f"{plan_id}.jsonl"
             if plan_source.resolve() != plan_target.resolve():
                 shutil.copyfile(plan_source, plan_target)
             plan_artifact = store.register_artifact(
@@ -457,7 +480,7 @@ class RelocateWorkflowService:
                 artifact_type="relocate_plan",
                 path=plan_target,
                 producer="relocate_existing_files.py",
-                artifact_id="relocate_plan",
+                artifact_id=plan_id,
                 input_artifact_ids=[diagnostics_artifact.id],
                 metadata={"summary": summary},
             )
@@ -466,7 +489,9 @@ class RelocateWorkflowService:
         queue_path_raw = summary.get("metadataQueuePath")
         if isinstance(queue_path_raw, str) and queue_path_raw:
             queue_source = local_path_from_any(queue_path_raw)
-            queue_target = metadata_dir / "relocate_metadata_queue.jsonl"
+            run = store.read_run(run_id)
+            queue_id = next_artifact_id(run, "relocate_metadata_queue")
+            queue_target = metadata_dir / f"{queue_id}.jsonl"
             if queue_source.resolve() != queue_target.resolve():
                 shutil.copyfile(queue_source, queue_target)
             queue_artifact = store.register_artifact(
@@ -474,7 +499,7 @@ class RelocateWorkflowService:
                 artifact_type="relocate_metadata_queue",
                 path=queue_target,
                 producer="relocate_existing_files.py",
-                artifact_id="relocate_metadata_queue",
+                artifact_id=queue_id,
                 input_artifact_ids=[diagnostics_artifact.id],
                 metadata={"summary": summary},
             )
@@ -492,7 +517,7 @@ class RelocateWorkflowService:
         has_review_blocker = suspicious > 0 or needs_review > 0 or unreviewed > 0
 
         if planned_moves > 0 and plan_artifact is not None:
-            store.transition_run(run_id, WorkflowPhase.PLAN_READY)
+            self._advance_to_phase(store, run_id, WorkflowPhase.PLAN_READY)
             return self._result(
                 ok=True,
                 store=store,
@@ -517,14 +542,14 @@ class RelocateWorkflowService:
         if has_metadata_gap or metadata_queue_count > 0:
             artifact_ids = [queue_artifact.id] if queue_artifact is not None else [diagnostics_artifact.id]
             if has_review_blocker:
-                store.create_review_gate(
+                self._ensure_review_gate(
+                    store,
                     run_id,
                     gate_type="relocate_metadata_review",
                     artifact_ids=artifact_ids,
                     gate_id="relocate_metadata_review",
                 )
-            store.transition_run(run_id, WorkflowPhase.METADATA_EXTRACTED)
-            store.transition_run(run_id, WorkflowPhase.REVIEW_REQUIRED)
+            self._advance_to_phase(store, run_id, WorkflowPhase.REVIEW_REQUIRED)
             return self._result(
                 ok=False,
                 store=store,
@@ -543,14 +568,14 @@ class RelocateWorkflowService:
             )
 
         if has_review_blocker:
-            store.create_review_gate(
+            gate = self._ensure_review_gate(
+                store,
                 run_id,
                 gate_type="relocate_metadata_review",
                 artifact_ids=[diagnostics_artifact.id],
                 gate_id="relocate_metadata_review",
             )
-            store.transition_run(run_id, WorkflowPhase.METADATA_EXTRACTED)
-            store.transition_run(run_id, WorkflowPhase.REVIEW_REQUIRED)
+            self._advance_to_phase(store, run_id, WorkflowPhase.REVIEW_REQUIRED)
             return self._result(
                 ok=False,
                 store=store,
@@ -564,7 +589,7 @@ class RelocateWorkflowService:
                         tool="video_pipeline_resume",
                         params={
                             "runId": run_id,
-                            "gateId": "relocate_metadata_review",
+                            "gateId": gate.id,
                             "artifactIds": [diagnostics_artifact.id],
                         },
                         requires_human_input=True,
@@ -573,8 +598,7 @@ class RelocateWorkflowService:
             )
 
         if already_correct > 0 and planned_moves == 0:
-            store.transition_run(run_id, WorkflowPhase.PLAN_READY)
-            store.transition_run(run_id, WorkflowPhase.COMPLETE)
+            self._advance_to_phase(store, run_id, WorkflowPhase.COMPLETE)
             return self._result(
                 ok=True,
                 store=store,
@@ -583,8 +607,7 @@ class RelocateWorkflowService:
                 outcome="relocate_already_correct",
             )
 
-        store.transition_run(run_id, WorkflowPhase.PLAN_READY)
-        store.transition_run(run_id, WorkflowPhase.COMPLETE)
+        self._advance_to_phase(store, run_id, WorkflowPhase.COMPLETE)
         return self._result(
             ok=True,
             store=store,
@@ -775,47 +798,106 @@ class RelocateWorkflowService:
                 outcome="relocate_resume_action_rejected",
             )
 
-        params: dict[str, Any] = {"runId": run_id}
-        queue_artifacts = [aid for aid in run.artifact_ids if run.artifacts.get(aid) and run.artifacts[aid].type == "relocate_metadata_queue"]
-        diagnostics_artifacts = [aid for aid in run.artifact_ids if run.artifacts.get(aid) and run.artifacts[aid].type == "relocate_diagnostics"]
-        if action == "prepare_relocate_metadata":
-            params["artifactIds"] = queue_artifacts or diagnostics_artifacts
-            next_action = NextAction(
-                action="prepare_relocate_metadata",
-                label="Prepare missing or blocked relocate metadata",
-                tool="video_pipeline_resume",
-                params=params,
-                requires_human_input=False,
-            )
-            outcome = "relocate_metadata_preparation_pending"
-        else:
-            gate_ids = [
-                gid
-                for gid in run.review_gate_ids
-                if gid in run.review_gates and run.review_gates[gid].status == ReviewGateStatus.OPEN.value
-            ]
-            if gate_ids:
-                params["gateId"] = gate_ids[0]
-                params["artifactIds"] = run.review_gates[gate_ids[0]].artifact_ids
-            else:
-                params["artifactIds"] = diagnostics_artifacts
-            next_action = NextAction(
-                action="review_relocate_metadata",
-                label="Review blocked relocate metadata",
-                tool="video_pipeline_resume",
-                params=params,
-                requires_human_input=True,
-            )
-            outcome = "relocate_metadata_review_pending"
+        gate_ids = [
+            gid
+            for gid in run.review_gate_ids
+            if gid in run.review_gates and run.review_gates[gid].status == ReviewGateStatus.OPEN.value
+        ]
+        if action == "review_relocate_metadata":
+            for gate_id in gate_ids:
+                store.update_review_gate(
+                    run_id,
+                    gate_id,
+                    status=ReviewGateStatus.APPROVED,
+                    resolution={"action": action},
+                )
 
-        return self._result(
-            ok=False,
-            store=store,
-            run_id=run_id,
-            phase=run.phase,
-            outcome=outcome,
-            next_actions=[next_action],
+        rerun = store.read_run(run_id)
+        cfg = self._config_from_run(rerun)
+        result = self._dry_run_existing(
+            run_id,
+            cfg,
+            store,
+            str(local_path_from_any(str(rerun.config_snapshot.get("db") or ""))),
         )
+        if result.outcome == "relocate_metadata_preparation_required":
+            result.outcome = "relocate_metadata_preparation_still_required"
+        elif result.outcome == "relocate_review_required":
+            result.outcome = "relocate_metadata_review_still_required"
+        return result
+
+    def _config_from_run(self, run: Any) -> RelocateDryRunConfig:
+        snapshot = run.config_snapshot
+        return RelocateDryRunConfig(
+            windows_ops_root=str(snapshot.get("windowsOpsRoot") or ""),
+            dest_root=str(snapshot.get("destRoot") or ""),
+            db=str(snapshot.get("db") or ""),
+            roots=[str(v) for v in snapshot.get("roots") or [] if isinstance(v, str) and v],
+            roots_file_path=str(snapshot.get("rootsFilePath") or ""),
+            extensions=[str(v) for v in snapshot.get("extensions") or [] if isinstance(v, str) and v],
+            drive_routes=str(snapshot.get("driveRoutes") or ""),
+            limit=int(snapshot.get("limit") or 0),
+            allow_needs_review=bool(snapshot.get("allowNeedsReview")),
+            allow_unreviewed_metadata=bool(snapshot.get("allowUnreviewedMetadata")),
+            queue_missing_metadata=bool(snapshot.get("queueMissingMetadata")),
+            write_metadata_queue_on_dry_run=bool(snapshot.get("writeMetadataQueueOnDryRun")),
+            scan_error_policy=str(snapshot.get("scanErrorPolicy") or "warn"),
+            scan_error_threshold=int(snapshot.get("scanErrorThreshold") or 0),
+            scan_retry_count=int(snapshot.get("scanRetryCount") or 1),
+            on_dst_exists=str(snapshot.get("onDstExists") or "error"),
+            skip_suspicious_title_check=bool(snapshot.get("skipSuspiciousTitleCheck")),
+            run_id=run.run_id,
+        )
+
+    def _ensure_review_gate(
+        self,
+        store: WorkflowStore,
+        run_id: str,
+        *,
+        gate_type: str,
+        artifact_ids: list[str],
+        gate_id: str,
+    ) -> Any:
+        run = store.read_run(run_id)
+        if gate_id in run.review_gates and run.review_gates[gate_id].status == ReviewGateStatus.OPEN.value:
+            return run.review_gates[gate_id]
+        if gate_id in run.review_gates:
+            gate_id = next_gate_id(run, gate_id)
+        return store.create_review_gate(
+            run_id,
+            gate_type=gate_type,
+            artifact_ids=artifact_ids,
+            gate_id=gate_id,
+        )
+
+    def _advance_to_phase(self, store: WorkflowStore, run_id: str, target: WorkflowPhase) -> None:
+        run = store.read_run(run_id)
+        if run.phase == target.value:
+            return
+        if target == WorkflowPhase.REVIEW_REQUIRED:
+            if run.phase == WorkflowPhase.CREATED.value:
+                store.transition_run(run_id, WorkflowPhase.METADATA_EXTRACTED)
+                store.transition_run(run_id, WorkflowPhase.REVIEW_REQUIRED)
+            elif run.phase == WorkflowPhase.METADATA_EXTRACTED.value:
+                store.transition_run(run_id, WorkflowPhase.REVIEW_REQUIRED)
+            return
+        if target == WorkflowPhase.PLAN_READY:
+            if run.phase == WorkflowPhase.REVIEW_REQUIRED.value:
+                store.transition_run(run_id, WorkflowPhase.METADATA_ACCEPTED)
+                store.transition_run(run_id, WorkflowPhase.PLAN_READY)
+            elif run.phase == WorkflowPhase.METADATA_EXTRACTED.value:
+                store.transition_run(run_id, WorkflowPhase.METADATA_ACCEPTED)
+                store.transition_run(run_id, WorkflowPhase.PLAN_READY)
+            elif run.phase == WorkflowPhase.CREATED.value:
+                store.transition_run(run_id, WorkflowPhase.PLAN_READY)
+            elif run.phase == WorkflowPhase.METADATA_ACCEPTED.value:
+                store.transition_run(run_id, WorkflowPhase.PLAN_READY)
+            return
+        if target == WorkflowPhase.COMPLETE:
+            self._advance_to_phase(store, run_id, WorkflowPhase.PLAN_READY)
+            current = store.read_run(run_id)
+            if current.phase == WorkflowPhase.PLAN_READY.value:
+                store.transition_run(run_id, WorkflowPhase.COMPLETE)
 
     def _block_apply(
         self,

@@ -27,7 +27,7 @@ This skill is the V2 orchestrator for `video-library-pipeline`.
 |---|---|
 | Process new recordings from `sourceRoot` | Read `skills/inventory-review/SKILL.md`; start `flow: "source_root"` |
 | Reorganize/relocate existing library files | Read `skills/relocate-review/SKILL.md`; start `flow: "relocate"` |
-| Continue an existing run | Call `video_pipeline_status` with `runId` to inspect state. Resume only if you already have `followUpToolCalls` / `nextActions` from the latest `WorkflowResult`; status itself does not return resume actions. |
+| Continue an existing run | Call `video_pipeline_status` with `runId` and `includeArtifacts:true`; use returned `nextActions` to resume. |
 | Inspect review YAML, plan, diagnostics, or apply log | Call `video_pipeline_inspect_artifact` with `runId` and `artifactId` |
 | Metadata review handoff | Read `skills/extract-review/SKILL.md`; use the run's `ReviewGate` and artifacts |
 | Apply/move after plan review | Read `skills/move-review/SKILL.md`; resume the run with the plan action returned by `nextActions` |
@@ -48,13 +48,13 @@ If the request targets an already-existing directory tree under the library, tre
    - `outcome`
    - `artifacts`
    - `gates`
-   - `nextActions` / `followUpToolCalls` only when the result is a `WorkflowResult` from `start` or `resume`
+   - `nextActions` / `followUpToolCalls`
    - `diagnostics`
 3. If a human review gate is present, inspect the referenced artifact and ask the user to review it.
-4. After review or approval, call `video_pipeline_resume` only with exact params from a retained `WorkflowResult.followUpToolCalls[].params` or `nextActions[].params`.
+4. After review or approval, call `video_pipeline_resume` only with exact params from `followUpToolCalls[].params` or `nextActions[].params`.
 5. Repeat until `phase` is `complete`, `blocked`, or `failed`.
 
-`video_pipeline_status` returns the run manifest for inspection. It does not reconstruct actionable resume parameters. If no prior `WorkflowResult` with next actions is available, report that deterministic continuation is not available from status alone rather than guessing. Future implementation is tracked in #125.
+`video_pipeline_status` reconstructs actionable `nextActions` from the run manifest for non-terminal review and plan phases. If no action is returned, do not guess a latest JSONL/YAML/plan path.
 
 ## Reporting
 

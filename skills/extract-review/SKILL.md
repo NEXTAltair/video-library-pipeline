@@ -12,7 +12,7 @@ metadata: {"openclaw":{"emoji":"🧠","requires":{"plugins":["video-library-pipe
 - Do not search for latest extraction JSONL/YAML files.
 - The run manifest and `ReviewGate.artifactIds` define the review scope.
 - Do not ask the user to decide destination folders in this stage.
-- SourceRoot metadata review resume is not supported in the current V2 public surface when the returned action is `apply_reviewed_metadata`. Do not call that unsupported action. Future implementation is tracked in #125.
+- SourceRoot metadata review resumes through the returned `apply_reviewed_metadata` action after the user confirms YAML review is complete.
 
 ## Review Scope
 
@@ -47,23 +47,20 @@ Out of scope:
    }
    ```
 4. Present the artifact path and concrete review scope to the user.
-5. After the user confirms review is complete, check the returned follow-up action:
-   - If `resumeAction == "apply_reviewed_metadata"` for a sourceRoot run, stop and report that this metadata review resume path is not yet supported by the V2 public surface.
-   - Otherwise execute only supported returned follow-up params:
+5. After the user confirms review is complete, execute the returned follow-up params:
    ```json
    video_pipeline_resume {
      "runId": "<runId>",
-     "resumeAction": "<supported resumeAction from nextActions>",
-     "...": "other params from the retained WorkflowResult followUpToolCalls[].params"
+     "resumeAction": "<resumeAction from nextActions>",
+     "...": "other params from nextActions.params"
    }
    ```
 
 ## Required Behavior
 
-- Use params exactly as returned by a retained `WorkflowResult.followUpToolCalls` or `nextActions.params`.
+- Use params exactly as returned by `followUpToolCalls` or `nextActions.params`.
 - If a follow-up has `requiresHumanReview: true`, never call it before user confirmation.
-- Do not synthesize resume params from `video_pipeline_status`; status is inspect-only and does not return actionable next steps.
-- Do not call unsupported sourceRoot metadata review action `apply_reviewed_metadata`; report the workflow gap tracked in #125.
+- Do not synthesize resume params by scanning latest files; use status/result `nextActions`.
 - After resume, read the returned `phase`:
   - `plan_ready`: hand off to `skills/move-review/SKILL.md`.
   - `review_required`: repeat this skill for the new/open gate.
@@ -71,4 +68,4 @@ Out of scope:
 
 ## Legacy Guardrail
 
-The old standalone extraction/apply tools are hidden in the V2 public surface. Do not instruct the operator to call hidden legacy tools directly. If metadata repair cannot be completed through the returned `video_pipeline_resume` action, report the #125 workflow gap rather than guessing a latest JSONL/YAML path.
+The old standalone extraction/apply tools are hidden in the V2 public surface. Do not instruct the operator to call hidden legacy tools directly. If metadata repair cannot be completed through the returned `video_pipeline_resume` action, report diagnostics rather than guessing a latest JSONL/YAML path.
