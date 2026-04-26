@@ -11,32 +11,10 @@ vi.mock("openclaw/plugin-sdk/plugin-entry", () => ({
 import pluginEntry from "../index";
 
 const EXPECTED_TOOL_NAMES = [
-  "video_pipeline_analyze_and_move_videos",
-  "video_pipeline_apply_llm_extract_output",
-  "video_pipeline_apply_reviewed_metadata",
-  "video_pipeline_backfill_moved_files",
-  "video_pipeline_db_backup",
-  "video_pipeline_db_restore",
-  "video_pipeline_dedup_apply_broadcaster_yaml",
-  "video_pipeline_dedup_apply_drop_review_yaml",
-  "video_pipeline_dedup_generate_broadcaster_yaml",
-  "video_pipeline_dedup_generate_drop_review_yaml",
-  "video_pipeline_dedup_rebroadcasts",
-  "video_pipeline_dedup_recordings",
-  "video_pipeline_detect_folder_contamination",
-  "video_pipeline_detect_rebroadcasts",
-  "video_pipeline_export_program_yaml",
-  "video_pipeline_ingest_epg",
-  "video_pipeline_llm_extract_status",
-  "video_pipeline_logs",
-  "video_pipeline_normalize_folder_case",
-  "video_pipeline_prepare_relocate_metadata",
-  "video_pipeline_reextract",
-  "video_pipeline_relocate_existing_files",
-  "video_pipeline_repair_db",
+  "video_pipeline_inspect_artifact",
+  "video_pipeline_resume",
+  "video_pipeline_start",
   "video_pipeline_status",
-  "video_pipeline_update_program_titles",
-  "video_pipeline_validate",
 ].sort();
 
 function createMockApi() {
@@ -189,37 +167,58 @@ describe("plugin entry", () => {
     expect(payload.error).toContain("windowsOpsRoot is required");
   });
 
-  it("keeps high-signal tool parameter schemas stable", () => {
+  it("keeps high-signal V2 tool parameter schemas stable", () => {
     const api = createMockApi();
 
     pluginEntry.register(api);
 
-    const applyReviewed = getRegisteredTool(api, "video_pipeline_apply_reviewed_metadata");
-    expect(applyReviewed.parameters).toMatchObject({
+    const start = getRegisteredTool(api, "video_pipeline_start");
+    expect(start.parameters).toMatchObject({
       type: "object",
       additionalProperties: false,
+      required: ["flow"],
       properties: {
-        sourceJsonlPath: { type: "string" },
-        sourceYamlPath: { type: "string" },
-        markHumanReviewed: { type: "boolean", default: true },
-        allowNoContentChanges: { type: "boolean", default: false },
-        reviewedBy: { type: "string" },
-        source: { type: "string", default: "human_reviewed" },
+        flow: { type: "string", enum: ["source_root", "relocate"] },
+        runId: { type: "string" },
+        maxFilesPerRun: { type: "integer", minimum: 1, maximum: 5000 },
+        roots: { type: "array", items: { type: "string" } },
+        onDstExists: { type: "string", enum: ["error", "rename_suffix"], default: "error" },
       },
     });
 
-    const repairDb = getRegisteredTool(api, "video_pipeline_repair_db");
-    expect(repairDb.parameters).toMatchObject({
+    const resume = getRegisteredTool(api, "video_pipeline_resume");
+    expect(resume.parameters).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["runId"],
+      properties: {
+        runId: { type: "string" },
+        action: { type: "string" },
+        resumeAction: { type: "string" },
+        artifactId: { type: "string" },
+      },
+    });
+
+    const status = getRegisteredTool(api, "video_pipeline_status");
+    expect(status.parameters).toMatchObject({
       type: "object",
       additionalProperties: false,
       properties: {
-        action: {
-          type: "string",
-          enum: ["repair_paths", "clear_review_flags"],
-          default: "repair_paths",
-        },
-        dryRun: { type: "boolean", default: true },
-        limit: { type: "integer", minimum: 1, maximum: 5000 },
+        runId: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+        includeArtifacts: { type: "boolean", default: false },
+      },
+    });
+
+    const inspect = getRegisteredTool(api, "video_pipeline_inspect_artifact");
+    expect(inspect.parameters).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["runId", "artifactId"],
+      properties: {
+        runId: { type: "string" },
+        artifactId: { type: "string" },
+        includeContentPreview: { type: "boolean", default: false },
       },
     });
   });
