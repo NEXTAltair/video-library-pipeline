@@ -1,45 +1,48 @@
 ---
 name: video-library-pipeline-move-review
-description: Stage 3 of interactive operation. Execute move/apply and stop for final human review.
+description: Review and apply a V2 run-scoped move plan through video_pipeline_resume.
 metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipeline"]}}}
 ---
 
-# Stage 3: Move + Human Review
+# V2 Move Plan Review
 
 ## Rule
 
-- Use plugin tools only. Do not call scripts directly.
-- Keep execution in the main agent turn. Do not use subagents.
-- Require explicit user confirmation before `apply=true`.
-- This skill is for the normal `sourceRoot` move stage only.
-  - If the user goal is arbitrary existing-root cleanup (for example a legacy/staging subtree under `destRoot`), switch to `video_pipeline_relocate_existing_files` flow instead of continuing here.
-- `video_pipeline_analyze_and_move_videos` is `sourceRoot`-scoped.
-  - `remaining_files` is only the count under configured `sourceRoot` (usually `B:\\未視聴`).
-  - Do not treat `remaining_files == 0` as proof that residual files under other roots are gone.
-- For arbitrary existing-root cleanup, use `video_pipeline_relocate_existing_files` (separate tool / separate review).
-- If the user asks about an existing-root cleanup target, report that this stage did not inspect that root unless an explicit scan was performed.
+- Use only V2 public tools.
+- Apply/move must be run-scoped: `runId` + plan `artifactId`.
+- Require explicit user confirmation before resuming an action that applies a plan.
+- Never pass a filesystem `planPath` guessed from a previous run or latest file.
 
-## Tool sequence
+## Tool Sequence
 
-1. Call `video_pipeline_validate` with `{"checkWindowsInterop": true, "intent": "inventory"}`. Follow the `nextStep` field in the result.
-2. Ask for final user confirmation to apply move.
-3. Call `video_pipeline_analyze_and_move_videos` with:
-   - `apply=true`
-   - `allowNeedsReview=false` (default safety)
-   - optional `maxFilesPerRun`
-4. Parse summary JSON and collect:
-   - `applied`
-   - `remaining_files`
-   - `plan_stats`
-5. Call `video_pipeline_logs` with `{"kind":"all","tail":50}`.
+1. Ensure the current run is `phase == "plan_ready"`.
+   - If needed, call `video_pipeline_status {"runId":"<runId>", "includeArtifacts":true}`.
+2. Inspect the plan artifact referenced by the plan-review action:
+   ```json
+   video_pipeline_inspect_artifact {
+     "runId": "<runId>",
+     "artifactId": "<artifactId>",
+     "includeContentPreview": true
+   }
+   ```
+3. Summarize the plan for the user:
+   - `runId`
+   - plan artifact ID and path
+   - source/destination examples from preview when available
+   - diagnostics or gates still attached to the run
+4. Ask for explicit approval to apply the plan.
+5. After approval, call the exact resume params returned by the workflow:
+   ```json
+   video_pipeline_resume {
+     "runId": "<runId>",
+     "artifactId": "<artifactId>",
+     "resumeAction": "<resumeAction from nextActions>"
+   }
+   ```
+6. Report final `phase`, `outcome`, diagnostics, and apply artifacts.
 
-## Human review checklist
+## Completion Criteria
 
-- `exitCode == 0`
-- `remaining_files == 0` (or user accepts residual files) **within `sourceRoot` scope**
-- no abnormal skip counts (`skipped_needs_review`, `skipped_missing_fields`, `skipped_outside`)
-- paths (`inventory`, `queue`, `plan`, `applied`) are present
-
-## Completion criteria
-
-- Move stage is complete only after user checks post-run summary/logs.
+- `phase == "complete"` means the V2 workflow is complete.
+- `phase == "blocked"` or `phase == "failed"` means stop and report diagnostics.
+- Distinguish physical move completion from metadata review or DB-only operations.
