@@ -129,16 +129,6 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
         queue_id = _latest_artifact_id(run, "relocate_metadata_queue")
         diagnostics_id = _latest_artifact_id(run, "relocate_diagnostics")
         review_gate = next((gate for gate in open_gates if gate.type == "relocate_metadata_review"), None)
-        if queue_id:
-            return [
-                NextAction(
-                    action="prepare_relocate_metadata",
-                    label="Prepare missing or blocked relocate metadata",
-                    tool="video_pipeline_resume",
-                    params={"runId": run.run_id, "artifactIds": [queue_id]},
-                    requires_human_input=review_gate is not None,
-                )
-            ]
         if review_gate is not None:
             return [
                 NextAction(
@@ -151,6 +141,16 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
                         "artifactIds": list(review_gate.artifact_ids),
                     },
                     requires_human_input=True,
+                )
+            ]
+        if queue_id:
+            return [
+                NextAction(
+                    action="prepare_relocate_metadata",
+                    label="Prepare missing or blocked relocate metadata",
+                    tool="video_pipeline_resume",
+                    params={"runId": run.run_id, "artifactIds": [queue_id]},
+                    requires_human_input=review_gate is not None,
                 )
             ]
         if diagnostics_id:

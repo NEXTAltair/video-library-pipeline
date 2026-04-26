@@ -206,6 +206,13 @@ def test_relocate_dry_run_suspicious_title_creates_review_gate(tmp_path) -> None
 def test_relocate_metadata_resume_action_rechecks_run_and_reaches_plan_ready(tmp_path) -> None:
     harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_resume_gap", scenario="metadata_gap")
     harness.dry_run()
+    store = WorkflowStore(Path(harness.cfg.windows_ops_root))
+    store.create_review_gate(
+        harness.cfg.run_id,
+        gate_type="relocate_metadata_review",
+        artifact_ids=["relocate_metadata_queue"],
+        gate_id="relocate_metadata_review",
+    )
     harness.scenario = "plan_ready"
 
     result = harness.service().resume(
@@ -226,6 +233,10 @@ def test_relocate_metadata_resume_action_rechecks_run_and_reaches_plan_ready(tmp
     manifest = harness.manifest()
     assert manifest["phase"] == "plan_ready"
     assert manifest["artifacts"]["relocate_plan_0002"]["inputArtifactIds"] == ["relocate_diagnostics_0002"]
+    assert manifest["reviewGates"]["relocate_metadata_review"]["status"] == "approved"
+    assert manifest["reviewGates"]["relocate_metadata_review"]["resolution"] == {
+        "action": "relocate_metadata_recheck_plan_ready"
+    }
 
 
 def test_relocate_review_resume_action_approves_gate_and_reaches_plan_ready(tmp_path) -> None:

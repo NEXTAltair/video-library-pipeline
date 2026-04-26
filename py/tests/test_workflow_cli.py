@@ -125,6 +125,60 @@ def test_workflow_cli_status_reconstructs_latest_relocate_plan_action(tmp_path):
     }
 
 
+def test_workflow_cli_status_prefers_open_relocate_review_gate_over_stale_queue(tmp_path):
+    ops_root = tmp_path / "ops"
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.RELOCATE, run_id="run_relocate_review")
+    queue_path = ops_root / "runs" / "run_relocate_review" / "metadata" / "relocate_metadata_queue.jsonl"
+    queue_path.write_text("{}\n", encoding="utf-8")
+    store.register_artifact(
+        "run_relocate_review",
+        artifact_type="relocate_metadata_queue",
+        path=queue_path,
+        producer="test",
+        artifact_id="relocate_metadata_queue",
+    )
+    diagnostics_path = ops_root / "runs" / "run_relocate_review" / "logs" / "relocate_summary.json"
+    diagnostics_path.write_text("{}\n", encoding="utf-8")
+    store.register_artifact(
+        "run_relocate_review",
+        artifact_type="relocate_diagnostics",
+        path=diagnostics_path,
+        producer="test",
+        artifact_id="relocate_diagnostics",
+    )
+    store.create_review_gate(
+        "run_relocate_review",
+        gate_type="relocate_metadata_review",
+        artifact_ids=["relocate_diagnostics"],
+        gate_id="relocate_metadata_review",
+    )
+    store.transition_run("run_relocate_review", WorkflowPhase.METADATA_EXTRACTED)
+    store.transition_run("run_relocate_review", WorkflowPhase.REVIEW_REQUIRED)
+
+    payload = _cmd_status(
+        argparse.Namespace(
+            windows_ops_root=str(ops_root),
+            run_id="run_relocate_review",
+            limit=10,
+            include_artifacts=False,
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["run"]["nextActions"][0] == {
+        "action": "review_relocate_metadata",
+        "label": "Review blocked relocate metadata",
+        "tool": "video_pipeline_resume",
+        "params": {
+            "runId": "run_relocate_review",
+            "gateId": "relocate_metadata_review",
+            "artifactIds": ["relocate_diagnostics"],
+        },
+        "requiresHumanInput": True,
+    }
+
+
 def test_workflow_cli_inspect_artifact_returns_related_gates_and_preview(tmp_path):
     ops_root = tmp_path / "ops"
     store = WorkflowStore(ops_root)
