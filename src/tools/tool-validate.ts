@@ -80,10 +80,19 @@ export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
         const hintsParser = hintsFilePresent
           ? runCmd("uv", ["run", "python", "-c", "import yaml"])
           : { ok: true, stderr: "", stdout: "" };
+        const hintsLoad = hintsFilePresent && hintsParser.ok
+          ? runCmd("uv", [
+            "run",
+            "python",
+            "-c",
+            "import sys,yaml; yaml.safe_load(open(sys.argv[1], encoding='utf-8-sig'))",
+            hintsPath,
+          ])
+          : hintsParser;
         checks.hintsParserAvailable = hintsParser.ok;
-        checks.hintsLoadable = !hintsFilePresent || hintsParser.ok;
-        checks.hintsLoadError = hintsFilePresent && !hintsParser.ok
-          ? String(hintsParser.stderr || hintsParser.stdout || "PyYAML is required to load program_aliases.yaml").trim()
+        checks.hintsLoadable = !hintsFilePresent || (hintsParser.ok && hintsLoad.ok);
+        checks.hintsLoadError = hintsFilePresent && !checks.hintsLoadable
+          ? String((!hintsParser.ok ? hintsParser.stderr || hintsParser.stdout : hintsLoad.stderr || hintsLoad.stdout) || "failed to load program_aliases.yaml").trim()
           : "";
 
         if (params.checkWindowsInterop) {
