@@ -47,14 +47,16 @@ export function registerToolStatus(api: PluginApi, getCfg: GetCfgFn) {
         const latestRelocateApply = latestJsonlFile(moveDir, "relocate_apply_");
         const latestRelocateQueue = latestJsonlFile(llmDir, "relocate_metadata_queue_");
         const hintsYaml = path.join(getExtensionRootDir(), "rules", "program_aliases.yaml");
-        const hintsPresent = fs.existsSync(hintsYaml);
+        const hintsFilePresent = fs.existsSync(hintsYaml);
         const out: AnyObj = {
           ok: true,
           tool: "video_pipeline_status",
           missingConfigKeys,
-          rulesState: hintsPresent ? "configured_optional" : "missing_ai_only_mode",
+          rulesState: hintsFilePresent ? "hints_file_present_runtime_unchecked" : "missing_ai_only_mode",
           hintsPath: hintsYaml,
-          hintsPresent,
+          hintsFilePresent,
+          hintsRuntimeLoadable: null,
+          hintsLoadError: hintsFilePresent ? "legacy status does not execute the Python hints loader" : null,
         };
         if (params.includeRawPaths) {
           out.moveDir = moveDir;

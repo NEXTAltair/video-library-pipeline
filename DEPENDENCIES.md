@@ -36,7 +36,7 @@
 
 補足:
 
-- ヒントファイル `rules/program_aliases.yaml` は任意。欠損時は AI のみのモードで抽出を継続する
+- ヒントファイル `rules/program_aliases.yaml` は任意。欠損時は AI のみのモードで抽出を継続する。ファイルが存在する場合は `pyyaml` で読み込める必要があり、読み込み不能なら抽出を停止する
 - バックフィルルートファイル `rules/backfill_roots.yaml` は backfill ツールへのオプション入力。未設定時は `destRoot` を使用
 - 再配置ルートファイル `rules/relocate_roots.yaml` は relocate ツールへのオプション入力。安全のため、relocate には依然として明示的な `roots` または `rootsFilePath` が必要
 - 放送バケットルール `rules/broadcast_buckets.yaml` は dedup ツールが使用（terrestrial / bs_cs / unknown 分類）
@@ -55,7 +55,7 @@
 
 ## Python ランタイム依存関係
 
-- `pyyaml` — `drive_routes.yaml` ロードに必要（`py/video_pipeline/domain/path_placement_rules.py`）。標準ライブラリ外では唯一の必須依存
+- `pyyaml` — `drive_routes.yaml` と `program_aliases.yaml` のロードに必要。標準ライブラリ外では唯一の必須依存
 - Python 標準ライブラリ（`sqlite3`, `argparse`, `json`, `unicodedata` 等）
 - DB アクセスは標準 `sqlite3` のみ（外部 ORM 依存なし）
 

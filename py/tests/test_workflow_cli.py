@@ -6,6 +6,8 @@ from workflow_cli import _cmd_inspect_artifact, _cmd_status
 
 def test_workflow_cli_status_lists_recent_runs(tmp_path):
     ops_root = tmp_path / "ops"
+    hints_path = tmp_path / "program_aliases.json"
+    hints_path.write_text('{"hints": []}\n', encoding="utf-8")
     store = WorkflowStore(ops_root)
     store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_source")
     store.transition_run("run_source", WorkflowPhase.INVENTORY_READY)
@@ -22,10 +24,14 @@ def test_workflow_cli_status_lists_recent_runs(tmp_path):
             run_id="",
             limit=10,
             include_artifacts=False,
+            hints_path=str(hints_path),
         )
     )
 
     assert payload["ok"] is True
+    assert payload["hints"]["ok"] is True
+    assert payload["hints"]["hintsFilePresent"] is True
+    assert payload["hints"]["hintsLoadable"] is True
     assert payload["runs"][0]["runId"] == "run_source"
     assert payload["runs"][0]["phase"] == "inventory_ready"
     assert payload["runs"][0]["nextActions"] == []
@@ -63,6 +69,7 @@ def test_workflow_cli_status_reconstructs_source_root_review_action(tmp_path):
             run_id="run_source_review",
             limit=10,
             include_artifacts=True,
+            hints_path=str(tmp_path / "missing_program_aliases.yaml"),
         )
     )
 
@@ -114,6 +121,7 @@ def test_workflow_cli_status_reconstructs_latest_relocate_plan_action(tmp_path):
             run_id="run_relocate_plan",
             limit=10,
             include_artifacts=False,
+            hints_path=str(tmp_path / "missing_program_aliases.yaml"),
         )
     )
 
@@ -162,6 +170,7 @@ def test_workflow_cli_status_prefers_open_relocate_review_gate_over_stale_queue(
             run_id="run_relocate_review",
             limit=10,
             include_artifacts=False,
+            hints_path=str(tmp_path / "missing_program_aliases.yaml"),
         )
     )
 
