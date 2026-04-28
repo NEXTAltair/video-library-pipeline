@@ -40,6 +40,30 @@ def test_workflow_cli_status_lists_recent_runs(tmp_path):
     assert payload["openGates"][0]["id"] == "metadata_review"
 
 
+def test_workflow_cli_status_missing_hints_keeps_stdout_clean(tmp_path, capsys):
+    ops_root = tmp_path / "ops"
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_source")
+
+    payload = _cmd_status(
+        argparse.Namespace(
+            windows_ops_root=str(ops_root),
+            run_id="",
+            limit=10,
+            include_artifacts=False,
+            hints_path=str(tmp_path / "missing_program_aliases.yaml"),
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "W hints file missing" in captured.err
+    assert payload["ok"] is True
+    assert payload["hints"]["ok"] is True
+    assert payload["hints"]["hintsFilePresent"] is False
+    assert payload["hints"]["hintsLoadable"] is False
+
+
 def test_workflow_cli_status_reconstructs_source_root_review_action(tmp_path):
     ops_root = tmp_path / "ops"
     store = WorkflowStore(ops_root)
