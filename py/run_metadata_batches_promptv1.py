@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import unicodedata
 from pathlib import Path, PurePath
 from typing import Any
@@ -289,7 +290,7 @@ def _load_hints_with_status(path: str | None) -> tuple[HintSet, dict[str, Any]]:
         return HintSet(), status
     p = Path(path)
     if not p.exists():
-        print(f"W hints file missing: {p}")
+        print(f"W hints file missing: {p}", file=sys.stderr)
         return HintSet(), status
     status["hintsFilePresent"] = True
 

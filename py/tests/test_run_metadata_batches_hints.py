@@ -1,9 +1,12 @@
 import run_metadata_batches_promptv1 as mod
 
 
-def test_load_hints_missing_file_is_ai_only(tmp_path):
+def test_load_hints_missing_file_is_ai_only_and_stdout_clean(tmp_path, capsys):
     hints, status = mod._load_hints_with_status(str(tmp_path / "missing.yaml"))
 
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "W hints file missing" in captured.err
     assert not hints
     assert status == {
         "hintsPath": str(tmp_path / "missing.yaml"),
