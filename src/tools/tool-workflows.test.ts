@@ -307,12 +307,20 @@ describe("V2 workflow tools", () => {
   it("returns status and inspect JSON without WorkflowResult translation", async () => {
     const api = createMockApi();
     registerWorkflowTools(api as never, () => cfg());
-    vi.mocked(runCmd).mockReturnValueOnce(cmdResult({ ok: true, runs: [{ runId: "run_a" }] }));
+    vi.mocked(runCmd).mockReturnValueOnce(cmdResult({
+      ok: true,
+      hints: { ok: true, hintsFilePresent: true, hintsLoadable: true },
+      runs: [{ runId: "run_a" }],
+    }));
     const status = await getRegisteredTool(api, "video_pipeline_status").execute("call-4", {
       limit: 5,
       includeArtifacts: true,
     });
-    expect(status).toEqual({ ok: true, runs: [{ runId: "run_a" }] });
+    expect(status).toEqual({
+      ok: true,
+      hints: { ok: true, hintsFilePresent: true, hintsLoadable: true },
+      runs: [{ runId: "run_a" }],
+    });
     expect(runCmd).toHaveBeenLastCalledWith("uv", expect.arrayContaining([
       "status",
       "--limit",

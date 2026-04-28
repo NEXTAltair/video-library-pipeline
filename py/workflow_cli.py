@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
 from video_pipeline.workflows import (
     NextAction,
@@ -40,6 +41,19 @@ def _parse_json_array(value: str) -> list[str]:
 
 def _store(windows_ops_root: str) -> WorkflowStore:
     return WorkflowStore(_local_path(windows_ops_root))
+
+
+def _default_hints_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "rules" / "program_aliases.yaml"
+
+
+def _hints_status(path: str | None = None) -> dict[str, Any]:
+    hints_path = str(path or _default_hints_path())
+    try:
+        _hints, status = _load_hints_with_status(hints_path)
+        return {"ok": True, **status}
+    except HintLoadFailure as exc:
+        return {"ok": False, **exc.status}
 
 
 def _run_to_status(run: Any, *, include_artifacts: bool) -> dict[str, Any]:
@@ -241,9 +255,11 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
     store = _store(args.windows_ops_root)
+    hints = _hints_status(getattr(args, "hints_path", "") or None)
     if args.run_id:
         return {
             "ok": True,
+            "hints": hints,
             "run": _run_to_status(store.read_run(args.run_id), include_artifacts=args.include_artifacts),
         }
 
@@ -267,7 +283,13 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
         for artifact in artifacts.values():
             if isinstance(artifact, dict):
                 latest_artifacts.append({"runId": run.get("runId"), **artifact})
-    return {"ok": True, "runs": runs, "openGates": open_gates, "latestArtifacts": latest_artifacts[: args.limit]}
+    return {
+        "ok": True,
+        "hints": hints,
+        "runs": runs,
+        "openGates": open_gates,
+        "latestArtifacts": latest_artifacts[: args.limit],
+    }
 
 
 def _cmd_inspect_artifact(args: argparse.Namespace) -> dict[str, Any]:
@@ -336,6 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--run-id", default="")
     status.add_argument("--limit", type=int, default=10)
     status.add_argument("--include-artifacts", action="store_true")
+    status.add_argument("--hints-path", default="")
 
     inspect = sub.add_parser("inspect-artifact")
     inspect.add_argument("--windows-ops-root", required=True)

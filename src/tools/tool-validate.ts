@@ -41,6 +41,7 @@ export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
         const rulesDir = path.join(getExtensionRootDir(), "rules");
         const scriptsDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "scripts") : "";
         const hintsPath = rulesDir ? path.join(rulesDir, "program_aliases.yaml") : "";
+        const hintsFilePresent = !!hintsPath && fs.existsSync(hintsPath);
         const checks: AnyObj = {
           dbPathConfigured: !!cfg.db,
           dbParentDirExists: !!dbDir && fs.existsSync(dbDir),
@@ -49,7 +50,8 @@ export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
           llmDirExists: !!llmDir && fs.existsSync(llmDir),
           rulesDirExists: !!rulesDir && fs.existsSync(rulesDir),
           scriptsDirExists: !!scriptsDir && fs.existsSync(scriptsDir),
-          hintsYamlPresent: !!hintsPath && fs.existsSync(hintsPath),
+          hintsPath,
+          hintsFilePresent,
           scriptsProvision: {
             created: scriptsProvision.created,
             updated: scriptsProvision.updated,
@@ -75,6 +77,23 @@ export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
         checks.uv = uv.ok;
         checks.pythonViaUv = py.ok;
         checks.sqliteDbOpen = sqliteOpen.ok;
+        const hintsParser = hintsFilePresent
+          ? runCmd("uv", ["run", "python", "-c", "import yaml"])
+          : { ok: true, stderr: "", stdout: "" };
+        const hintsLoad = hintsFilePresent && hintsParser.ok
+          ? runCmd("uv", [
+            "run",
+            "python",
+            "-c",
+            "import sys,yaml; yaml.safe_load(open(sys.argv[1], encoding='utf-8-sig'))",
+            hintsPath,
+          ])
+          : hintsParser;
+        checks.hintsParserAvailable = hintsParser.ok;
+        checks.hintsLoadable = !hintsFilePresent || (hintsParser.ok && hintsLoad.ok);
+        checks.hintsLoadError = hintsFilePresent && !checks.hintsLoadable
+          ? String((!hintsParser.ok ? hintsParser.stderr || hintsParser.stdout : hintsLoad.stderr || hintsLoad.stdout) || "failed to load program_aliases.yaml").trim()
+          : "";
 
         if (params.checkWindowsInterop) {
           const pwshCandidates = ["/mnt/c/Program Files/PowerShell/7/pwsh.exe", "pwsh.exe"];
@@ -129,7 +148,9 @@ export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
           if (
             k === "requiredWindowsScripts" ||
             k === "scriptsProvision" ||
-            k === "hintsYamlPresent" ||
+            k === "hintsPath" ||
+            k === "hintsFilePresent" ||
+            k === "hintsLoadError" ||
             k === "moveDirExists" ||
             k === "llmDirExists"
           ) {

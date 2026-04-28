@@ -232,36 +232,66 @@ def _iter_regex_rules(obj: Any) -> list[tuple[re.Pattern, str, str]]:
     return result
 
 
-def _load_hint_items_from_file(path: Path) -> tuple[list[dict[str, Any]], list[tuple[re.Pattern, str]]]:
+class HintLoadFailure(RuntimeError):
+    def __init__(self, status: dict[str, Any]) -> None:
+        super().__init__(str(status.get("hintsLoadError") or "failed to load hints"))
+        self.status = status
+
+
+def _default_hints_status(path: str | None) -> dict[str, Any]:
+    return {
+        "hintsPath": str(path or ""),
+        "hintsFilePresent": False,
+        "hintsParserAvailable": yaml is not None,
+        "hintsLoadable": False,
+        "hintsLoaded": False,
+        "hintsLoadError": None,
+        "hintsAliasCount": 0,
+        "hintsRegexRulesCount": 0,
+    }
+
+
+def _hint_load_error(status: dict[str, Any], message: str) -> HintLoadFailure:
+    status["hintsLoadable"] = False
+    status["hintsLoaded"] = False
+    status["hintsLoadError"] = message
+    return HintLoadFailure(status)
+
+
+def _load_hint_items_from_file(path: Path) -> tuple[list[dict[str, Any]], list[tuple[re.Pattern, str, str]]]:
     """ファイルから (alias_items, regex_rules) を読み込む。"""
     if not path.exists():
         return [], []
-    try:
-        obj: Any = None
-        if path.suffix.lower() == ".json":
+    obj: Any = None
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        try:
             with path.open("r", encoding="utf-8-sig") as f:
                 obj = json.load(f)
-        elif path.suffix.lower() in {".yaml", ".yml"}:
-            if yaml is None:
-                print(f"W hints yaml parser unavailable, skip={path}")
-                return [], []
+        except Exception as e:
+            raise ValueError(f"failed to load JSON hints: path={path} error={e}") from e
+    elif suffix in {".yaml", ".yml"}:
+        if yaml is None:
+            raise RuntimeError(f"PyYAML is required to load hints YAML: path={path}")
+        try:
             with path.open("r", encoding="utf-8-sig") as f:
                 obj = yaml.safe_load(f)
-        if obj is None:
-            return [], []
-        return _iter_hint_items(obj), _iter_regex_rules(obj)
-    except Exception as e:
-        print(f"W failed to load hints: path={path} error={e}")
-    return [], []
+        except Exception as e:
+            raise ValueError(f"failed to load YAML hints: path={path} error={e}") from e
+    if obj is None:
+        return [], []
+    return _iter_hint_items(obj), _iter_regex_rules(obj)
 
 
-def _load_hints(path: str | None) -> tuple[HintSet, bool]:
+def _load_hints_with_status(path: str | None) -> tuple[HintSet, dict[str, Any]]:
+    status = _default_hints_status(path)
     if not path:
-        return HintSet(), False
+        return HintSet(), status
     p = Path(path)
     if not p.exists():
         print(f"W hints file missing: {p}")
-        return HintSet(), False
+        return HintSet(), status
+    status["hintsFilePresent"] = True
 
     files: list[Path]
     if p.is_dir():
@@ -272,9 +302,12 @@ def _load_hints(path: str | None) -> tuple[HintSet, bool]:
         files = [p]
 
     alias_map: dict[str, str] = {}
-    regex_rules: list[tuple[re.Pattern, str]] = []
+    regex_rules: list[tuple[re.Pattern, str, str]] = []
     for fp in files:
-        alias_items, rules = _load_hint_items_from_file(fp)
+        try:
+            alias_items, rules = _load_hint_items_from_file(fp)
+        except Exception as e:
+            raise _hint_load_error(status, str(e)) from e
         for item in alias_items:
             canonical = item.get("canonical_title")
             if not isinstance(canonical, str):
@@ -294,7 +327,16 @@ def _load_hints(path: str | None) -> tuple[HintSet, bool]:
         regex_rules.extend(rules)
 
     hints = HintSet(alias_map=alias_map, regex_rules=regex_rules)
-    return hints, bool(hints)
+    status["hintsLoadable"] = True
+    status["hintsLoaded"] = bool(hints)
+    status["hintsAliasCount"] = len(hints.alias_map)
+    status["hintsRegexRulesCount"] = len(hints.regex_rules)
+    return hints, status
+
+
+def _load_hints(path: str | None) -> tuple[HintSet, bool]:
+    hints, status = _load_hints_with_status(path)
+    return hints, bool(status["hintsLoaded"])
 
 
 def _canonicalize_title_from_hints(base: str, parsed_program_title: str, alias_map: HintSet) -> str:
@@ -754,13 +796,26 @@ def main() -> int:
                     help="Write input JSONL batches and exit without running extraction or upserting to DB.")
     args = ap.parse_args()
 
-    alias_hints, hints_loaded = _load_hints(args.hints)
+    try:
+        alias_hints, hints_status = _load_hints_with_status(args.hints)
+    except HintLoadFailure as e:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "tool": "run_metadata_batches_promptv1",
+                    **e.status,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 2
     print(
         f"INFO title_architecture={ACTIVE_TITLE_ARCHITECTURE} "
         f"deferred={','.join(DEFERRED_TITLE_ARCHITECTURES)} "
-        f"hints_loaded={str(hints_loaded).lower()} "
-        f"alias_count={len(alias_hints.alias_map)} "
-        f"regex_rules_count={len(alias_hints.regex_rules)}"
+        f"hints_loaded={str(hints_status['hintsLoaded']).lower()} "
+        f"alias_count={hints_status['hintsAliasCount']} "
+        f"regex_rules_count={hints_status['hintsRegexRulesCount']}"
     )
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -985,6 +1040,7 @@ def main() -> int:
                     "batches": int(batch_idx),
                     "inputJsonlPaths": generated_input_jsonl_paths,
                     "latestInputJsonlPath": generated_input_jsonl_paths[-1] if generated_input_jsonl_paths else None,
+                    **hints_status,
                 },
                 ensure_ascii=False,
             )
@@ -1025,6 +1081,7 @@ def main() -> int:
                 "outputJsonlPaths": generated_output_jsonl_paths,
                 "latestInputJsonlPath": generated_input_jsonl_paths[-1] if generated_input_jsonl_paths else None,
                 "latestOutputJsonlPath": generated_output_jsonl_paths[-1] if generated_output_jsonl_paths else None,
+                **hints_status,
             },
             ensure_ascii=False,
         )
