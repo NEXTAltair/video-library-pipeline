@@ -1,0 +1,7 @@
+[project]
+name = "video-library-pipeline"
+version = "0.2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6",
+]

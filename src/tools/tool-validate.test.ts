@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   extensionRoot: "",
+  extensionPyDir: "",
   runCmd: vi.fn(),
 }));
 
@@ -11,6 +12,7 @@ vi.mock("./runtime", async () => {
   const actual = await vi.importActual<typeof import("./runtime")>("./runtime");
   return {
     ...actual,
+    getExtensionPyDir: vi.fn(() => mocks.extensionPyDir),
     getExtensionRootDir: vi.fn(() => mocks.extensionRoot),
     runCmd: mocks.runCmd,
     toToolResult: vi.fn((obj: Record<string, unknown>) => obj),
@@ -70,9 +72,11 @@ describe("video_pipeline_validate hints readiness", () => {
   beforeEach(() => {
     tempRoot = fs.mkdtempSync(path.join("/tmp", "vlp-validate-"));
     mocks.extensionRoot = tempRoot;
+    mocks.extensionPyDir = path.join(tempRoot, "py");
     for (const rel of ["db", "move", "llm", "scripts", "rules", "source", "dest"]) {
       fs.mkdirSync(path.join(tempRoot, rel), { recursive: true });
     }
+    fs.mkdirSync(mocks.extensionPyDir, { recursive: true });
     fs.writeFileSync(path.join(tempRoot, "db", "mediaops.sqlite"), "");
     vi.clearAllMocks();
   });
@@ -105,6 +109,11 @@ describe("video_pipeline_validate hints readiness", () => {
         hintsLoadError: "yaml.parser.ParserError: expected ',' or ']'",
       },
     });
-    expect(mocks.runCmd).toHaveBeenCalledWith("uv", expect.arrayContaining([path.join(tempRoot, "rules", "program_aliases.yaml")]));
+    expect(mocks.runCmd).toHaveBeenCalledWith(
+      "uv",
+      expect.arrayContaining([path.join(tempRoot, "rules", "program_aliases.yaml")]),
+      mocks.extensionPyDir,
+    );
+    expect(mocks.runCmd).toHaveBeenCalledWith("uv", ["run", "python", "-c", "import yaml"], mocks.extensionPyDir);
   });
 });
