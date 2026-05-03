@@ -28,10 +28,20 @@ def make_config(tmp_path: Path, run_id: str = "run_source_root", db: str | None 
 
 
 class SourceRootWorkflowHarness:
-    def __init__(self, tmp_path: Path, *, run_id: str, needs_review: bool = False) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        *,
+        run_id: str,
+        needs_review: bool = False,
+        empty_metadata_queue: bool = False,
+        missing_metadata_output: bool = False,
+    ) -> None:
         self.tmp_path = tmp_path
         self.cfg = make_config(tmp_path, run_id=run_id)
         self.needs_review = needs_review
+        self.empty_metadata_queue = empty_metadata_queue
+        self.missing_metadata_output = missing_metadata_output
         self.calls: list[tuple[str, list[str]]] = []
 
     def powershell_runner(self, _script: str, args: list[str]) -> dict:
@@ -59,16 +69,23 @@ class SourceRootWorkflowHarness:
         if script.name == "make_metadata_queue_from_inventory.py":
             out_path = Path(args[args.index("--out") + 1])
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(
-                "\n".join([
-                    json.dumps({"_meta": {"kind": "metadata_queue"}}, ensure_ascii=False),
-                    json.dumps({"path_id": "p1", "path": r"B:\Unwatched\show.mp4", "name": "show.mp4"}, ensure_ascii=False),
-                ])
-                + "\n",
-                encoding="utf-8",
-            )
-            return json.dumps({"ok": True, "queueRows": 1}, ensure_ascii=False)
+            rows = [json.dumps({"_meta": {"kind": "metadata_queue"}}, ensure_ascii=False)]
+            if not self.empty_metadata_queue:
+                rows.append(json.dumps({"path_id": "p1", "path": r"B:\Unwatched\show.mp4", "name": "show.mp4"}, ensure_ascii=False))
+            out_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            return json.dumps({"ok": True, "queueRows": 0 if self.empty_metadata_queue else 1}, ensure_ascii=False)
         if script.name == "run_metadata_batches_promptv1.py":
+            if self.empty_metadata_queue or self.missing_metadata_output:
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "outputJsonlPaths": [],
+                        "latestOutputJsonlPath": None,
+                        "processed": 0,
+                        "batches": 0,
+                    },
+                    ensure_ascii=False,
+                )
             outdir = Path(args[args.index("--outdir") + 1])
             output_path = outdir / "llm_filename_extract_output_0001_0001.jsonl"
             row = {
@@ -207,6 +224,55 @@ def test_source_root_fixture_no_review_result_json_shape(tmp_path) -> None:
         "metadata_queue",
         "metadata_extract_output_0001",
     ]
+
+
+def test_source_root_empty_metadata_queue_still_plans_from_existing_metadata(tmp_path) -> None:
+    harness = SourceRootWorkflowHarness(
+        tmp_path,
+        run_id="run_fixture_empty_metadata_queue",
+        empty_metadata_queue=True,
+    )
+
+    payload = harness.dry_run().to_dict()
+
+    assert_json_serializable_for_typescript(payload)
+    assert payload["ok"] is True
+    assert payload["phase"] == "plan_ready"
+    assert payload["outcome"] == "source_root_dry_run_complete"
+    assert [artifact["id"] for artifact in payload["artifacts"]] == [
+        "source_root_inventory",
+        "metadata_queue",
+        "source_root_move_plan",
+    ]
+    assert [name for name, _args in harness.calls] == [
+        "ingest_inventory_jsonl.py",
+        "make_metadata_queue_from_inventory.py",
+        "run_metadata_batches_promptv1.py",
+        "make_move_plan_from_inventory.py",
+    ]
+
+    manifest = harness.manifest()
+    plan_artifact = manifest["artifacts"]["source_root_move_plan"]
+    assert plan_artifact["inputArtifactIds"] == ["source_root_inventory", "metadata_queue"]
+    assert plan_artifact["metadata"]["metadataQueueRows"] == 0
+
+
+def test_source_root_non_empty_metadata_queue_requires_extract_output(tmp_path) -> None:
+    harness = SourceRootWorkflowHarness(
+        tmp_path,
+        run_id="run_fixture_missing_metadata_output",
+        missing_metadata_output=True,
+    )
+
+    payload = harness.dry_run().to_dict()
+
+    assert payload["ok"] is False
+    assert payload["phase"] == "failed"
+    assert payload["outcome"] == "source_root_dry_run_failed"
+    assert payload["diagnostics"][0]["message"] == (
+        "sourceRoot planning requires metadata output artifacts when metadata queue has data rows"
+    )
+    assert "source_root_move_plan" not in harness.manifest()["artifacts"]
 
 
 def test_source_root_fixture_review_yaml_handoff_round_trip(tmp_path) -> None:
