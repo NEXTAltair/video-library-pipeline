@@ -114,6 +114,19 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def count_jsonl_data_rows(path: str | Path) -> int:
+    count = 0
+    with Path(path).open("r", encoding="utf-8-sig") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            if isinstance(obj, dict) and "_meta" in obj:
+                continue
+            count += 1
+    return count
+
+
 class SourceRootWorkflowService:
     def __init__(
         self,
@@ -590,8 +603,13 @@ class SourceRootWorkflowService:
             for aid in run.artifact_ids
             if aid in run.artifacts and run.artifacts[aid].type == "metadata_extract_output"
         ]
-        if inventory_artifact is None or queue_artifact is None or not metadata_artifacts:
-            raise RuntimeError("sourceRoot planning requires inventory, metadata queue, and metadata output artifacts")
+        if inventory_artifact is None or queue_artifact is None:
+            raise RuntimeError("sourceRoot planning requires inventory and metadata queue artifacts")
+        queue_rows = count_jsonl_data_rows(queue_artifact.path)
+        if queue_rows > 0 and not metadata_artifacts:
+            raise RuntimeError(
+                "sourceRoot planning requires metadata output artifacts when metadata queue has data rows"
+            )
 
         plan_args = [
             "--db",
@@ -620,7 +638,7 @@ class SourceRootWorkflowService:
             producer="make_move_plan_from_inventory.py",
             artifact_id="source_root_move_plan",
             input_artifact_ids=[inventory_artifact.id, queue_artifact.id, *[a.id for a in metadata_artifacts]],
-            metadata={"summary": plan_summary},
+            metadata={"summary": plan_summary, "metadataQueueRows": queue_rows},
         )
         store.transition_run(run_id, WorkflowPhase.PLAN_READY)
 
