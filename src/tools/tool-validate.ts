@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getExtensionRootDir, runCmd, toToolResult } from "./runtime";
+import { getExtensionPyDir, getExtensionRootDir, runCmd, toToolResult } from "./runtime";
 import type { AnyObj, PluginApi, GetCfgFn } from "./types";
 import { REQUIRED_WINDOWS_SCRIPTS, ensureWindowsScripts } from "./windows-scripts-bootstrap";
 
@@ -39,6 +39,7 @@ export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
         const moveDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "move") : "";
         const llmDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "llm") : "";
         const rulesDir = path.join(getExtensionRootDir(), "rules");
+        const pyDir = getExtensionPyDir();
         const scriptsDir = !!cfg.windowsOpsRoot ? path.join(cfg.windowsOpsRoot, "scripts") : "";
         const hintsPath = rulesDir ? path.join(rulesDir, "program_aliases.yaml") : "";
         const hintsFilePresent = !!hintsPath && fs.existsSync(hintsPath);
@@ -65,20 +66,20 @@ export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
             path: scriptsDir ? path.join(scriptsDir, name) : "",
           })),
         };
-        const uv = runCmd("uv", ["--version"]);
-        const py = runCmd("uv", ["run", "python", "--version"]);
+        const uv = runCmd("uv", ["--version"], pyDir);
+        const py = runCmd("uv", ["run", "python", "--version"], pyDir);
         const sqliteOpen = runCmd("uv", [
           "run",
           "python",
           "-c",
           "import sqlite3,sys; sqlite3.connect('file:' + sys.argv[1] + '?mode=ro', uri=True).close()",
           cfg.db,
-        ]);
+        ], pyDir);
         checks.uv = uv.ok;
         checks.pythonViaUv = py.ok;
         checks.sqliteDbOpen = sqliteOpen.ok;
         const hintsParser = hintsFilePresent
-          ? runCmd("uv", ["run", "python", "-c", "import yaml"])
+          ? runCmd("uv", ["run", "python", "-c", "import yaml"], pyDir)
           : { ok: true, stderr: "", stdout: "" };
         const hintsLoad = hintsFilePresent && hintsParser.ok
           ? runCmd("uv", [
@@ -87,7 +88,7 @@ export function registerToolValidate(api: PluginApi, getCfg: GetCfgFn) {
             "-c",
             "import sys,yaml; yaml.safe_load(open(sys.argv[1], encoding='utf-8-sig'))",
             hintsPath,
-          ])
+          ], pyDir)
           : hintsParser;
         checks.hintsParserAvailable = hintsParser.ok;
         checks.hintsLoadable = !hintsFilePresent || (hintsParser.ok && hintsLoad.ok);
