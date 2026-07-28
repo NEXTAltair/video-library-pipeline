@@ -2,9 +2,21 @@
   "name": "@nextaltair/video-library-pipeline",
   "version": "0.2.0",
   "type": "module",
+  "files": [
+    "assets",
+    "dist",
+    "openclaw.plugin.json",
+    "py/*.py",
+    "py/video_pipeline/**/*.py",
+    "pyproject.toml",
+    "rules",
+    "skills",
+    "templates",
+    "uv.lock"
+  ],
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ],
     "compat": {
       "pluginApi": ">=2026.4.20",
@@ -16,10 +28,15 @@
     }
   },
   "scripts": {
+    "build": "esbuild index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --sourcemap --external:openclaw/*",
+    "check": "pnpm run build && node --check dist/index.js",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "esbuild": "0.28.1",
     "vitest": "^4.1.2"
   }
 }

@@ -74,8 +74,27 @@ export function runCmdViaPwsh(
   };
 }
 
-const EXT_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
-const EXT_ROOT_DIR = path.resolve(EXT_SRC_DIR, "..", "..");
+export function resolveExtensionRootDir(moduleUrl = import.meta.url): string {
+  const moduleDir = path.dirname(fileURLToPath(moduleUrl));
+
+  // Source tests execute this module from src/platform, while packaged
+  // installs execute the bundled entry from dist. Keep resource lookup
+  // anchored to the package root in both layouts.
+  if (path.basename(moduleDir) === "dist") {
+    return path.resolve(moduleDir, "..");
+  }
+  if (
+    path.basename(moduleDir) === "platform" &&
+    path.basename(path.dirname(moduleDir)) === "src"
+  ) {
+    return path.resolve(moduleDir, "..", "..");
+  }
+
+  // Preserve the historical source-layout fallback for uncommon loaders.
+  return path.resolve(moduleDir, "..", "..");
+}
+
+const EXT_ROOT_DIR = resolveExtensionRootDir();
 const EXT_PY_DIR = path.join(EXT_ROOT_DIR, "py");
 
 export function getExtensionRootDir(): string {

@@ -10,6 +10,7 @@ import {
   sha256Short,
   latestJsonlFile,
   chooseSourceJsonl,
+  resolveExtensionRootDir,
 } from "./runtime";
 
 // Mock node:fs for filesystem-dependent tests.
@@ -26,6 +27,20 @@ vi.mock("node:fs", () => ({
 }));
 
 import fs from "node:fs";
+
+describe("resolveExtensionRootDir", () => {
+  it("resolves the repository root from the source layout", () => {
+    expect(
+      resolveExtensionRootDir("file:///opt/video-library-pipeline/src/platform/runtime.ts"),
+    ).toBe("/opt/video-library-pipeline");
+  });
+
+  it("resolves the repository root from the compiled dist layout", () => {
+    expect(resolveExtensionRootDir("file:///opt/video-library-pipeline/dist/index.js")).toBe(
+      "/opt/video-library-pipeline",
+    );
+  });
+});
 
 // ---------------------------------------------------------------------------
 // parseJsonObject
