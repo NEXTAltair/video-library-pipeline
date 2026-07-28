@@ -36,6 +36,7 @@ def test_workflow_cli_status_lists_recent_runs(tmp_path):
     assert payload["runs"][0]["phase"] == "inventory_ready"
     assert payload["runs"][0]["nextActions"] == []
     assert "artifacts" not in payload["runs"][0]
+    assert payload["latestArtifacts"] == []
     assert payload["openGates"][0]["runId"] == "run_source"
     assert payload["openGates"][0]["id"] == "metadata_review"
 

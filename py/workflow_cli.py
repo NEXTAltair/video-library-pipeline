@@ -313,7 +313,7 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
         "hints": hints,
         "runs": runs,
         "openGates": open_gates,
-        "latestArtifacts": latest_artifacts[: args.limit],
+        "latestArtifacts": latest_artifacts[: args.limit] if args.include_artifacts else [],
     }
 
 
