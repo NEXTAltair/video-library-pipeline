@@ -180,6 +180,8 @@ class SourceRootWorkflowService:
     def resume(self, config: SourceRootApplyConfig, *, action: str = "apply_source_root_move_plan") -> WorkflowResult:
         if action == "apply_reviewed_metadata":
             return self._resume_reviewed_metadata(config)
+        if action == "complete_empty_source_root_plan":
+            return self._complete_empty_plan(config)
         if action != "apply_source_root_move_plan":
             store = WorkflowStore(local_path_from_any(config.windows_ops_root))
             diagnostic = Diagnostic(
@@ -190,6 +192,65 @@ class SourceRootWorkflowService:
             )
             return self._block_apply(store, config.run_id, "source_root_resume_action_unsupported", diagnostic)
         return self.apply(config)
+
+    def _complete_empty_plan(self, config: SourceRootApplyConfig) -> WorkflowResult:
+        store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        try:
+            plan_artifact = self._validate_apply_plan(store, config.run_id, config.artifact_id)
+            summary = plan_artifact.metadata.get("summary")
+            planned = summary.get("planned") if isinstance(summary, dict) else None
+            if planned != 0:
+                raise SourceRootApplyRejected(Diagnostic(
+                    code="source_root_empty_plan_not_empty",
+                    severity=DiagnosticSeverity.ERROR,
+                    message="sourceRoot plan is not recorded as empty",
+                    details={
+                        "runId": config.run_id,
+                        "artifactId": config.artifact_id,
+                        "planned": planned,
+                    },
+                ))
+
+            plan_path = Path(plan_artifact.path)
+            for line_number, raw_line in enumerate(plan_path.read_text(encoding="utf-8").splitlines(), start=1):
+                if not raw_line.strip():
+                    continue
+                payload = json.loads(raw_line)
+                if not isinstance(payload, dict) or "_meta" not in payload:
+                    raise SourceRootApplyRejected(Diagnostic(
+                        code="source_root_empty_plan_has_operations",
+                        severity=DiagnosticSeverity.ERROR,
+                        message="sourceRoot plan contains an operation and cannot be closed as empty",
+                        details={
+                            "runId": config.run_id,
+                            "artifactId": config.artifact_id,
+                            "lineNumber": line_number,
+                        },
+                    ))
+
+            store.transition_run(config.run_id, WorkflowPhase.COMPLETE)
+            final_run = store.read_run(config.run_id)
+            return WorkflowResult(
+                ok=True,
+                run_id=config.run_id,
+                flow=WorkflowFlow.SOURCE_ROOT,
+                phase=WorkflowPhase.COMPLETE,
+                outcome="source_root_no_moves_planned",
+                artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
+                gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
+                next_actions=[],
+                diagnostics=final_run.diagnostics,
+            )
+        except SourceRootApplyRejected as exc:
+            return self._block_apply(store, config.run_id, "source_root_empty_plan_rejected", exc.diagnostic)
+        except Exception as exc:
+            diagnostic = Diagnostic(
+                code="source_root_empty_plan_failed",
+                severity=DiagnosticSeverity.ERROR,
+                message=str(exc),
+                details={"exceptionType": type(exc).__name__, "artifactId": config.artifact_id},
+            )
+            return self._block_apply(store, config.run_id, "source_root_empty_plan_failed", diagnostic)
 
     def _resume_reviewed_metadata(self, config: SourceRootApplyConfig) -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))

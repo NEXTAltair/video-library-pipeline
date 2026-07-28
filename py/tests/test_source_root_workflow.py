@@ -733,6 +733,53 @@ def register_plan_ready_run(tmp_path: Path, run_id: str = "run_source_root_apply
     return SourceRootApplyConfig(windows_ops_root=str(ops_root), run_id=run_id), plan_path
 
 
+def test_source_root_resume_completes_verified_empty_plan(tmp_path) -> None:
+    ops_root = tmp_path / "ops"
+    run_id = "run_source_root_empty"
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id=run_id)
+    plan_path = ops_root / "runs" / run_id / "plan" / "move_plan_from_inventory.jsonl"
+    plan_path.write_text('{"_meta": {"kind": "move_plan_from_inventory"}}\n', encoding="utf-8")
+    store.register_artifact(
+        run_id,
+        artifact_type="source_root_move_plan",
+        path=plan_path,
+        producer="test",
+        artifact_id="source_root_move_plan",
+        metadata={"summary": {"planned": 0}},
+    )
+    store.transition_run(run_id, WorkflowPhase.PLAN_READY)
+
+    result = SourceRootWorkflowService(py_root=tmp_path).resume(
+        SourceRootApplyConfig(windows_ops_root=str(ops_root), run_id=run_id),
+        action="complete_empty_source_root_plan",
+    )
+
+    assert result.ok is True
+    assert result.phase == WorkflowPhase.COMPLETE
+    assert result.outcome == "source_root_no_moves_planned"
+    assert result.next_actions == []
+    assert store.read_run(run_id).status == "complete"
+
+
+def test_source_root_resume_rejects_nonempty_plan_as_empty(tmp_path) -> None:
+    cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_not_empty")
+    store = WorkflowStore(Path(cfg.windows_ops_root))
+    run = store.read_run(cfg.run_id)
+    artifact = run.artifacts["source_root_move_plan"]
+    artifact.metadata = {"summary": {"planned": 0}}
+    store.write_run(run)
+
+    result = SourceRootWorkflowService(py_root=tmp_path).resume(
+        cfg,
+        action="complete_empty_source_root_plan",
+    )
+
+    assert result.ok is False
+    assert result.phase == WorkflowPhase.BLOCKED
+    assert result.diagnostics[-1].code == "source_root_empty_plan_has_operations"
+
+
 def test_source_root_apply_rejects_plan_artifact_from_another_run(tmp_path) -> None:
     ops_root = tmp_path / "ops"
     store = WorkflowStore(ops_root)

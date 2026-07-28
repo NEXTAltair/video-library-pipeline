@@ -1,6 +1,6 @@
 ---
-name: video-library-pipeline
-description: Run and inspect the video library pipeline through the V2 run-based OpenClaw tool surface.
+name: "video-library-pipeline"
+description: "Run and inspect the video library pipeline through the V2 run-based OpenClaw tool surface."
 metadata: {"openclaw":{"emoji":"🎬","requires":{"plugins":["video-library-pipeline"]},"localReads":["~/.openclaw/openclaw.json"]}}
 ---
 
@@ -19,6 +19,7 @@ This skill is the V2 orchestrator for `video-library-pipeline`.
 - Treat `WorkflowResult.nextActions` and `followUpToolCalls` as the source of truth for the next operation.
 - Do not infer "latest" JSONL/YAML/plan files. Use `runId`, `artifactId`, `ReviewGate.artifactIds`, and artifact paths returned by the run.
 - Human review is explicit. If a result has `requiresHumanReview: true` or an open `ReviewGate`, stop and ask the user to review the referenced artifact before resuming.
+- If `nextActions` returns `complete_empty_plan` with `requiresHumanInput: false`, call the exact `video_pipeline_resume` params directly. It only completes a checksum-verified sourceRoot plan whose recorded count is zero and whose JSONL contains no operations.
 - Execute in the main agent turn; do not delegate to subagents.
 
 ## Intent Mapping
@@ -51,8 +52,9 @@ If the request targets an already-existing directory tree under the library, tre
    - `nextActions` / `followUpToolCalls`
    - `diagnostics`
 3. If a human review gate is present, inspect the referenced artifact and ask the user to review it.
-4. After review or approval, call `video_pipeline_resume` only with exact params from `followUpToolCalls[].params` or `nextActions[].params`.
-5. Repeat until `phase` is `complete`, `blocked`, or `failed`.
+4. If `complete_empty_plan` is returned with `requiresHumanInput: false`, call its exact resume params and verify the run reaches `complete`.
+5. After other review or approval, call `video_pipeline_resume` only with exact params from `followUpToolCalls[].params` or `nextActions[].params`.
+6. Repeat until `phase` is `complete`, `blocked`, or `failed`.
 
 `video_pipeline_status` reconstructs actionable `nextActions` from the run manifest for non-terminal review and plan phases. If no action is returned, do not guess a latest JSONL/YAML/plan path.
 

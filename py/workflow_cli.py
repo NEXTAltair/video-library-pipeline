@@ -73,11 +73,36 @@ def _latest_artifact_id(run: Any, artifact_type: str) -> str | None:
     return None
 
 
+def _artifact_planned_count(run: Any, artifact_id: str) -> int | None:
+    artifact = run.artifacts.get(artifact_id)
+    if artifact is None or not isinstance(artifact.metadata, dict):
+        return None
+    summary = artifact.metadata.get("summary")
+    if not isinstance(summary, dict):
+        return None
+    planned = summary.get("planned")
+    return planned if isinstance(planned, int) and not isinstance(planned, bool) else None
+
+
 def _next_actions_for_run(run: Any) -> list[NextAction]:
     if run.phase == "plan_ready":
         if run.flow == "source_root":
             plan_id = _latest_artifact_id(run, "source_root_move_plan")
             if plan_id:
+                if _artifact_planned_count(run, plan_id) == 0:
+                    return [
+                        NextAction(
+                            action="complete_empty_plan",
+                            label="Complete empty sourceRoot run",
+                            tool="video_pipeline_resume",
+                            params={
+                                "runId": run.run_id,
+                                "artifactId": plan_id,
+                                "resumeAction": "complete_empty_source_root_plan",
+                            },
+                            requires_human_input=False,
+                        )
+                    ]
                 return [
                     NextAction(
                         action="review_plan",

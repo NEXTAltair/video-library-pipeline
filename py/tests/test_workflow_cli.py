@@ -115,6 +115,47 @@ def test_workflow_cli_status_reconstructs_source_root_review_action(tmp_path):
     ]
 
 
+def test_workflow_cli_status_reconstructs_empty_source_root_completion_action(tmp_path):
+    ops_root = tmp_path / "ops"
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_source_empty")
+    plan_path = ops_root / "runs" / "run_source_empty" / "plan" / "move_plan_from_inventory.jsonl"
+    plan_path.write_text('{"_meta": {"kind": "move_plan_from_inventory"}}\n', encoding="utf-8")
+    store.register_artifact(
+        "run_source_empty",
+        artifact_type="source_root_move_plan",
+        path=plan_path,
+        producer="test",
+        artifact_id="source_root_move_plan",
+        metadata={"summary": {"planned": 0}},
+    )
+    store.transition_run("run_source_empty", WorkflowPhase.PLAN_READY)
+
+    payload = _cmd_status(
+        argparse.Namespace(
+            windows_ops_root=str(ops_root),
+            run_id="run_source_empty",
+            limit=10,
+            include_artifacts=False,
+            hints_path=str(tmp_path / "missing_program_aliases.yaml"),
+        )
+    )
+
+    assert payload["run"]["nextActions"] == [
+        {
+            "action": "complete_empty_plan",
+            "label": "Complete empty sourceRoot run",
+            "tool": "video_pipeline_resume",
+            "params": {
+                "runId": "run_source_empty",
+                "artifactId": "source_root_move_plan",
+                "resumeAction": "complete_empty_source_root_plan",
+            },
+            "requiresHumanInput": False,
+        }
+    ]
+
+
 def test_workflow_cli_status_reconstructs_latest_relocate_plan_action(tmp_path):
     ops_root = tmp_path / "ops"
     store = WorkflowStore(ops_root)
