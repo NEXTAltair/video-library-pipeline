@@ -176,6 +176,29 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
             )
         ]
     if run.flow == "relocate":
+        metadata_gate = next((gate for gate in open_gates if gate.type == "metadata_review"), None)
+        if metadata_gate is not None:
+            review_yaml_paths = [
+                run.artifacts[artifact_id].path
+                for artifact_id in metadata_gate.artifact_ids
+                if artifact_id in run.artifacts
+                and run.artifacts[artifact_id].type == "metadata_review_yaml"
+            ]
+            return [
+                NextAction(
+                    action="review_metadata",
+                    label="Review extracted relocate metadata YAML",
+                    tool="video_pipeline_resume",
+                    params={
+                        "runId": run.run_id,
+                        "gateId": metadata_gate.id,
+                        "artifactIds": list(metadata_gate.artifact_ids),
+                        "reviewYamlPaths": review_yaml_paths,
+                        "resumeAction": "apply_reviewed_metadata",
+                    },
+                    requires_human_input=True,
+                )
+            ]
         queue_id = _latest_artifact_id(run, "relocate_metadata_queue")
         diagnostics_id = _latest_artifact_id(run, "relocate_diagnostics")
         review_gate = next((gate for gate in open_gates if gate.type == "relocate_metadata_review"), None)

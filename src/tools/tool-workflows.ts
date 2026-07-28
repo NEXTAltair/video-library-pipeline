@@ -207,7 +207,7 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
             tool: "video_pipeline_resume",
             runId: params.runId,
             action,
-            outcome: "source_root_review_metadata_apply_failed",
+            outcome: "workflow_review_metadata_apply_failed",
             reviewedMetadataResults: metadataResults,
             error: failed.error ?? "failed to apply reviewed metadata",
           });

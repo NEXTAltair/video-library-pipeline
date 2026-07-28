@@ -334,7 +334,7 @@ describe("V2 workflow tools", () => {
     expect(runCmd).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: false,
-      outcome: "source_root_review_metadata_apply_failed",
+      outcome: "workflow_review_metadata_apply_failed",
       error: "bad yaml",
     });
   });

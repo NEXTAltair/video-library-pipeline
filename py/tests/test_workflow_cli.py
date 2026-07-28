@@ -256,6 +256,61 @@ def test_workflow_cli_status_prefers_open_relocate_review_gate_over_stale_queue(
     }
 
 
+def test_workflow_cli_status_prefers_relocate_yaml_review_gate(tmp_path):
+    ops_root = tmp_path / "ops"
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.RELOCATE, run_id="run_relocate_yaml_review")
+    review_path = (
+        ops_root
+        / "runs"
+        / "run_relocate_yaml_review"
+        / "review"
+        / "metadata_review_yaml.yaml"
+    )
+    review_path.write_text("programs: []\n", encoding="utf-8")
+    store.register_artifact(
+        "run_relocate_yaml_review",
+        artifact_type="metadata_review_yaml",
+        path=review_path,
+        producer="test",
+        artifact_id="metadata_review_yaml",
+    )
+    store.create_review_gate(
+        "run_relocate_yaml_review",
+        gate_type="metadata_review",
+        artifact_ids=["metadata_review_yaml"],
+        gate_id="metadata_review",
+    )
+    store.transition_run("run_relocate_yaml_review", WorkflowPhase.METADATA_EXTRACTED)
+    store.transition_run("run_relocate_yaml_review", WorkflowPhase.REVIEW_REQUIRED)
+
+    payload = _cmd_status(
+        argparse.Namespace(
+            windows_ops_root=str(ops_root),
+            run_id="run_relocate_yaml_review",
+            limit=10,
+            include_artifacts=False,
+            hints_path=str(tmp_path / "missing_program_aliases.yaml"),
+        )
+    )
+
+    assert payload["run"]["nextActions"] == [
+        {
+            "action": "review_metadata",
+            "label": "Review extracted relocate metadata YAML",
+            "tool": "video_pipeline_resume",
+            "params": {
+                "runId": "run_relocate_yaml_review",
+                "gateId": "metadata_review",
+                "artifactIds": ["metadata_review_yaml"],
+                "reviewYamlPaths": [str(review_path)],
+                "resumeAction": "apply_reviewed_metadata",
+            },
+            "requiresHumanInput": True,
+        }
+    ]
+
+
 def test_workflow_cli_inspect_artifact_returns_related_gates_and_preview(tmp_path):
     ops_root = tmp_path / "ops"
     store = WorkflowStore(ops_root)

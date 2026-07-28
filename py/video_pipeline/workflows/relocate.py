@@ -27,7 +27,13 @@ from .models import (
     WorkflowPhase,
     WorkflowResult,
 )
-from .source_root import parse_last_json_object_line, path_for_powershell, run_py_uv, write_json
+from .source_root import (
+    parse_last_json_object_line,
+    path_for_powershell,
+    run_py_uv,
+    string_array,
+    write_json,
+)
 from .store import WorkflowStore, sha256_file
 
 PythonRunner = Callable[[Path, list[str], str | None], str]
@@ -162,6 +168,8 @@ class RelocateWorkflowService:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
         if action in {"prepare_relocate_metadata", "review_relocate_metadata"}:
             return self._resume_metadata_action(store, config.run_id, action)
+        if action == "apply_reviewed_metadata":
+            return self._resume_reviewed_metadata(store, config.run_id)
         if action != "apply_relocate_move_plan":
             diagnostic = Diagnostic(
                 code="relocate_resume_action_unsupported",
@@ -801,33 +809,299 @@ class RelocateWorkflowService:
                 outcome="relocate_resume_action_rejected",
             )
 
-        gate_ids = [
-            gid
-            for gid in run.review_gate_ids
-            if gid in run.review_gates and run.review_gates[gid].status == ReviewGateStatus.OPEN.value
+        existing_review_gate = next(
+            (
+                gate
+                for gate_id in reversed(run.review_gate_ids)
+                if (gate := run.review_gates.get(gate_id)) is not None
+                and gate.type == "metadata_review"
+                and gate.status == ReviewGateStatus.OPEN.value
+            ),
+            None,
+        )
+        if existing_review_gate is not None:
+            return self._metadata_review_result(store, run_id, existing_review_gate.id)
+
+        queue_artifact = next(
+            (
+                run.artifacts[artifact_id]
+                for artifact_id in reversed(run.artifact_ids)
+                if artifact_id in run.artifacts
+                and run.artifacts[artifact_id].type == "relocate_metadata_queue"
+                and run.artifacts[artifact_id].status == ArtifactStatus.AVAILABLE.value
+            ),
+            None,
+        )
+        if queue_artifact is None:
+            if action == "review_relocate_metadata":
+                self._approve_open_gates(
+                    store,
+                    run_id,
+                    gate_type="relocate_metadata_review",
+                    action=action,
+                )
+                rerun = store.read_run(run_id)
+                cfg = self._config_from_run(rerun)
+                result = self._dry_run_existing(
+                    run_id,
+                    cfg,
+                    store,
+                    str(local_path_from_any(str(rerun.config_snapshot.get("db") or ""))),
+                )
+                if result.outcome == "relocate_review_required":
+                    result.outcome = "relocate_metadata_review_still_required"
+                return result
+            diagnostic = Diagnostic(
+                code="relocate_metadata_queue_missing",
+                severity=DiagnosticSeverity.ERROR,
+                message="relocate metadata preparation requires a run-scoped metadata queue artifact",
+                details={"runId": run_id, "action": action},
+            )
+            run.diagnostics.append(diagnostic)
+            store.write_run(run)
+            return self._result(
+                ok=False,
+                store=store,
+                run_id=run_id,
+                phase=run.phase,
+                outcome="relocate_metadata_queue_missing",
+            )
+
+        return self._prepare_metadata_review(store, run_id, queue_artifact)
+
+    def _prepare_metadata_review(
+        self,
+        store: WorkflowStore,
+        run_id: str,
+        queue_artifact: ArtifactRef,
+    ) -> WorkflowResult:
+        run = store.read_run(run_id)
+        db_path = str(local_path_from_any(str(run.config_snapshot.get("db") or "")))
+        run_dir = store.run_dir(run_id)
+        metadata_dir = run_dir / "metadata"
+        review_dir = run_dir / "review"
+        preparation_id = next_artifact_id(run, "metadata_extract_output")
+        preparation_dir = metadata_dir / preparation_id
+
+        extract_raw = self.python_runner(
+            self.py_root / "run_metadata_batches_promptv1.py",
+            [
+                "--db",
+                db_path,
+                "--queue",
+                queue_artifact.path,
+                "--outdir",
+                str(preparation_dir),
+                "--hints",
+                str(self.py_root.parent / "rules" / "program_aliases.yaml"),
+                "--batch-size",
+                "50",
+                "--start-batch",
+                "1",
+            ],
+            str(self.py_root),
+        )
+        extract_summary = parse_last_json_object_line(extract_raw)
+        output_paths = string_array(extract_summary.get("outputJsonlPaths"))
+        latest_output = extract_summary.get("latestOutputJsonlPath")
+        if not output_paths and isinstance(latest_output, str) and latest_output:
+            output_paths = [latest_output]
+        if not output_paths:
+            raise RuntimeError(
+                f"relocate metadata extraction produced no output JSONL: {extract_summary or extract_raw}"
+            )
+
+        metadata_artifacts: list[ArtifactRef] = []
+        for output_path in output_paths:
+            current = store.read_run(run_id)
+            artifact_id = next_artifact_id(current, "metadata_extract_output")
+            metadata_artifacts.append(
+                store.register_artifact(
+                    run_id,
+                    artifact_type="metadata_extract_output",
+                    path=output_path,
+                    producer="run_metadata_batches_promptv1.py",
+                    artifact_id=artifact_id,
+                    input_artifact_ids=[queue_artifact.id],
+                    metadata={"summary": extract_summary},
+                )
+            )
+
+        review_artifacts: list[ArtifactRef] = []
+        for metadata_artifact in metadata_artifacts:
+            current = store.read_run(run_id)
+            artifact_id = next_artifact_id(current, "metadata_review_yaml")
+            review_output_path = review_dir / f"{artifact_id}.yaml"
+            review_raw = self.python_runner(
+                self.py_root / "export_program_yaml.py",
+                [
+                    "--source-jsonl",
+                    metadata_artifact.path,
+                    "--output",
+                    str(review_output_path),
+                ],
+                str(self.py_root),
+            )
+            review_summary = parse_last_json_object_line(review_raw)
+            if review_summary.get("ok") is not True:
+                raise RuntimeError(
+                    f"failed to export relocate review YAML for {metadata_artifact.path}: "
+                    f"{review_summary or review_raw}"
+                )
+            review_yaml_path = review_summary.get("outputPath")
+            if not isinstance(review_yaml_path, str) or not review_yaml_path:
+                raise RuntimeError(
+                    f"relocate review YAML path is missing for {metadata_artifact.path}"
+                )
+            review_artifacts.append(
+                store.register_artifact(
+                    run_id,
+                    artifact_type="metadata_review_yaml",
+                    path=review_yaml_path,
+                    producer="export_program_yaml.py",
+                    artifact_id=artifact_id,
+                    input_artifact_ids=[metadata_artifact.id],
+                    metadata={
+                        "sourceJsonlPath": metadata_artifact.path,
+                        "reviewSummary": review_summary.get("reviewSummary") or {},
+                        "reviewCandidates": review_summary.get("reviewCandidates") or [],
+                        "reviewCandidatesTruncated": bool(review_summary.get("reviewCandidatesTruncated")),
+                    },
+                )
+            )
+
+        self._approve_open_gates(
+            store,
+            run_id,
+            gate_type="relocate_metadata_review",
+            action="prepare_relocate_metadata",
+        )
+        current = store.read_run(run_id)
+        gate_id = next_gate_id(current, "metadata_review")
+        gate = store.create_review_gate(
+            run_id,
+            gate_type="metadata_review",
+            artifact_ids=[artifact.id for artifact in review_artifacts],
+            gate_id=gate_id,
+        )
+        return self._metadata_review_result(store, run_id, gate.id)
+
+    def _metadata_review_result(
+        self,
+        store: WorkflowStore,
+        run_id: str,
+        gate_id: str,
+    ) -> WorkflowResult:
+        run = store.read_run(run_id)
+        gate = run.review_gates[gate_id]
+        review_yaml_paths = [
+            run.artifacts[artifact_id].path
+            for artifact_id in gate.artifact_ids
+            if artifact_id in run.artifacts
+            and run.artifacts[artifact_id].type == "metadata_review_yaml"
         ]
-        if action == "review_relocate_metadata":
-            for gate_id in gate_ids:
+        return self._result(
+            ok=False,
+            store=store,
+            run_id=run_id,
+            phase=WorkflowPhase.REVIEW_REQUIRED,
+            outcome="relocate_metadata_review_required",
+            next_actions=[
+                NextAction(
+                    action="review_metadata",
+                    label="Review extracted relocate metadata YAML",
+                    tool="video_pipeline_resume",
+                    params={
+                        "runId": run_id,
+                        "gateId": gate.id,
+                        "artifactIds": list(gate.artifact_ids),
+                        "reviewYamlPaths": review_yaml_paths,
+                        "resumeAction": "apply_reviewed_metadata",
+                    },
+                    requires_human_input=True,
+                )
+            ],
+        )
+
+    def _resume_reviewed_metadata(
+        self,
+        store: WorkflowStore,
+        run_id: str,
+    ) -> WorkflowResult:
+        try:
+            run = store.read_run(run_id)
+            if run.flow != WorkflowFlow.RELOCATE.value:
+                raise RelocateApplyRejected(Diagnostic(
+                    code="relocate_review_wrong_flow",
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"run is not a relocate workflow: {run.flow}",
+                    details={"runId": run_id, "flow": run.flow},
+                ))
+            if run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
+                raise RelocateApplyRejected(Diagnostic(
+                    code="relocate_review_wrong_phase",
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"relocate metadata review requires phase review_required, got {run.phase}",
+                    details={"runId": run_id, "phase": run.phase},
+                ))
+            open_metadata_gates = [
+                gate
+                for gate_id in run.review_gate_ids
+                if (gate := run.review_gates.get(gate_id)) is not None
+                and gate.type == "metadata_review"
+                and gate.status == ReviewGateStatus.OPEN.value
+            ]
+            if not open_metadata_gates:
+                raise RelocateApplyRejected(Diagnostic(
+                    code="relocate_review_gate_missing",
+                    severity=DiagnosticSeverity.ERROR,
+                    message="open relocate metadata_review gate is missing",
+                    details={"runId": run_id},
+                ))
+            for gate in open_metadata_gates:
+                store.update_review_gate(
+                    run_id,
+                    gate.id,
+                    status=ReviewGateStatus.APPROVED,
+                    resolution={"action": "apply_reviewed_metadata"},
+                )
+            rerun = store.read_run(run_id)
+            cfg = self._config_from_run(rerun)
+            return self._dry_run_existing(
+                run_id,
+                cfg,
+                store,
+                str(local_path_from_any(str(rerun.config_snapshot.get("db") or ""))),
+            )
+        except RelocateApplyRejected as exc:
+            return self._block_apply(store, run_id, "relocate_review_rejected", exc.diagnostic)
+        except Exception as exc:
+            diagnostic = Diagnostic(
+                code="relocate_review_failed",
+                severity=DiagnosticSeverity.ERROR,
+                message=str(exc),
+                details={"exceptionType": type(exc).__name__},
+            )
+            return self._block_apply(store, run_id, "relocate_review_failed", diagnostic)
+
+    def _approve_open_gates(
+        self,
+        store: WorkflowStore,
+        run_id: str,
+        *,
+        gate_type: str,
+        action: str,
+    ) -> None:
+        run = store.read_run(run_id)
+        for gate_id in run.review_gate_ids:
+            gate = run.review_gates.get(gate_id)
+            if gate is not None and gate.type == gate_type and gate.status == ReviewGateStatus.OPEN.value:
                 store.update_review_gate(
                     run_id,
                     gate_id,
                     status=ReviewGateStatus.APPROVED,
                     resolution={"action": action},
                 )
-
-        rerun = store.read_run(run_id)
-        cfg = self._config_from_run(rerun)
-        result = self._dry_run_existing(
-            run_id,
-            cfg,
-            store,
-            str(local_path_from_any(str(rerun.config_snapshot.get("db") or ""))),
-        )
-        if result.outcome == "relocate_metadata_preparation_required":
-            result.outcome = "relocate_metadata_preparation_still_required"
-        elif result.outcome == "relocate_review_required":
-            result.outcome = "relocate_metadata_review_still_required"
-        return result
 
     def _config_from_run(self, run: Any) -> RelocateDryRunConfig:
         snapshot = run.config_snapshot
