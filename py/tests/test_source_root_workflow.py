@@ -648,6 +648,9 @@ def test_source_root_dry_run_normalizes_windows_db_path_for_python_stages(tmp_pa
     result = service.dry_run(cfg)
 
     assert result.ok is True
+    assert result.phase == WorkflowPhase.COMPLETE
+    assert result.outcome == "source_root_no_moves_planned"
+    assert result.next_actions == []
     expected_db = "/mnt/b/_AI_WORK/db/mediaops.sqlite"
     assert calls
     assert all(args[args.index("--db") + 1] == expected_db for _name, args in calls if "--db" in args)
@@ -655,6 +658,8 @@ def test_source_root_dry_run_normalizes_windows_db_path_for_python_stages(tmp_pa
     manifest_path = Path(cfg.windows_ops_root) / "runs" / "run_source_root_windows_db" / "run.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["configSnapshot"]["db"] == expected_db
+    assert manifest["phase"] == "complete"
+    assert manifest["status"] == "complete"
 
 
 def test_source_root_dry_run_failure_returns_failed_result_and_diagnostic(tmp_path) -> None:

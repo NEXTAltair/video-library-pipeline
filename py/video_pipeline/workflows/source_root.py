@@ -641,6 +641,22 @@ class SourceRootWorkflowService:
             metadata={"summary": plan_summary, "metadataQueueRows": queue_rows},
         )
         store.transition_run(run_id, WorkflowPhase.PLAN_READY)
+        planned = int(plan_summary.get("planned") or 0)
+
+        if planned <= 0:
+            store.transition_run(run_id, WorkflowPhase.COMPLETE)
+            final_run = store.read_run(run_id)
+            return WorkflowResult(
+                ok=True,
+                run_id=run_id,
+                flow=WorkflowFlow.SOURCE_ROOT,
+                phase=WorkflowPhase.COMPLETE,
+                outcome="source_root_no_moves_planned",
+                artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
+                gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
+                next_actions=[],
+                diagnostics=final_run.diagnostics,
+            )
 
         final_run = store.read_run(run_id)
         return WorkflowResult(
