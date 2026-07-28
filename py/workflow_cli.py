@@ -60,8 +60,19 @@ def _run_to_status(run: Any, *, include_artifacts: bool) -> dict[str, Any]:
     payload = run.to_dict()
     payload["nextActions"] = [action.to_dict() for action in _next_actions_for_run(run)]
     if not include_artifacts:
-        payload.pop("artifacts", None)
-        payload.pop("reviewGates", None)
+        payload = {
+            key: payload[key]
+            for key in (
+                "runId",
+                "flow",
+                "phase",
+                "status",
+                "createdAt",
+                "updatedAt",
+                "nextActions",
+            )
+            if key in payload
+        }
     return payload
 
 
