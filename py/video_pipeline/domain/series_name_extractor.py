@@ -17,6 +17,11 @@ from typing import Any
 
 from epg_common import normalize_program_key, program_id_for
 from path_placement_rules import SUBTITLE_SEPARATORS
+from broadcast_frame_titles import (
+    canonical_from_known_program_prefix,
+    has_broadcast_frame_prefix,
+    strip_broadcast_frame_prefix,
+)
 
 try:
     import yaml  # type: ignore
@@ -120,6 +125,13 @@ def extract_series_name(
     t = str(title or "").strip()
     if not t:
         return "UNKNOWN"
+    prefix_canonical = canonical_from_known_program_prefix(t)
+    if prefix_canonical:
+        return prefix_canonical
+    if has_broadcast_frame_prefix(t):
+        t = strip_broadcast_frame_prefix(t)
+        if not t:
+            return "UNKNOWN"
 
     # 1. Franchise rules patterns
     rules = _franchise_rules if _franchise_rules is not None else _load_franchise_rules(franchise_rules_path)
@@ -138,6 +150,10 @@ def extract_series_name(
             stripped_key = normalize_program_key(stripped)
             if stripped_key in alias_map:
                 return alias_map[stripped_key]
+
+    stripped = EPISODE_SUFFIX_RE.sub("", t).strip()
+    if stripped:
+        t = stripped
 
     # 3. Fallback: split on subtitle separators, take prefix
     parts = SUBTITLE_SPLIT_RE.split(t, maxsplit=1)

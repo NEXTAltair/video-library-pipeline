@@ -6,6 +6,14 @@
   "requires": {
     "plugins": ["czkawka-cli"]
   },
+  "contracts": {
+    "tools": [
+      "video_pipeline_start",
+      "video_pipeline_resume",
+      "video_pipeline_status",
+      "video_pipeline_inspect_artifact"
+    ]
+  },
   "skills": [
     "./skills/video-library-pipeline",
     "./skills/inventory-review",

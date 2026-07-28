@@ -98,6 +98,19 @@ class TestDiscoverPrefixFamilies:
         assert suggested == "サイエンスZERO"
         assert match_source == "programs_table"
 
+    def test_episode_suffix_titles_are_excluded_from_canonical_sources(self, make_db):
+        """Episode-number folder titles must not become canonical dictionary entries."""
+        con = make_db(
+            ["牙狼~語りし者~", "牙狼~語りし者~#23"],
+            human_reviewed=["牙狼~語りし者~", "牙狼~語りし者~#23"],
+            programs=["牙狼~語りし者~#27"],
+        )
+        sources = load_canonical_title_sources(con)
+
+        assert "牙狼~語りし者~" in sources.human_reviewed
+        assert "牙狼~語りし者~#23" not in sources.human_reviewed
+        assert "牙狼~語りし者~#27" not in sources.programs
+
     def test_no_family_single_title(self, make_db):
         """A title with no longer variant is not a family base."""
         con = make_db(["みみより!解説"])

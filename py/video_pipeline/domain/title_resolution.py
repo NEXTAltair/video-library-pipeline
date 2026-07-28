@@ -16,6 +16,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from path_placement_rules import SUBTITLE_SEPARATORS, clean_program_title, normalize_title_for_comparison
+from broadcast_frame_titles import is_contaminated_program_title
 
 
 MIN_PREFIX_FAMILY_BASE_LEN = 4
@@ -55,7 +56,7 @@ def load_canonical_title_sources(con: sqlite3.Connection) -> CanonicalTitleSourc
             rows = con.execute(sql).fetchall()
             for row in rows:
                 raw = str(row[0] or "").strip()
-                if raw:
+                if raw and not is_contaminated_program_title(raw):
                     titles.add(raw)
         except sqlite3.OperationalError:
             return ()
@@ -115,7 +116,7 @@ def _discover_prefix_families(
     norm_to_original: dict[str, str] = {}
     for row in rows:
         raw = str(row[0] or "").strip()
-        if not raw:
+        if not raw or is_contaminated_program_title(raw):
             continue
         norm = normalize_title_for_comparison(raw)
         if not norm or len(norm) < MIN_PREFIX_FAMILY_BASE_LEN:

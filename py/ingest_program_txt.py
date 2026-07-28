@@ -22,7 +22,7 @@ from edcb_program_parser import datetime_key_from_epg, match_key_from_epg, parse
 from epg_common import broadcast_id_for, normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from pathscan_common import now_iso
-from series_name_extractor import series_program_id, series_program_key
+from series_name_extractor import extract_series_name
 
 
 def find_program_txt_files(ts_root: Path) -> list[Path]:
@@ -84,7 +84,7 @@ def _migrate_match_keys(db_path: str, *, dry_run: bool = False) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
     ap.add_argument("--ts-root", help="WSL path to TS recording directory (e.g. /mnt/j/TVFile)")
@@ -93,7 +93,7 @@ def main() -> int:
     ap.add_argument("--migrate-match-keys", action="store_true", help="Re-generate match_keys for existing broadcast records")
     ap.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
     ap.add_argument("--aliases", default="", help="Path to program_aliases.yaml for series-level grouping")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.migrate_match_keys:
         return _migrate_match_keys(args.db, dry_run=args.dry_run)
@@ -145,7 +145,8 @@ def main() -> int:
             official_title = str(epg.get("official_title") or "").strip()
 
             # Series-level program key
-            s_key = series_program_key(official_title, aliases_path=aliases_path)
+            series_title = extract_series_name(official_title, aliases_path=aliases_path)
+            s_key = normalize_program_key(series_title)
             s_pid = program_id_for(s_key)
 
             fallback_seed = "::".join([
@@ -191,7 +192,7 @@ def main() -> int:
             rows_to_insert.append({
                 "program_id": s_pid,
                 "program_key": s_key,
-                "canonical_title": official_title or "UNKNOWN",
+                "canonical_title": series_title or "UNKNOWN",
                 "broadcast_id": broadcast_id,
                 "match_key": match_key,
                 "air_date": epg.get("air_date"),

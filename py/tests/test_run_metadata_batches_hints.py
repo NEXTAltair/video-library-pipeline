@@ -93,3 +93,23 @@ def test_load_hints_invalid_yaml_is_hard_failure(tmp_path, monkeypatch):
     assert status["hintsLoadable"] is False
     assert status["hintsLoaded"] is False
     assert "bad yaml" in status["hintsLoadError"]
+
+
+def test_program_dictionary_skips_broadcast_frame_titles(make_db):
+    con = make_db(
+        [],
+        programs=[
+            "BS11ガンダムアワー",
+            "BS11ガンダムアワー 機動戦士ガンダム 水星の魔女 第9話",
+            "機動戦士ガンダム 水星の魔女",
+        ],
+    )
+
+    program_dict = mod._ProgramDictionary(con)
+    result = program_dict.match(
+        mod._normalize_title_compare(
+            "BS11ガンダムアワー 機動戦士ガンダム 水星の魔女 第9話 「あと一歩、キミに踏み出せたなら」"
+        )
+    )
+
+    assert result == "機動戦士ガンダム 水星の魔女"

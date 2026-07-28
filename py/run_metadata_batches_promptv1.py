@@ -21,6 +21,7 @@ from plan_validation import detect_swallowed_program_title
 from source_history import make_entry
 from pathscan_common import now_iso
 from title_resolution import load_canonical_title_sources, suggest_canonical_title
+from broadcast_frame_titles import canonical_from_known_program_prefix, is_contaminated_program_title
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -433,6 +434,8 @@ class _ProgramDictionary:
             title = str(row[0] or "").strip()
             if not title or title == "UNKNOWN":
                 continue
+            if is_contaminated_program_title(title):
+                continue
             norm = _normalize_title_compare(title)
             if norm and norm not in seen and len(norm) >= 2:
                 seen.add(norm)
@@ -476,6 +479,10 @@ def _match_from_known_programs(
     base_norm = _normalize_title_compare(base)
     if not base_norm:
         return None
+
+    prefix_canonical = canonical_from_known_program_prefix(base)
+    if prefix_canonical:
+        return prefix_canonical
 
     # 2. Programs table (longest match first)
     if program_dict:
