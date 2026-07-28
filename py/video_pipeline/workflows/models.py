@@ -219,6 +219,7 @@ class WorkflowRun:
     diagnostics: list[Diagnostic] = field(default_factory=list)
     artifacts: dict[str, ArtifactRef] = field(default_factory=dict)
     review_gates: dict[str, ReviewGate] = field(default_factory=dict)
+    resolution: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -234,6 +235,7 @@ class WorkflowRun:
             "diagnostics": [d.to_dict() for d in self.diagnostics],
             "artifacts": {k: v.to_dict() for k, v in self.artifacts.items()},
             "reviewGates": {k: v.to_dict() for k, v in self.review_gates.items()},
+            "resolution": self.resolution,
         }
 
     @classmethod
@@ -260,6 +262,7 @@ class WorkflowRun:
             diagnostics=diagnostics,
             artifacts=artifacts,
             review_gates=review_gates,
+            resolution=dict(data.get("resolution") or {}),
         )
 
 

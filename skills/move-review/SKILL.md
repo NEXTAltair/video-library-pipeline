@@ -1,6 +1,6 @@
 ---
-name: video-library-pipeline-move-review
-description: Review and apply a V2 run-scoped move plan through video_pipeline_resume.
+name: "video-library-pipeline-move-review"
+description: "Review, supersede, or apply a V2 run-scoped move plan through video_pipeline_resume."
 metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipeline"]}}}
 ---
 
@@ -12,6 +12,7 @@ metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipe
 - Apply/move must be run-scoped: `runId` + plan `artifactId`.
 - Require explicit user confirmation before resuming an action that applies a plan.
 - Never pass a filesystem `planPath` guessed from a previous run or latest file.
+- Never apply a stale plan. If source or destination state may have changed, create a fresh same-flow dry-run and compare it first.
 
 ## Tool Sequence
 
@@ -25,13 +26,27 @@ metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipe
      "includeContentPreview": true
    }
    ```
-3. Summarize the plan for the user:
+3. Check freshness before proposing apply:
+   - Compare plan age with the current date and subsequent runs.
+   - If filesystem or metadata state may differ, start a fresh dry-run for the same flow and safe parent root.
+   - Compare source existence, scanned count, planned count, metadata queue count, and destination examples.
+4. If the old snapshot is invalid, do not apply it. Supersede it with the newer same-flow run:
+   ```json
+   video_pipeline_resume {
+     "runId": "<old-run-id>",
+     "resumeAction": "supersede_run",
+     "supersededByRunId": "<new-run-id>",
+     "reason": "<specific comparison evidence>"
+   }
+   ```
+   This changes workflow state only and performs no physical move.
+5. If the plan is still current, summarize it for the user:
    - `runId`
    - plan artifact ID and path
    - source/destination examples from preview when available
    - diagnostics or gates still attached to the run
-4. Ask for explicit approval to apply the plan.
-5. After approval, call the exact resume params returned by the workflow:
+6. Ask for explicit approval to apply the current plan.
+7. After approval, call the exact resume params returned by the workflow:
    ```json
    video_pipeline_resume {
      "runId": "<runId>",
@@ -39,10 +54,11 @@ metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipe
      "resumeAction": "<resumeAction from nextActions>"
    }
    ```
-6. Report final `phase`, `outcome`, diagnostics, and apply artifacts.
+8. Report final `phase`, `outcome`, diagnostics, and apply artifacts.
 
 ## Completion Criteria
 
-- `phase == "complete"` means the V2 workflow is complete.
+- `phase == "complete"` with `outcome == "workflow_run_superseded"` means the stale snapshot was safely retired without moving files.
+- `phase == "complete"` after apply means the V2 workflow is complete.
 - `phase == "blocked"` or `phase == "failed"` means stop and report diagnostics.
-- Distinguish physical move completion from metadata review or DB-only operations.
+- Distinguish physical move completion from metadata review, supersession, or DB-only operations.

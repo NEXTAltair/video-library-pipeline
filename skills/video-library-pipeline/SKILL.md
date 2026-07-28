@@ -22,6 +22,23 @@ This skill is the V2 orchestrator for `video-library-pipeline`.
 - If `nextActions` returns `complete_empty_plan` with `requiresHumanInput: false`, call the exact `video_pipeline_resume` params directly. It only completes a checksum-verified sourceRoot plan whose recorded count is zero and whose JSONL contains no operations.
 - Execute in the main agent turn; do not delegate to subagents.
 
+## Stale Run Supersession
+
+- Never apply an old plan merely because its run is still active.
+- When filesystem or metadata state may have changed, first run a fresh dry-run for the same flow and safe parent root.
+- Compare the old artifact summary and preview with the fresh run: source existence, scanned count, planned count, metadata queue count, and destination layout.
+- If the old snapshot is no longer valid, supersede it through the public resume tool:
+  ```json
+  video_pipeline_resume {
+    "runId": "<old-run-id>",
+    "resumeAction": "supersede_run",
+    "supersededByRunId": "<newer-same-flow-run-id>",
+    "reason": "<specific evidence that invalidated the old snapshot>"
+  }
+  ```
+- `supersede_run` is state-only: it performs no file move. It requires an active old run, an existing newer run of the same flow, and a non-empty reason. It marks old artifacts and open gates superseded, completes the old run, and records the successor link in the manifest.
+- Keep the fresh run active when it represents current human-review work. Do not supersede the current review gate merely to make the active count zero.
+
 ## Intent Mapping
 
 | User intent | V2 action |
@@ -63,7 +80,7 @@ If the request targets an already-existing directory tree under the library, tre
 - Always state `runId`, `flow`, `phase`, and `outcome`.
 - For review gates, show `gate.id`, `gate.status`, and the artifact IDs the user must review.
 - For apply/move plans, summarize artifact IDs and paths; do not invent destination decisions outside the artifact content.
-- Distinguish "review required", "plan ready", "applied", "complete", "blocked", and "failed".
+- Distinguish "review required", "plan ready", "applied", "complete", "blocked", "failed", and "superseded".
 
 ## Legacy Tool Guardrail
 

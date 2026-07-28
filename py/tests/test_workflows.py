@@ -265,6 +265,60 @@ def test_create_review_gate_rejects_duplicate_gate_id_without_clobbering(tmp_pat
     assert gate.resolution == {"approvedBy": "tester"}
 
 
+def test_supersede_run_preserves_auditable_successor_link(tmp_path) -> None:
+    store = WorkflowStore(tmp_path)
+    store.init_run(WorkflowFlow.RELOCATE, run_id="run_old")
+    artifact_file = tmp_path / "runs" / "run_old" / "plan" / "plan.jsonl"
+    artifact_file.write_text('{"src":"old"}\n', encoding="utf-8")
+    store.register_artifact(
+        "run_old",
+        artifact_type="relocate_plan",
+        path=artifact_file,
+        producer="test",
+        artifact_id="relocate_plan",
+    )
+    store.create_review_gate(
+        "run_old",
+        gate_type="relocate_metadata_review",
+        artifact_ids=["relocate_plan"],
+        gate_id="relocate_metadata_review",
+    )
+    store.transition_run("run_old", WorkflowPhase.METADATA_EXTRACTED)
+    store.transition_run("run_old", WorkflowPhase.REVIEW_REQUIRED)
+    store.init_run(WorkflowFlow.RELOCATE, run_id="run_new")
+
+    resolved = store.supersede_run(
+        "run_old",
+        superseded_by_run_id="run_new",
+        reason="fresh scan replaced stale filesystem snapshot",
+    )
+
+    assert resolved.phase == "complete"
+    assert resolved.status == "complete"
+    assert resolved.resolution["type"] == "superseded"
+    assert resolved.resolution["supersededByRunId"] == "run_new"
+    assert resolved.artifacts["relocate_plan"].status == "superseded"
+    gate = resolved.review_gates["relocate_metadata_review"]
+    assert gate.status == "superseded"
+    assert gate.resolution["supersededByRunId"] == "run_new"
+    assert resolved.diagnostics[-1].code == "workflow_run_superseded"
+
+
+def test_supersede_run_rejects_cross_flow_successor(tmp_path) -> None:
+    store = WorkflowStore(tmp_path)
+    store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_old")
+    store.init_run(WorkflowFlow.RELOCATE, run_id="run_new")
+
+    with pytest.raises(ValueError, match="flow mismatch"):
+        store.supersede_run(
+            "run_old",
+            superseded_by_run_id="run_new",
+            reason="not actually equivalent",
+        )
+
+    assert store.read_run("run_old").status == "active"
+
+
 def test_workflow_result_serializes_for_typescript_consumption(tmp_path) -> None:
     store = WorkflowStore(tmp_path)
     store.init_run(WorkflowFlow.SOURCE_ROOT, run_id="run_result")

@@ -222,6 +222,41 @@ describe("V2 workflow tools", () => {
     });
   });
 
+  it("forwards audited supersede parameters", async () => {
+    vi.mocked(runCmd).mockReturnValue(cmdResult({
+      ok: true,
+      runId: "run_old",
+      flow: "relocate",
+      phase: "complete",
+      outcome: "workflow_run_superseded",
+      artifacts: [],
+      gates: [],
+      nextActions: [],
+      diagnostics: [],
+    }));
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+
+    await getRegisteredTool(api, "video_pipeline_resume").execute("call-supersede", {
+      runId: "run_old",
+      resumeAction: "supersede_run",
+      supersededByRunId: "run_new",
+      reason: "fresh scan replaced stale filesystem snapshot",
+    });
+
+    expect(runCmd).toHaveBeenCalledWith("uv", expect.arrayContaining([
+      "resume",
+      "--run-id",
+      "run_old",
+      "--action",
+      "supersede_run",
+      "--superseded-by-run-id",
+      "run_new",
+      "--reason",
+      "fresh scan replaced stale filesystem snapshot",
+    ]), "/ext/py");
+  });
+
   it("applies reviewed sourceRoot metadata before resuming the workflow", async () => {
     mocks.applyReviewedExecute.mockResolvedValue({ ok: true, rows: 1, sourceYamlPath: "/ops/review.yaml" });
     vi.mocked(runCmd).mockReturnValue(cmdResult({

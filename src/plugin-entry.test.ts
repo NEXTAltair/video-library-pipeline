@@ -196,6 +196,8 @@ describe("plugin entry", () => {
         action: { type: "string" },
         resumeAction: { type: "string" },
         artifactId: { type: "string" },
+        supersededByRunId: { type: "string" },
+        reason: { type: "string" },
       },
     });
 

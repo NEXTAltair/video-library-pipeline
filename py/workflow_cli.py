@@ -263,6 +263,29 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
     run = store.read_run(args.run_id)
     action = args.action or None
     artifact_id = args.artifact_id or None
+    if action == "supersede_run":
+        superseded_run = store.supersede_run(
+            args.run_id,
+            superseded_by_run_id=args.superseded_by_run_id,
+            reason=args.reason,
+        )
+        return {
+            "ok": True,
+            "runId": superseded_run.run_id,
+            "flow": superseded_run.flow,
+            "phase": superseded_run.phase,
+            "outcome": "workflow_run_superseded",
+            "artifacts": [
+                superseded_run.artifacts[artifact_id].to_dict()
+                for artifact_id in superseded_run.artifact_ids
+            ],
+            "gates": [
+                superseded_run.review_gates[gate_id].to_dict()
+                for gate_id in superseded_run.review_gate_ids
+            ],
+            "nextActions": [],
+            "diagnostics": [diagnostic.to_dict() for diagnostic in superseded_run.diagnostics],
+        }
     if run.flow == "source_root":
         result = SourceRootWorkflowService().resume(
             SourceRootApplyConfig(
@@ -388,6 +411,8 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--action", default="")
     resume.add_argument("--artifact-id", default="")
     resume.add_argument("--on-dst-exists", choices=["error", "rename_suffix"], default="")
+    resume.add_argument("--superseded-by-run-id", default="")
+    resume.add_argument("--reason", default="")
 
     status = sub.add_parser("status")
     status.add_argument("--windows-ops-root", required=True)

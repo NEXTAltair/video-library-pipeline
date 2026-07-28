@@ -175,6 +175,8 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
         artifactIds: { type: "array", items: { type: "string" } },
         reviewYamlPaths: { type: "array", items: { type: "string" } },
         onDstExists: { type: "string", enum: ["error", "rename_suffix"] },
+        supersededByRunId: { type: "string" },
+        reason: { type: "string" },
       },
     },
     async execute(_id: string, params: AnyObj) {
@@ -192,6 +194,10 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
       if (action) args.push("--action", action);
       if (typeof params.artifactId === "string" && params.artifactId.trim()) args.push("--artifact-id", params.artifactId.trim());
       if (typeof params.onDstExists === "string" && params.onDstExists.trim()) args.push("--on-dst-exists", params.onDstExists.trim());
+      if (typeof params.supersededByRunId === "string" && params.supersededByRunId.trim()) {
+        args.push("--superseded-by-run-id", params.supersededByRunId.trim());
+      }
+      if (typeof params.reason === "string" && params.reason.trim()) args.push("--reason", params.reason.trim());
       if (action === "apply_reviewed_metadata") {
         const metadataResults = await applyReviewedMetadataForResume(api, getCfg, params);
         const failed = metadataResults.find((result) => result.ok !== true);

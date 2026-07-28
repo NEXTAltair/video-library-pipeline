@@ -19,6 +19,7 @@ from .models import (
     WorkflowFlow,
     WorkflowPhase,
     WorkflowRun,
+    WorkflowStatus,
     now_iso,
     phase_status,
 )
@@ -223,3 +224,62 @@ class WorkflowStore:
         run.updated_at = now_iso()
         self.write_run(run)
         return gate
+
+    def supersede_run(
+        self,
+        run_id: str,
+        *,
+        superseded_by_run_id: str,
+        reason: str,
+    ) -> WorkflowRun:
+        run = self.read_run(run_id)
+        successor = self.read_run(superseded_by_run_id)
+        reason_value = str(reason or "").strip()
+        if not reason_value:
+            raise ValueError("supersede reason is required")
+        if run.run_id == successor.run_id:
+            raise ValueError("a workflow run cannot supersede itself")
+        if run.status != WorkflowStatus.ACTIVE.value:
+            raise ValueError(f"only active workflow runs can be superseded: {run.run_id}")
+        if run.flow != successor.flow:
+            raise ValueError(
+                f"superseding run flow mismatch: {run.flow!r} != {successor.flow!r}"
+            )
+        if successor.created_at <= run.created_at:
+            raise ValueError(
+                f"superseding run must be newer: {successor.run_id}"
+            )
+
+        resolved_at = now_iso()
+        for artifact in run.artifacts.values():
+            if artifact.status == ArtifactStatus.AVAILABLE.value:
+                artifact.status = ArtifactStatus.SUPERSEDED.value
+        for gate in run.review_gates.values():
+            if gate.status == ReviewGateStatus.OPEN.value:
+                gate.status = ReviewGateStatus.SUPERSEDED.value
+                gate.resolved_at = resolved_at
+                gate.resolution = {
+                    "action": "supersede_run",
+                    "supersededByRunId": successor.run_id,
+                    "reason": reason_value,
+                }
+        run.diagnostics.append(Diagnostic(
+            code="workflow_run_superseded",
+            severity=DiagnosticSeverity.INFO,
+            message="workflow run was superseded by a newer run",
+            details={
+                "supersededByRunId": successor.run_id,
+                "reason": reason_value,
+            },
+        ))
+        run.resolution = {
+            "type": "superseded",
+            "supersededByRunId": successor.run_id,
+            "reason": reason_value,
+            "resolvedAt": resolved_at,
+        }
+        run.phase = WorkflowPhase.COMPLETE.value
+        run.status = WorkflowStatus.COMPLETE.value
+        run.updated_at = resolved_at
+        self.write_run(run)
+        return run
