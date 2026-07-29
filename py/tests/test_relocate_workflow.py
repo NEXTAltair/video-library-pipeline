@@ -104,6 +104,7 @@ class RelocateWorkflowHarness:
                 "suspiciousProgramTitleSkipped": 0,
                 "needsReviewSkipped": 0,
                 "unreviewedMetadataSkipped": 0,
+                "unregisteredSkipped": 0,
                 "outcomeType": "no_action_needed",
                 "errors": [],
             }
@@ -158,6 +159,10 @@ class RelocateWorkflowHarness:
                         "reason": "already_correct",
                     }
                 )
+            elif self.scenario == "unregistered":
+                summary["alreadyCorrect"] = 1
+                summary["unregisteredSkipped"] = 1
+                summary["outcomeType"] = "already_correct_or_no_action_needed"
 
             plan_path.write_text(
                 "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
@@ -389,6 +394,39 @@ def test_relocate_dry_run_already_correct_requires_explicit_count(tmp_path) -> N
     assert payload["ok"] is True
     assert payload["phase"] == "complete"
     assert payload["outcome"] == "relocate_already_correct"
+
+
+def test_relocate_unregistered_files_require_registration_before_completion(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(
+        tmp_path,
+        run_id="run_relocate_unregistered",
+        scenario="unregistered",
+    )
+
+    payload = harness.dry_run().to_dict()
+
+    assert payload["ok"] is False
+    assert payload["phase"] == "review_required"
+    assert payload["outcome"] == "relocate_registration_required"
+    assert payload["nextActions"][0]["action"] == "register_unregistered"
+    assert payload["nextActions"][0]["requiresHumanInput"] is False
+
+    harness.scenario = "metadata_gap"
+    resumed = harness.service().resume(
+        RelocateApplyConfig(
+            windows_ops_root=harness.cfg.windows_ops_root,
+            run_id=harness.cfg.run_id,
+        ),
+        action="register_unregistered",
+    ).to_dict()
+
+    assert resumed["outcome"] == "relocate_metadata_preparation_required"
+    register_call = next(
+        args
+        for script, args in harness.calls
+        if script == "relocate_existing_files.py" and "--register-unregistered-only" in args
+    )
+    assert "--apply" not in register_call
 
 
 def register_relocate_plan_ready_run(

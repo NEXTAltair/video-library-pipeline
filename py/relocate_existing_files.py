@@ -132,6 +132,11 @@ def main() -> int:
     ap.add_argument("--windows-ops-root", required=True)
     ap.add_argument("--dest-root", required=True)
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument(
+        "--register-unregistered-only",
+        action="store_true",
+        help="Register scanned paths missing from the DB without applying any move plan",
+    )
     ap.add_argument("--roots-json", default="")
     ap.add_argument("--roots-file-path", default="")
     ap.add_argument("--extensions-json", default="")
@@ -460,7 +465,8 @@ def main() -> int:
         metadata_queue_path: str | None = None
         internal_move_plan_out: str | None = None
 
-        if args.apply and rows_for_autoreg:
+        should_register_unregistered = bool(args.apply or args.register_unregistered_only)
+        if should_register_unregistered and rows_for_autoreg:
             prereg_run_id = str(uuid.uuid4())
             try:
                 prereg_auto_registered_paths = 0
@@ -812,6 +818,7 @@ def main() -> int:
             "ok": len(errors) == 0,
             "tool": "video_pipeline_relocate_existing_files",
             "apply": bool(args.apply),
+            "registerUnregisteredOnly": bool(args.register_unregistered_only),
             "db": db_path,
             "destRoot": dest_root_win,
             "roots": roots_win,
@@ -827,10 +834,12 @@ def main() -> int:
             "dbUpdatedPaths": db_updated_paths if args.apply else 0,
             "alreadyCorrect": already_correct,
             "unregisteredSkipped": unregistered_skipped,
-            "autoRegisteredPaths": auto_registered_paths if args.apply else 0,
-            "autoRegisteredObservations": auto_registered_observations if args.apply else 0,
-            "autoRegisteredFiles": auto_registered_files_out if args.apply else [],
-            "autoRegisteredFilesTruncated": bool(auto_registered_files_truncated) if args.apply else False,
+            "autoRegisteredPaths": auto_registered_paths if should_register_unregistered else 0,
+            "autoRegisteredObservations": auto_registered_observations if should_register_unregistered else 0,
+            "autoRegisteredFiles": auto_registered_files_out if should_register_unregistered else [],
+            "autoRegisteredFilesTruncated": (
+                bool(auto_registered_files_truncated) if should_register_unregistered else False
+            ),
             "metadataMissingSkipped": metadata_missing_skipped,
             "invalidContractSkipped": invalid_contract_skipped,
             "suspiciousProgramTitleSkipped": suspicious_program_title_skipped,

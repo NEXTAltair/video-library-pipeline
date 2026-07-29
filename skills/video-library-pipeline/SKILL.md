@@ -20,6 +20,7 @@ This skill is the V2 orchestrator for `video-library-pipeline`.
 - Do not infer "latest" JSONL/YAML/plan files. Use `runId`, `artifactId`, `ReviewGate.artifactIds`, and artifact paths returned by the run.
 - Human review is explicit. If a result has `requiresHumanReview: true` or an open `ReviewGate`, stop and ask the user to review the referenced artifact before resuming.
 - If `nextActions` returns `complete_empty_plan` with `requiresHumanInput: false`, call the exact `video_pipeline_resume` params directly. It only completes a checksum-verified sourceRoot plan whose recorded count is zero and whose JSONL contains no operations.
+- If `nextActions` returns `register_unregistered` with `requiresHumanInput: false`, call the exact resume params directly. This action only registers missing paths/observations/events; it uses the non-moving registration mode and then reruns dry-run so the new files enter metadata preparation.
 - Execute in the main agent turn; do not delegate to subagents.
 
 ## Stale Run Supersession
@@ -69,7 +70,7 @@ If the request targets an already-existing directory tree under the library, tre
    - `nextActions` / `followUpToolCalls`
    - `diagnostics`
 3. If a human review gate is present, inspect the referenced artifact and ask the user to review it.
-4. If `complete_empty_plan` is returned with `requiresHumanInput: false`, call its exact resume params and verify the run reaches `complete`.
+4. If `complete_empty_plan` or `register_unregistered` is returned with `requiresHumanInput: false`, call its exact resume params and verify the run advances.
 5. After other review or approval, call `video_pipeline_resume` only with exact params from `followUpToolCalls[].params` or `nextActions[].params`.
 6. Repeat until `phase` is `complete`, `blocked`, or `failed`.
 

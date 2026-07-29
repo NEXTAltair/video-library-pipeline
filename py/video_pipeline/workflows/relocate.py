@@ -166,6 +166,8 @@ class RelocateWorkflowService:
 
     def resume(self, config: RelocateApplyConfig, *, action: str = "apply_relocate_move_plan") -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        if action == "register_unregistered":
+            return self._resume_register_unregistered(store, config.run_id)
         if action in {"prepare_relocate_metadata", "review_relocate_metadata"}:
             return self._resume_metadata_action(store, config.run_id, action)
         if action == "apply_reviewed_metadata":
@@ -521,8 +523,28 @@ class RelocateWorkflowService:
         suspicious = int(summary.get("suspiciousProgramTitleSkipped") or 0)
         needs_review = int(summary.get("needsReviewSkipped") or 0)
         unreviewed = int(summary.get("unreviewedMetadataSkipped") or 0)
+        unregistered = int(summary.get("unregisteredSkipped") or 0)
         has_metadata_gap = metadata_queue_count > 0 or metadata_missing > 0 or unreviewed > 0
         has_review_blocker = suspicious > 0 or needs_review > 0 or unreviewed > 0
+
+        if unregistered > 0:
+            self._advance_to_phase(store, run_id, WorkflowPhase.REVIEW_REQUIRED)
+            return self._result(
+                ok=False,
+                store=store,
+                run_id=run_id,
+                phase=WorkflowPhase.REVIEW_REQUIRED,
+                outcome="relocate_registration_required",
+                next_actions=[
+                    NextAction(
+                        action="register_unregistered",
+                        label="Register untracked files without moving them",
+                        tool="video_pipeline_resume",
+                        params={"runId": run_id, "artifactIds": [diagnostics_artifact.id]},
+                        requires_human_input=False,
+                    )
+                ],
+            )
 
         if planned_moves > 0 and plan_artifact is not None:
             self._approve_blocking_metadata_gates(store, run_id, "relocate_metadata_recheck_plan_ready")
@@ -625,6 +647,73 @@ class RelocateWorkflowService:
             run_id=run_id,
             phase=WorkflowPhase.COMPLETE,
             outcome="relocate_no_action_needed",
+        )
+
+    def _resume_register_unregistered(
+        self,
+        store: WorkflowStore,
+        run_id: str,
+    ) -> WorkflowResult:
+        run = store.read_run(run_id)
+        if run.flow != WorkflowFlow.RELOCATE.value:
+            return self._block_apply(
+                store,
+                run_id,
+                "relocate_registration_wrong_flow",
+                Diagnostic(
+                    code="relocate_registration_wrong_flow",
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"run is not a relocate workflow: {run.flow}",
+                    details={"runId": run_id, "flow": run.flow},
+                ),
+            )
+        cfg = self._config_from_run(run)
+        args = [
+            "--db", str(local_path_from_any(cfg.db)),
+            "--windows-ops-root", cfg.windows_ops_root,
+            "--dest-root", canonicalize_windows_path(cfg.dest_root),
+            "--register-unregistered-only",
+            "--allow-needs-review", str(bool(cfg.allow_needs_review)).lower(),
+            "--allow-unreviewed-metadata", str(bool(cfg.allow_unreviewed_metadata)).lower(),
+            "--queue-missing-metadata", str(bool(cfg.queue_missing_metadata)).lower(),
+            "--write-metadata-queue-on-dry-run", str(bool(cfg.write_metadata_queue_on_dry_run)).lower(),
+            "--scan-error-policy", cfg.scan_error_policy,
+            "--scan-retry-count", str(cfg.scan_retry_count),
+            "--on-dst-exists", cfg.on_dst_exists,
+            "--skip-suspicious-title-check", str(bool(cfg.skip_suspicious_title_check)).lower(),
+        ]
+        if cfg.roots:
+            args.extend(["--roots-json", json.dumps(cfg.roots, ensure_ascii=False)])
+        elif cfg.roots_file_path:
+            args.extend(["--roots-file-path", cfg.roots_file_path])
+        if cfg.extensions:
+            args.extend(["--extensions-json", json.dumps(cfg.extensions, ensure_ascii=False)])
+        if cfg.limit:
+            args.extend(["--limit", str(cfg.limit)])
+        if cfg.scan_error_threshold:
+            args.extend(["--scan-error-threshold", str(cfg.scan_error_threshold)])
+        if cfg.drive_routes:
+            args.extend(["--drive-routes", cfg.drive_routes])
+
+        raw = self.python_runner(self.py_root / "relocate_existing_files.py", args, str(self.py_root))
+        summary = parse_last_json_object_line(raw)
+        if not summary or summary.get("ok") is not True:
+            return self._block_apply(
+                store,
+                run_id,
+                "relocate_registration_failed",
+                Diagnostic(
+                    code="relocate_registration_failed",
+                    severity=DiagnosticSeverity.ERROR,
+                    message="failed to register untracked relocate paths",
+                    details={"runId": run_id, "summary": summary},
+                ),
+            )
+        return self._dry_run_existing(
+            run_id,
+            cfg,
+            store,
+            str(local_path_from_any(cfg.db)),
         )
 
     def _validate_apply_plan(self, store: WorkflowStore, run_id: str, artifact_id: str) -> ArtifactRef:

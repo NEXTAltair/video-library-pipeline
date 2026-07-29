@@ -199,8 +199,24 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
                     requires_human_input=True,
                 )
             ]
-        queue_id = _latest_artifact_id(run, "relocate_metadata_queue")
         diagnostics_id = _latest_artifact_id(run, "relocate_diagnostics")
+        diagnostics = run.artifacts.get(diagnostics_id) if diagnostics_id else None
+        summary = (
+            diagnostics.metadata.get("summary")
+            if diagnostics is not None and isinstance(diagnostics.metadata, dict)
+            else None
+        )
+        if isinstance(summary, dict) and int(summary.get("unregisteredSkipped") or 0) > 0:
+            return [
+                NextAction(
+                    action="register_unregistered",
+                    label="Register untracked files without moving them",
+                    tool="video_pipeline_resume",
+                    params={"runId": run.run_id, "artifactIds": [diagnostics_id]},
+                    requires_human_input=False,
+                )
+            ]
+        queue_id = _latest_artifact_id(run, "relocate_metadata_queue")
         review_gate = next((gate for gate in open_gates if gate.type == "relocate_metadata_review"), None)
         if review_gate is not None:
             return [
