@@ -92,6 +92,7 @@ export function ensureWindowsScripts(cfg: { windowsOpsRoot: string }): Provision
           result.existing.push(target);
           continue;
         }
+        fs.copyFileSync(target, `${target}.before-${Date.now()}-${process.pid}`);
         fs.copyFileSync(template, target);
         result.updated.push(target);
         continue;

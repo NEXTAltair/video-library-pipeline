@@ -1,6 +1,6 @@
 {
   "name": "@nextaltair/video-library-pipeline",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "files": [
     "assets",
@@ -9,10 +9,13 @@
     "py/*.py",
     "py/video_pipeline/**/*.py",
     "pyproject.toml",
-    "rules",
     "skills",
     "templates",
-    "uv.lock"
+    "uv.lock",
+    "rules/*.example.yaml",
+    "rules/franchise_rules.yaml",
+    "rules/relocate_roots.yaml",
+    "rules/RULES_GOVERNANCE.md"
   ],
   "openclaw": {
     "extensions": [
@@ -38,5 +41,9 @@
   "devDependencies": {
     "esbuild": "0.28.1",
     "vitest": "^4.1.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NEXTAltair/video-library-pipeline.git"
   }
 }

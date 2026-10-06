@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 import re
 import uuid
 from pathlib import Path
@@ -102,9 +104,13 @@ class WorkflowStore:
     def write_run(self, run: WorkflowRun) -> None:
         path = self.manifest_path(run.run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as f:
             json.dump(run.to_dict(), f, ensure_ascii=False, indent=2, sort_keys=True)
             f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+            temporary = f.name
+        os.replace(temporary, path)
 
     def transition_run(self, run_id: str, to_phase: WorkflowPhase | str) -> WorkflowRun:
         run = self.read_run(run_id)

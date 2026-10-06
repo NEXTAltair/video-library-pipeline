@@ -1,0 +1,4 @@
+# Empty public defaults. Local reviewed titles/samples are private runtime data.
+# Copy to program_aliases.yaml to maintain your own optional dictionary.
+version: 1
+hints: []

@@ -13,6 +13,7 @@ detection, cleanup scripts, and other workflow stages.
 from __future__ import annotations
 
 import sqlite3
+import re
 from dataclasses import dataclass
 
 from path_placement_rules import SUBTITLE_SEPARATORS, clean_program_title, normalize_title_for_comparison
@@ -193,6 +194,18 @@ def suggest_canonical_title(
     if not pt_norm:
         return None, "no_match"
 
+    # A franchise prefix is not a work title. Protect sequels/editions before
+    # giving shorter human-reviewed candidates priority.
+    protected = ("機動戦士ガンダム", "仮面ライダー", "ウルトラマン", "スーパー戦隊")
+    def safe_shortening(candidate):
+        cn = normalize_title_for_comparison(candidate)
+        if any(cn == normalize_title_for_comparison(f) and pt_norm != cn for f in protected):
+            return False
+        # Latin edition/season suffixes change identity, unlike a quoted subtitle.
+        if re.search(r"(?:SEED|DESTINY|RE[:：]|season|シーズン|ユニコーン)", program_title, re.I) and cn != pt_norm:
+            return False
+        return True
+
     # Exact match against human-reviewed → already canonical
     if pt_norm in sources.human_reviewed_norm:
         return None, "exact_human_reviewed"
@@ -206,7 +219,8 @@ def suggest_canonical_title(
             if not cand_norm:
                 continue
             if (
-                pt_norm.startswith(cand_norm)
+                safe_shortening(candidate)
+                and pt_norm.startswith(cand_norm)
                 and len(pt_norm) >= len(cand_norm) + min_extra_chars
             ):
                 return candidate, source_name

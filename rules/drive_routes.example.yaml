@@ -1,0 +1,14 @@
+# Illustrative paths only; customize and explicitly configure driveRoutesPath.
+default_dest: "C:\\VideoLibrary"
+default_layout: by_program_year_month
+routes:
+  - genre: anime
+    dest_root: "C:\\VideoLibrary\\Anime"
+    layout: by_title
+    epg_genre_match: ["アニメ/特撮 - *"]
+    title_patterns: []
+  - genre: movie
+    dest_root: "C:\\VideoLibrary\\Movies"
+    layout: by_title
+    epg_genre_match: ["映画 - *"]
+    title_patterns: []

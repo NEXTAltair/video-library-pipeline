@@ -1,379 +1,75 @@
 #!/usr/bin/env python3
-r"""Update mediaops.sqlite paths table from a move_apply JSONL produced by apply_move_plan.ps1."""
+"""Commit successful move receipts without rewriting locations or historical rows.
 
+Replaying the same durable log is idempotent. Dry-run receipts never update DB.
+"""
 from __future__ import annotations
-
 import argparse
+import hashlib
 import json
 import os
 import uuid
-
-from db_helpers import reconstruct_path_metadata, split_path_metadata
-from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
-from pathscan_common import iter_jsonl, now_iso, split_win
-
-
-def _json_obj(s: str | None) -> dict:
-    if not s:
-        return {}
-    try:
-        v = json.loads(s)
-        return v if isinstance(v, dict) else {}
-    except Exception:
-        return {}
+import sqlite3
+from pathlib import Path
+from mediaops_schema import connect_db, create_schema_if_needed, begin_immediate
+from pathscan_common import iter_jsonl, now_iso
+from video_pipeline.db.file_identity import ensure_identity_schema, record_move
 
 
-def _metadata_rank(row) -> tuple[int, str]:
-    if row is None:
-        return (-1, "")
-    human_reviewed = bool(row["human_reviewed"]) if row["human_reviewed"] is not None else False
-    return (1 if human_reviewed else 0, str(row["updated_at"] or ""))
-
-
-def _merge_path_metadata(con, src_path_id: str, dst_path_id: str) -> str:
-    src = con.execute(
-        """SELECT path_id, source, data_json, updated_at,
-                  program_title, air_date, needs_review,
-                  episode_no, subtitle, broadcaster, human_reviewed
-           FROM path_metadata WHERE path_id=?""",
-        (src_path_id,),
-    ).fetchone()
-    if src is None:
-        return "none"
-    dst = con.execute(
-        """SELECT path_id, source, data_json, updated_at,
-                  program_title, air_date, needs_review,
-                  episode_no, subtitle, broadcaster, human_reviewed
-           FROM path_metadata WHERE path_id=?""",
-        (dst_path_id,),
-    ).fetchone()
-    if dst is None:
-        con.execute("UPDATE path_metadata SET path_id=? WHERE path_id=?", (dst_path_id, src_path_id))
-        return "moved_src_to_dst"
-
-    src_md = reconstruct_path_metadata(src)
-    dst_md = reconstruct_path_metadata(dst)
-    src_hist = src_md.get("source_history") if isinstance(src_md.get("source_history"), list) else []
-    dst_hist = dst_md.get("source_history") if isinstance(dst_md.get("source_history"), list) else []
-    combined_hist = list(dst_hist) + [h for h in src_hist if h not in dst_hist]
-
-    preferred = src if _metadata_rank(src) > _metadata_rank(dst) else dst
-    if preferred["path_id"] == src_path_id:
-        src_md["source_history"] = combined_hist
-        promoted, data_json = split_path_metadata(src_md)
-        con.execute(
-            """UPDATE path_metadata SET source=?, data_json=?, updated_at=?,
-                 program_title=?, air_date=?, needs_review=?,
-                 episode_no=?, subtitle=?, broadcaster=?, human_reviewed=?
-               WHERE path_id=?""",
-            (
-                src["source"], data_json, src["updated_at"],
-                promoted.get("program_title"), promoted.get("air_date"),
-                promoted.get("needs_review", 0),
-                promoted.get("episode_no"), promoted.get("subtitle"),
-                promoted.get("broadcaster"), promoted.get("human_reviewed", 0),
-                dst_path_id,
-            ),
-        )
-        action = "src_overwrote_dst"
-    else:
-        dst_md["source_history"] = combined_hist
-        promoted, data_json = split_path_metadata(dst_md)
-        con.execute(
-            """UPDATE path_metadata SET data_json=?, updated_at=?,
-                 program_title=?, air_date=?, needs_review=?,
-                 episode_no=?, subtitle=?, broadcaster=?, human_reviewed=?
-               WHERE path_id=?""",
-            (
-                data_json, dst["updated_at"],
-                promoted.get("program_title"), promoted.get("air_date"),
-                promoted.get("needs_review", 0),
-                promoted.get("episode_no"), promoted.get("subtitle"),
-                promoted.get("broadcaster"), promoted.get("human_reviewed", 0),
-                dst_path_id,
-            ),
-        )
-        action = "kept_dst_with_history"
-    con.execute("DELETE FROM path_metadata WHERE path_id=?", (src_path_id,))
-    return action
-
-
-def _repoint_observations(con, src_path_id: str, dst_path_id: str) -> int:
-    rows = con.execute(
-        "SELECT run_id, size_bytes, mtime_utc, type, name_flags FROM observations WHERE path_id=?",
-        (src_path_id,),
-    ).fetchall()
-    if not rows:
-        return 0
-    con.executemany(
-        """
-        INSERT INTO observations (run_id, path_id, size_bytes, mtime_utc, type, name_flags)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(run_id, path_id) DO UPDATE SET
-          size_bytes=excluded.size_bytes,
-          mtime_utc=excluded.mtime_utc,
-          type=excluded.type,
-          name_flags=excluded.name_flags
-        """,
-        [(r["run_id"], dst_path_id, r["size_bytes"], r["mtime_utc"], r["type"], r["name_flags"]) for r in rows],
-    )
-    con.execute("DELETE FROM observations WHERE path_id=?", (src_path_id,))
-    return len(rows)
-
-
-def _repoint_file_paths(con, src_path_id: str, dst_path_id: str) -> int:
-    rows = con.execute(
-        "SELECT file_id, is_current, first_seen_run_id, last_seen_run_id FROM file_paths WHERE path_id=?",
-        (src_path_id,),
-    ).fetchall()
-    if not rows:
-        return 0
-    con.executemany(
-        """
-        INSERT INTO file_paths (file_id, path_id, is_current, first_seen_run_id, last_seen_run_id)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(file_id, path_id) DO UPDATE SET
-          is_current=MAX(file_paths.is_current, excluded.is_current),
-          first_seen_run_id=COALESCE(file_paths.first_seen_run_id, excluded.first_seen_run_id),
-          last_seen_run_id=COALESCE(excluded.last_seen_run_id, file_paths.last_seen_run_id)
-        """,
-        [(r["file_id"], dst_path_id, r["is_current"], r["first_seen_run_id"], r["last_seen_run_id"]) for r in rows],
-    )
-    con.execute("DELETE FROM file_paths WHERE path_id=?", (src_path_id,))
-    return len(rows)
-
-
-def _repoint_path_tags(con, src_path_id: str, dst_path_id: str) -> int:
-    rows = con.execute(
-        "SELECT tag_id, source, updated_at FROM path_tags WHERE path_id=?",
-        (src_path_id,),
-    ).fetchall()
-    if not rows:
-        return 0
-    con.executemany(
-        """
-        INSERT INTO path_tags (path_id, tag_id, source, updated_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(path_id, tag_id, source) DO UPDATE SET
-          updated_at=CASE
-            WHEN excluded.updated_at > path_tags.updated_at THEN excluded.updated_at
-            ELSE path_tags.updated_at
-          END
-        """,
-        [(dst_path_id, r["tag_id"], r["source"], r["updated_at"]) for r in rows],
-    )
-    con.execute("DELETE FROM path_tags WHERE path_id=?", (src_path_id,))
-    return len(rows)
-
-
-def _repoint_events(con, src_path_id: str, dst_path_id: str) -> tuple[int, int]:
-    cur1 = con.execute("UPDATE events SET src_path_id=? WHERE src_path_id=?", (dst_path_id, src_path_id))
-    cur2 = con.execute("UPDATE events SET dst_path_id=? WHERE dst_path_id=?", (dst_path_id, src_path_id))
-    return int(cur1.rowcount or 0), int(cur2.rowcount or 0)
-
-
-def _merge_path_collision(con, src_path_id: str, dst_path_id: str, dst_full: str, dst_dir: str, dst_name: str, ts_now: str) -> dict:
-    obs = _repoint_observations(con, src_path_id, dst_path_id)
-    md_action = _merge_path_metadata(con, src_path_id, dst_path_id)
-    fp = _repoint_file_paths(con, src_path_id, dst_path_id)
-    tags = _repoint_path_tags(con, src_path_id, dst_path_id)
-    ev_src, ev_dst = _repoint_events(con, src_path_id, dst_path_id)
-    con.execute(
-        "UPDATE paths SET path=?, dir=?, name=?, updated_at=? WHERE path_id=?",
-        (dst_full, dst_dir, dst_name, ts_now, dst_path_id),
-    )
-    con.execute("DELETE FROM paths WHERE path_id=?", (src_path_id,))
-    return {
-        "observations_repointed": obs,
-        "path_metadata_action": md_action,
-        "file_paths_repointed": fp,
-        "path_tags_repointed": tags,
-        "events_repointed_src": ev_src,
-        "events_repointed_dst": ev_dst,
-    }
-
-
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default="")
-    ap.add_argument("--applied", required=True)
-    ap.add_argument("--notes", default=None)
-    ap.add_argument("--run-kind", default="apply")
-    ap.add_argument("--event-kind", default="move")
-    ap.add_argument("--detail-source", default="apply_move_plan.ps1")
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument('--db', required=True)
+    ap.add_argument('--applied', required=True)
+    ap.add_argument('--notes')
+    ap.add_argument('--run-kind', default='apply')
+    ap.add_argument('--event-kind', default='move')
+    ap.add_argument('--detail-source', default='apply_move_plan.ps1')
+    ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args()
-
-    if not args.db:
-        raise SystemExit("db is required: pass --db or configure plugin db")
-    if not os.path.exists(args.db):
-        raise SystemExit(f"DB not found: {args.db}")
-    if not os.path.exists(args.applied):
-        raise SystemExit(f"Applied JSONL not found: {args.applied}")
-
-    con = connect_db(args.db)
-    create_schema_if_needed(con)
-
-    move_rows = []
-
-    for rec in iter_jsonl(args.applied):
-        if rec.get("op") != "move":
-            continue
-        if not rec.get("ok"):
-            continue
-        pid = rec.get("path_id")
-        src = rec.get("src")
-        dst = rec.get("dst")
-        if not pid or not dst:
-            continue
-        _drive, dir_, name, _ext = split_win(dst)
-        move_rows.append({"path_id": pid, "src": src, "dst": dst, "dir": dir_, "name": name, "ts": rec.get("ts") or now_iso()})
-
-    if args.dry_run:
-        # Detect uniqueness collisions against current DB state so callers can preview merge work.
-        collisions = 0
-        same_path = 0
-        missing_src = 0
-        for row in move_rows:
-            src_row = con.execute("SELECT path_id FROM paths WHERE path_id=?", (row["path_id"],)).fetchone()
-            dst_row = con.execute("SELECT path_id FROM paths WHERE path=?", (row["dst"],)).fetchone()
-            if src_row is None:
-                missing_src += 1
-            if dst_row is not None:
-                if dst_row["path_id"] == row["path_id"]:
-                    same_path += 1
-                else:
-                    collisions += 1
-        con.close()
-        print(
-            json.dumps(
-                {
-                    "applied": args.applied,
-                    "would_update": len(move_rows),
-                    "would_events": len(move_rows),
-                    "collisions_with_existing_dst_path": collisions,
-                    "already_at_destination_path": same_path,
-                    "missing_src_path_rows": missing_src,
-                },
-                ensure_ascii=False,
-            )
-        )
+    if not os.path.isfile(args.db):
+        raise SystemExit('DB not found: ' + args.db)
+    lines = Path(args.applied).read_text(encoding="utf-8-sig").splitlines()
+    records = []
+    for i,line in enumerate(lines):
+        if not line.strip(): continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            if i != len(lines)-1: raise
+            # A crash can truncate the last write. Recover previous full receipts.
+            break
+    if any(r.get('_meta', {}).get('dry_run') for r in records):
+        print(json.dumps({'updated': 0, 'events': 0, 'dry_run_log': True}))
         return 0
-
+    rows = [(i,r) for i,r in enumerate(records) if r.get('op') == 'move' and r.get('ok') is True and not r.get('dry_run')]
+    con = connect_db(args.db)
+    if args.dry_run:
+        clone = connect_db(":memory:")
+        con.backup(clone); con.close(); con = clone
+    create_schema_if_needed(con)
+    ensure_identity_schema(con)
+    con.commit()
     run_id = uuid.uuid4().hex
-    started = now_iso()
-
-    updated_count = 0
-    merged_conflicts = 0
-    already_applied = 0
-    missing_src_rows = 0
-    rows_events = []
-    merge_details = []
+    changed = 0
     try:
         begin_immediate(con)
-        con.execute(
-            """
-            INSERT INTO runs (run_id, kind, target_root, started_at, finished_at, tool_version, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                str(args.run_kind or "apply"),
-                None,
-                started,
-                None,
-                None,
-                args.notes or f"{str(args.run_kind or 'apply')} update_db_paths_from_move_apply {os.path.basename(args.applied)}",
-            ),
-        )
-        for row in move_rows:
-            pid = row["path_id"]
-            dst_full = row["dst"]
-            dst_dir = row["dir"]
-            dst_name = row["name"]
-            ts_now = now_iso()
-            src_row = con.execute("SELECT path_id, path FROM paths WHERE path_id=?", (pid,)).fetchone()
-            dst_row = con.execute("SELECT path_id, path FROM paths WHERE path=?", (dst_full,)).fetchone()
-            event_path_id = pid
-            event_detail = {"src": row["src"], "dst": dst_full, "source": str(args.detail_source or "apply_move_plan.ps1")}
-            if src_row is None:
-                if dst_row is not None:
-                    # Idempotent rerun after previous DB merge/update success.
-                    already_applied += 1
-                    event_path_id = dst_row["path_id"]
-                    event_detail["db_update"] = "already_applied_src_path_missing_dst_exists"
-                else:
-                    missing_src_rows += 1
-                    event_path_id = None
-                    event_detail["db_update"] = "src_path_id_missing_and_dst_not_found"
-            elif dst_row is None or dst_row["path_id"] == pid:
-                con.execute(
-                    "UPDATE paths SET path=?, dir=?, name=?, updated_at=? WHERE path_id=?",
-                    (dst_full, dst_dir, dst_name, ts_now, pid),
-                )
-                updated_count += 1
-                if dst_row is not None and dst_row["path_id"] == pid:
-                    event_detail["db_update"] = "already_at_destination_path"
-                else:
-                    event_detail["db_update"] = "updated_path_row"
-            else:
-                merge_info = _merge_path_collision(con, pid, dst_row["path_id"], dst_full, dst_dir, dst_name, ts_now)
-                merged_conflicts += 1
-                event_path_id = dst_row["path_id"]
-                event_detail["db_update"] = "merged_into_existing_destination_path_row"
-                event_detail["db_collision_with_path_id"] = dst_row["path_id"]
-                event_detail["db_merge"] = merge_info
-                merge_details.append({"src_path_id": pid, "dst_path_id": dst_row["path_id"], "dst": dst_full, **merge_info})
-
-            rows_events.append(
-                (
-                    run_id,
-                    row["ts"],
-                    str(args.event_kind or "move"),
-                    event_path_id,
-                    None,
-                    json.dumps(event_detail, ensure_ascii=False),
-                    1,
-                    None,
-                )
-            )
-
-        if rows_events:
-            con.executemany(
-                """
-                INSERT INTO events (run_id, ts, kind, src_path_id, dst_path_id, detail_json, ok, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                rows_events,
-            )
-        con.execute("UPDATE runs SET finished_at=? WHERE run_id=?", (now_iso(), run_id))
-        con.commit()
+        con.execute('INSERT INTO runs(run_id,kind,started_at,notes) VALUES(?,?,?,?)', (run_id,args.run_kind,now_iso(),args.notes))
+        for index,row in rows:
+            # Stable across retries and log copies; no filename-only inference.
+            receipt = hashlib.sha256(json.dumps(row,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+            changed += int(record_move(con,row,receipt,run_id))
+        con.execute('UPDATE runs SET finished_at=? WHERE run_id=?', (now_iso(),run_id))
+        if args.dry_run:
+            con.rollback()
+        else:
+            con.commit()
     except Exception:
         con.rollback()
         raise
     finally:
         con.close()
-
-    print(
-        json.dumps(
-            {
-                "applied": args.applied,
-                "updated": updated_count,
-                "merged_conflicts": merged_conflicts,
-                "already_applied": already_applied,
-                "missing_src_path_rows": missing_src_rows,
-                "events": len(rows_events),
-                "run_id": run_id,
-                "run_kind": str(args.run_kind or "apply"),
-                "event_kind": str(args.event_kind or "move"),
-                "merge_details": merge_details[:20],
-                "merge_details_truncated": len(merge_details) > 20,
-            },
-            ensure_ascii=False,
-        )
-    )
+    print(json.dumps({'updated':changed,'events':changed,'already_applied':len(rows)-changed,'merged_conflicts':0,'missing_src_path_rows':0,'run_id':run_id,'dry_run':args.dry_run}))
     return 0
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(main())

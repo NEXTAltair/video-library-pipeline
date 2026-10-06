@@ -49,7 +49,7 @@ REQUIRED = {
 
     "evidence",
 }
-ACTIVE_TITLE_ARCHITECTURE = "A_AI_PRIMARY_WITH_GUARDRAILS"
+ACTIVE_TITLE_ARCHITECTURE = "RULE_BASED_TITLE_V2"
 DEFERRED_TITLE_ARCHITECTURES = (
     "B_FULL_AI_MIN_RULES",
     "C_LEGACY_PARSER_WITH_AI_REVIEW",
@@ -143,6 +143,9 @@ def drop_label_words(s: str) -> str:
 
 
 def parse_episode(base: str) -> int | None:
+    m = re.search(r"(?:PHASE|STAGE|ACT)[-\s]*(\d+)", base, re.I)
+    if m:
+        return int(m.group(1))
     m = re.search(r"第\s*(\d+)\s*話", base)
     if m:
         return int(m.group(1))
@@ -795,8 +798,8 @@ def main() -> int:
     ap.add_argument("--batch-size", type=int, default=200)
     ap.add_argument("--start-batch", type=int, default=1)
     ap.add_argument("--max-batches", type=int, default=None)
-    ap.add_argument("--model", default="openai-codex/gpt-5.2")
-    ap.add_argument("--extraction-version", default="prompt_v1_20260208")
+    ap.add_argument("--model", default="rule_based/title-v2")
+    ap.add_argument("--extraction-version", default="rule_based_title_v2_20261006")
     ap.add_argument("--hints", default="")
     ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--ignore-human-reviewed", action="store_true")
@@ -889,6 +892,10 @@ def main() -> int:
                 prog = _suggested
                 reasons.append(f"auto_corrected_from_{_match_source}")
                 title_auto_corrected += 1
+
+            # Episode tokens are not part of the work identity, even when an old
+            # programs row accidentally stored them in the dictionary.
+            prog = re.sub(r"\s*\d+\.\s*(?:PHASE|STAGE|ACT)[-\s]*\d+.*$", "", prog, flags=re.I).strip()
 
             # Dictionary match → high confidence; rule-based fallback → baseline
             extraction_path = title_res.get("title_extraction_path") or ""

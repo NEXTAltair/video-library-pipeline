@@ -16,6 +16,8 @@ from video_pipeline.platform.pathscan_common import (
     wsl_to_windows_path,
 )
 
+from video_pipeline.platform.resources import default_program_aliases
+
 from .models import (
     ArtifactRef,
     ArtifactStatus,
@@ -982,7 +984,7 @@ class RelocateWorkflowService:
                 "--outdir",
                 str(preparation_dir),
                 "--hints",
-                str(self.py_root.parent / "rules" / "program_aliases.yaml"),
+                str(default_program_aliases(self.py_root)),
                 "--batch-size",
                 "50",
                 "--start-batch",

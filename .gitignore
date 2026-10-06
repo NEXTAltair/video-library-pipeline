@@ -3,3 +3,10 @@ __pycache__
 dist/
 node_modules/
 .codex
+
+# Local audit logs and SQLite backups contain private library state.
+artifacts/
+
+!pnpm-workspace.yaml
+
+!rules/*.example.yaml

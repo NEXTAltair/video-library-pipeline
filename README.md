@@ -106,3 +106,38 @@ pytest
 ```
 
 OpenClaw SDK testing方針の詳細は [docs/adr/0001-plugin-sdk-testing.md](docs/adr/0001-plugin-sdk-testing.md) を参照。
+
+## OpenClaw runtime の Python 環境
+
+plugin 内に仮想環境を置くと、interpreter の外部リンクが OpenClaw の companion 境界検査に抵触する。OpenClaw からの uv 呼出しは `~/.openclaw/plugin-runtime/video-library-pipeline/.venv` を使用する（`OPENCLAW_STATE_DIR` があればその配下）。環境の場所を変える場合は `OPENCLAW_VIDEO_PIPELINE_VENV` を指定する。ほかのコマンドやプロジェクトの環境変数は変更しない。
+
+開発時も同じ場所を指定し、linked plugin の repo 内に `.venv` や外部環境へのリンクを再作成しない。
+
+```sh
+UV_PROJECT_ENVIRONMENT="$HOME/.openclaw/plugin-runtime/video-library-pipeline/.venv" uv sync --locked
+```
+
+## v0.3.0: 日次CLIと安全な配布
+
+モデルを呼ばずにEPG取り込みから整理まで進めるCLIを追加した。メタデータレビューは自動承認しない。衝突・更新中ソース・保留対象を除外し、移動先を上書きしない。場所とファイルのIDを分離し、移動記録の再反映は冪等にする。詳細は [ADR 0009](docs/adr/0009-deterministic-execution-and-file-identity.md)。
+
+```sh
+# DBコピーでプレビュー。動画の移動はしない。
+openclaw video-pipeline-organize
+# プレビューを確認して、安全な候補だけを実行。
+openclaw video-pipeline-organize --apply
+# scheduler向け: 成功は無言、変更/失敗だけ通知、失敗は非0終了。
+openclaw video-pipeline-organize --apply --scheduled
+```
+
+`sourceRoot`, `destRoot`, `windowsOpsRoot`, `tsRoot`, `driveRoutesPath`をplugin configへ設定する。DBは既存SQLiteを指定するか、`windowsOpsRoot/db/mediaops.sqlite`へ用意する。`rules/drive_routes.example.yaml`の例示パスは自分の環境に合わせて変更する。存在しない振り分け設定はエラーになる。
+
+`rules/program_aliases.example.yaml`は空の公開辞書。ローカルの`rules/program_aliases.yaml`があれば優先するが、個人の番組名・元ファイル名・閲覧履歴を含み得るため配布しない。自動抽出はルール/辞書/EPGであり、LLMによる抽出を装う記録はしない。
+
+GitHub Releasesの配布tarballをダウンロードしてインストールする。
+
+```sh
+openclaw plugins install npm-pack:./nextaltair-video-library-pipeline-0.3.0.tgz
+```
+
+監査用のデータ修復は`openclaw video-pipeline-repair-history --help`を参照。既定でコピーDBを使い、`--apply`時は直前バックアップを作る。日次処理で過去データの修復や重複削除を勝手に実行しない。

@@ -13,6 +13,7 @@ from db_helpers import latest_path_metadata
 from mediaops_schema import connect_db
 from path_placement_rules import load_drive_routes
 from plan_validation import validate_move_candidate
+from video_pipeline.domain.move_preflight import inspect_move
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
@@ -34,7 +35,9 @@ def main() -> int:
 
     # Load drive routes if provided
     routes = None
-    if args.drive_routes and os.path.exists(args.drive_routes):
+    if args.drive_routes:
+        if not Path(args.drive_routes).is_file():
+            raise SystemExit("drive routes file not found: " + args.drive_routes)
         routes = load_drive_routes(args.drive_routes)
 
     run_id = f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{os.getpid()}"
@@ -53,6 +56,9 @@ def main() -> int:
     skipped_invalid_contract = 0
     skipped_subtitle_separator = 0
     genre_counts: dict[str, int] = {}
+    excluded = []
+    preflight_counts = {}
+    conflicts_path = out.with_suffix(".conflicts.json")
 
     meta_info: dict = {
         "kind": "move_plan_from_inventory",
@@ -87,6 +93,11 @@ def main() -> int:
                     skipped_no_path += 1
                     continue
                 pid = row[0]
+                hold = con.execute("SELECT reason,detail_json FROM recording_holds WHERE path_id=? AND resolved_at IS NULL",(pid,)).fetchone()
+                if hold:
+                    preflight_counts["held_legacy_collision"] = preflight_counts.get("held_legacy_collision",0)+1
+                    excluded.append({"path_id":pid,"src":src,"dst":json.loads(hold[1]).get("dst"),"reason":"held_legacy_collision"})
+                    continue
                 md, md_source = latest_path_metadata(con, pid)
                 if not md:
                     skipped_no_md += 1
@@ -117,6 +128,12 @@ def main() -> int:
                 prog = md.get("program_title")
                 air = md.get("air_date")
 
+                precondition, conflict = inspect_move(src, dst, o)
+                if conflict:
+                    preflight_counts[conflict] = preflight_counts.get(conflict, 0) + 1
+                    excluded.append({"path_id":pid,"src":src,"dst":dst,"reason":conflict})
+                    continue
+                state = con.execute("SELECT file_id FROM path_file_state WHERE path_id=?", (pid,)).fetchone()
                 plan_row: dict = {
                     "path_id": pid,
                     "src": src,
@@ -124,6 +141,8 @@ def main() -> int:
                     "program_title": prog,
                     "air_date": air,
                     "metadata_source": md_source,
+                    "precondition": precondition,
+                    "file_id": state[0] if state else None,
                 }
                 if genre_route:
                     plan_row["genre_route"] = genre_route
@@ -137,6 +156,7 @@ def main() -> int:
                 if args.limit and planned >= args.limit:
                     break
 
+    conflicts_path.write_text(json.dumps(excluded,ensure_ascii=False,indent=2) + "\n",encoding="utf-8")
     print(
         json.dumps(
             {
@@ -151,6 +171,9 @@ def main() -> int:
                 "skipped_outside": skipped_outside,
                 "skipped_invalid_contract": skipped_invalid_contract,
                 "skipped_subtitle_separator": skipped_subtitle_separator,
+                "excluded": len(excluded),
+                "preflight_counts": preflight_counts,
+                "conflicts_path": str(conflicts_path),
                 "genre_route_counts": genre_counts if genre_counts else None,
             },
             ensure_ascii=False,

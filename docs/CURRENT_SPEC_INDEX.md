@@ -2,6 +2,8 @@
 
 このファイルはプラグインの現在の動作を把握するためのドキュメントエントリポイント。
 
+v0.3.0の確定的CLIとファイル同一性は [ADR 0009](adr/0009-deterministic-execution-and-file-identity.md) を参照。公開ツール契約はV2のまま維持する。
+
 ## 1) 推奨読み順
 
 1. `skills/video-library-pipeline/SKILL.md`

@@ -88,9 +88,6 @@ describe("plugin entry", () => {
     const hookEvents = api.on.mock.calls.map(([event]) => event).sort();
     expect(hookEvents).toEqual([
       "after_tool_call",
-      "before_prompt_build",
-      "before_tool_call",
-      "tool_result_persist",
     ]);
 
     expect(api.registerCli).toHaveBeenCalledTimes(1);
@@ -101,6 +98,8 @@ describe("plugin entry", () => {
           name: "video-pipeline-status",
           hasSubcommands: false,
         },
+        { name: "video-pipeline-organize", hasSubcommands: false },
+        { name: "video-pipeline-repair-history", hasSubcommands: false },
         {
           name: "video-pipeline-ingest-epg",
           hasSubcommands: false,

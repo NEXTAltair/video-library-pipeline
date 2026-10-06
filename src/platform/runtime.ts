@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -8,10 +9,22 @@ import type { CmdResult } from "./types";
 // 共通コマンド実行ヘルパー。
 // 例外を投げず、成功可否と stdout/stderr を構造化して返す。
 export function runCmd(command: string, args: string[], cwd?: string): CmdResult {
+  // Python environments are runtime state, not plugin companions. Keeping them
+  // outside the checkout also avoids external interpreter symlinks in its namespace.
+  const env = path.basename(command) === "uv"
+    ? {
+        ...process.env,
+        UV_PROJECT_ENVIRONMENT: process.env.OPENCLAW_VIDEO_PIPELINE_VENV || path.join(
+          process.env.OPENCLAW_STATE_DIR || path.join(os.homedir(), ".openclaw"),
+          "plugin-runtime", "video-library-pipeline", ".venv",
+        ),
+      }
+    : process.env;
   const cp = spawnSync(command, args, {
     cwd,
-    env: process.env,
+    env,
     encoding: "utf-8",
+    maxBuffer: 32 * 1024 * 1024,
   });
   const spawnError = cp.error ? String(cp.error.message || cp.error) : "";
   const stderr = [cp.stderr ?? "", spawnError].filter(Boolean).join(cp.stderr ? "\n" : "");

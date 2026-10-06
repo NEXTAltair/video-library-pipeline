@@ -16,6 +16,8 @@ from video_pipeline.platform.pathscan_common import (
     wsl_to_windows_path,
 )
 
+from video_pipeline.platform.resources import default_program_aliases
+
 from .models import (
     ArtifactRef,
     ArtifactStatus,
@@ -49,6 +51,7 @@ class SourceRootDryRunConfig:
     max_files_per_run: int = 200
     allow_needs_review: bool = False
     run_id: str | None = None
+    auto_apply: bool = False
 
 
 @dataclass
@@ -153,6 +156,7 @@ class SourceRootWorkflowService:
                 "driveRoutes": config.drive_routes or "",
                 "maxFilesPerRun": int(config.max_files_per_run),
                 "allowNeedsReview": bool(config.allow_needs_review),
+                "autoApply": bool(config.auto_apply),
             },
         )
         try:
@@ -336,9 +340,11 @@ class SourceRootWorkflowService:
             powershell_runner = self.powershell_runner
 
         try:
+            receipt_path = apply_dir / "move_receipts.jsonl"
+            write_json(apply_dir / "apply_intent.json", {"runId": config.run_id, "plan": plan_artifact.path, "planChecksum": plan_artifact.sha256, "receiptPath":str(receipt_path),"db":db_path})
             apply_meta = powershell_runner(
                 scripts_root_win + r"\apply_move_plan.ps1",
-                ["-PlanJsonl", path_for_powershell(Path(plan_artifact.path)), "-OpsRoot", ops_root_win],
+                ["-PlanJsonl", path_for_powershell(Path(plan_artifact.path)), "-OpsRoot", ops_root_win, "-OutJsonl", path_for_powershell(receipt_path)],
             )
             applied_out = str(apply_meta.get("out_jsonl") or "")
             if not applied_out:
@@ -396,6 +402,10 @@ class SourceRootWorkflowService:
                 metadata={"summary": move_stats},
             )
 
+            expected_ops = count_jsonl_data_rows(plan_artifact.path)
+            if int(move_stats.get("totalOps") or 0) != expected_ops:
+                raise RuntimeError(f"incomplete move receipts: expected {expected_ops}, got {move_stats.get('totalOps')}")
+            write_json(apply_dir / "db_committed.json", {"dbUpdate":db_update_summary,"moveStats":move_stats})
             if int(move_stats.get("failed") or 0) > 0:
                 diagnostic = Diagnostic(
                     code="source_root_apply_move_failures",
@@ -538,7 +548,7 @@ class SourceRootWorkflowService:
                 "--outdir",
                 str(metadata_dir),
                 "--hints",
-                str(self.py_root.parent / "rules" / "program_aliases.yaml"),
+                str(default_program_aliases(self.py_root)),
                 "--batch-size",
                 "50",
                 "--start-batch",
@@ -701,6 +711,9 @@ class SourceRootWorkflowService:
             input_artifact_ids=[inventory_artifact.id, queue_artifact.id, *[a.id for a in metadata_artifacts]],
             metadata={"summary": plan_summary, "metadataQueueRows": queue_rows},
         )
+        conflicts = plan_summary.get("conflicts_path")
+        if conflicts and Path(conflicts).is_file():
+            store.register_artifact(run_id, artifact_type="source_root_move_conflicts", path=Path(conflicts), producer="make_move_plan_from_inventory.py", artifact_id="source_root_move_conflicts")
         store.transition_run(run_id, WorkflowPhase.PLAN_READY)
         planned = int(plan_summary.get("planned") or 0)
 
@@ -730,15 +743,15 @@ class SourceRootWorkflowService:
             gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
             next_actions=[
                 NextAction(
-                    action="review_plan",
-                    label="Review sourceRoot move plan",
+                    action="apply_source_root_move_plan" if config_snapshot.get("autoApply") else "review_plan",
+                    label="Apply policy-approved sourceRoot plan" if config_snapshot.get("autoApply") else "Review sourceRoot move plan",
                     tool="video_pipeline_resume",
                     params={
                         "runId": run_id,
                         "artifactId": plan_artifact.id,
                         "resumeAction": "apply_source_root_move_plan",
                     },
-                    requires_human_input=True,
+                    requires_human_input=not bool(config_snapshot.get("autoApply")),
                 )
             ],
             diagnostics=final_run.diagnostics,

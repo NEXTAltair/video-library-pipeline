@@ -19,7 +19,8 @@ import uuid
 from dataclasses import dataclass
 
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchall
-from pathscan_common import iter_jsonl, now_iso, path_id_for, split_win
+from pathscan_common import iter_jsonl, now_iso
+from video_pipeline.db.file_identity import ensure_identity_schema, ensure_location, observe_file
 
 
 @dataclass
@@ -46,6 +47,8 @@ def main() -> int:
 
     con = connect_db(args.db)
     create_schema_if_needed(con)
+    ensure_identity_schema(con)
+    con.commit()
 
     run_id = str(uuid.uuid4())
     started_at = now_iso()
@@ -66,24 +69,8 @@ def main() -> int:
             p = rec.get("path")
             if not p:
                 continue
-            pid = path_id_for(p)
-            drive, parent, name, ext = split_win(p)
-            ts = now_iso()
-
-            con.execute(
-                """
-                INSERT INTO paths (path_id, path, drive, dir, name, ext, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(path_id) DO UPDATE SET
-                  path=excluded.path,
-                  updated_at=excluded.updated_at,
-                  drive=excluded.drive,
-                  dir=excluded.dir,
-                  name=excluded.name,
-                  ext=excluded.ext
-                """,
-                (pid, p, drive, parent, name, ext, ts, ts),
-            )
+            pid = ensure_location(con, p)
+            observe_file(con, pid, int(rec.get("size") or 0), rec.get("mtimeUtc"), run_id)
             c.paths_upserted += 1
 
             name_flags = rec.get("nameFlags")

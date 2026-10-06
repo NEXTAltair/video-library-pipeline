@@ -67,6 +67,11 @@ export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined)
   const windowsOpsRoot = normalizePathInput(cfg.windowsOpsRoot);
   const dbPath = normalizePathInput(cfg.db);
   const errors: string[] = [];
+  const routesInput = normalizePathInput(cfg.driveRoutesPath);
+  const routesPath = routesInput ? path.resolve(routesInput) : "";
+  if (routesPath && !fs.statSync(routesPath, { throwIfNoEntry: false })?.isFile()) {
+    errors.push(`driveRoutesPath does not exist or is not a file: ${routesPath}`);
+  }
 
   if (!sourceRoot) errors.push("sourceRoot is required. Configure plugins.entries.video-library-pipeline.config.sourceRoot.");
   if (!destRoot) errors.push("destRoot is required. Configure plugins.entries.video-library-pipeline.config.destRoot.");
@@ -94,7 +99,7 @@ export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined)
 
   const resolvedDb = dbPath ? path.resolve(dbPath) : path.join(resolvedOpsRoot, "db", "mediaops.sqlite");
   const tsRoot = normalizePathInput(cfg.tsRoot);
-  const driveRoutesPath = asNonEmptyString(cfg.driveRoutesPath);
+
   return {
     db: resolvedDb,
     sourceRoot: resolvedSourceRoot,
@@ -102,6 +107,6 @@ export function resolveConfig(raw: VideoPipelinePluginConfig | null | undefined)
     windowsOpsRoot: resolvedOpsRoot,
     defaultMaxFilesPerRun: asLimit(cfg.defaultMaxFilesPerRun),
     tsRoot: tsRoot ? path.resolve(tsRoot) : "",
-    driveRoutesPath: driveRoutesPath ? path.resolve(driveRoutesPath) : "",
+    driveRoutesPath: routesPath,
   };
 }

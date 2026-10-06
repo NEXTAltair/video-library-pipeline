@@ -1,5 +1,6 @@
 param(
   [string]$PlanJsonl,
+  [string]$OutJsonl,
   [Parameter(Mandatory = $true)]
   [string]$OpsRoot,
   [switch]$DryRun,
@@ -22,7 +23,9 @@ if (!(Test-PathFileLong $PlanJsonl)) {
 
 $runId = "{0}_{1}" -f (Get-Date -Format 'yyyyMMdd_HHmmss_fff'), $PID
 $moveDir = Join-Path -Path $OpsRoot -ChildPath "move"
-$out = Join-Path -Path $moveDir -ChildPath "move_apply_${runId}.jsonl"
+$out = if ($OutJsonl) { $OutJsonl } else { Join-Path -Path $moveDir -ChildPath "move_apply_${runId}.jsonl" }
+if (Test-PathAnyLong $out) { throw "Refusing to overwrite move receipt: $out" }
+Ensure-DirectoryLong (Split-Path -Parent $out)
 Ensure-DirectoryLong $moveDir
 
 function J([hashtable]$h) { ([pscustomobject]$h | ConvertTo-Json -Compress -Depth 6) }
@@ -30,6 +33,7 @@ function J([hashtable]$h) { ([pscustomobject]$h | ConvertTo-Json -Compress -Dept
 $sw = New-Object System.IO.StreamWriter($out, $false, (New-Object System.Text.UTF8Encoding($false)))
 try {
   $sw.WriteLine((J @{ _meta = @{ kind='move_apply'; run_id=$runId; plan=$PlanJsonl; dry_run=[bool]$DryRun; on_dst_exists=$OnDstExists; generated_at=(Get-Date).ToString('o') } }))
+  $sw.Flush()
 
   Get-Content -LiteralPath $PlanJsonl -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
@@ -70,6 +74,16 @@ try {
       return
     }
 
+    if ($o.precondition) {
+      $info = [System.IO.FileInfo]::new((Convert-ToLongPathLiteral $src))
+      $expected = if ($o.precondition.mtime_utc -is [DateTime]) { [DateTimeOffset]$o.precondition.mtime_utc } else { [DateTimeOffset]::Parse([string]$o.precondition.mtime_utc) }
+      if ($info.Length -ne [long]$o.precondition.size_bytes -or [Math]::Abs(($info.LastWriteTimeUtc - $expected.UtcDateTime).TotalMilliseconds) -gt 5) {
+        $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dst; ok=$false; error='source_changed' }))
+        $sw.Flush()
+        return
+      }
+    }
+
     $dstFinal = $dst
     if (Test-PathAnyLong $dstFinal) {
       if ($OnDstExists -eq 'rename_suffix') {
@@ -108,8 +122,9 @@ try {
     }
 
     try {
-      Move-FileLong -Src $src -Dst $dstFinal -Overwrite $true
-      $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$true }))
+      Move-FileLong -Src $src -Dst $dstFinal -Overwrite $false
+      $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; file_id=$o.file_id; ok=$true }))
+      $sw.Flush()
     } catch {
       $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$false; error=$_.Exception.Message }))
     }

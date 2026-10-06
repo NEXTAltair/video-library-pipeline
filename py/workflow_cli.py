@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
 from video_pipeline.workflows import (
@@ -44,7 +45,7 @@ def _store(windows_ops_root: str) -> WorkflowStore:
 
 
 def _default_hints_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "rules" / "program_aliases.yaml"
+    return default_program_aliases(Path(__file__).resolve().parent)
 
 
 def _hints_status(path: str | None = None) -> dict[str, Any]:
@@ -116,15 +117,15 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
                     ]
                 return [
                     NextAction(
-                        action="review_plan",
-                        label="Review sourceRoot move plan",
+                        action="apply_source_root_move_plan" if run.config_snapshot.get("autoApply") else "review_plan",
+                        label="Apply policy-approved sourceRoot plan" if run.config_snapshot.get("autoApply") else "Review sourceRoot move plan",
                         tool="video_pipeline_resume",
                         params={
                             "runId": run.run_id,
                             "artifactId": plan_id,
                             "resumeAction": "apply_source_root_move_plan",
                         },
-                        requires_human_input=True,
+                        requires_human_input=not bool(run.config_snapshot.get("autoApply")),
                     )
                 ]
         if run.flow == "relocate":
@@ -366,10 +367,11 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
     full_runs: list[dict[str, Any]] = []
     if runs_root.exists():
         manifests = sorted(runs_root.glob("*/run.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        for manifest in manifests[: args.limit]:
+        for manifest in manifests:
             run = store.read_run(manifest.parent.name)
             full_runs.append(run.to_dict())
-            runs.append(_run_to_status(run, include_artifacts=args.include_artifacts))
+            if len(runs) < args.limit:
+                runs.append(_run_to_status(run, include_artifacts=args.include_artifacts))
     open_gates = []
     latest_artifacts = []
     for run in full_runs:
