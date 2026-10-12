@@ -6,6 +6,10 @@ metadata: {"openclaw":{"emoji":"🧹","requires":{"plugins":["video-library-pipe
 
 # Folder Cleanup In V2
 
+Read `video-library-pipeline` if not already loaded in this turn. Apply its
+Continuation and Authorization Contract; missing public actions do not authorize
+hidden-tool or filesystem bypasses.
+
 Folder contamination cleanup is not exposed as a standalone V2 public workflow in #109.
 
 ## Current Rule

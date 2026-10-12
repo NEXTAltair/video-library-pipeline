@@ -99,7 +99,10 @@ describe("plugin entry", () => {
           hasSubcommands: false,
         },
         { name: "video-pipeline-organize", hasSubcommands: false },
+        { name: "video-pipeline-dedup", hasSubcommands: false },
         { name: "video-pipeline-repair-history", hasSubcommands: false },
+        { name: "video-pipeline-quarantine-catalog", hasSubcommands: false },
+        { name: "video-pipeline-artifacts", hasSubcommands: false },
         {
           name: "video-pipeline-ingest-epg",
           hasSubcommands: false,

@@ -190,6 +190,68 @@ describe("translateWorkflowResult", () => {
     });
   });
 
+  it.each([false, true])("prioritizes candidate repair alongside approval regardless of action order (review first: %s)", (reviewFirst) => {
+    const repair = {
+      action: "reextract_relocate_metadata",
+      tool: "video_pipeline_resume",
+      params: {
+        runId: "run_repair",
+        gateId: "metadata_review",
+        artifactIds: ["relocate_metadata_queue", "metadata_review_yaml"],
+        resumeAction: "reextract_relocate_metadata",
+      },
+      requiresHumanInput: false,
+    };
+    const apply = {
+      action: "review_metadata",
+      tool: "video_pipeline_resume",
+      params: {
+        runId: "run_repair",
+        gateId: "metadata_review",
+        reviewYamlPaths: ["/ops/runs/run_repair/review/metadata_review.yaml"],
+        resumeAction: "apply_reviewed_metadata",
+      },
+      requiresHumanInput: true,
+    };
+    const actions = reviewFirst ? [apply, repair] : [repair, apply];
+    const result = translateWorkflowResult(basePayload({
+      ok: false,
+      flow: "relocate",
+      phase: "review_required",
+      outcome: "relocate_metadata_review_required",
+      nextActions: actions,
+    }));
+
+    expect(result.nextStep).toMatch(/^Complete the applicable non-review preparation first/);
+    expect(result.nextStep).toContain("refresh status");
+    expect(result.nextStep).toContain("before any applying action");
+    expect(result.followUpToolCalls).toEqual(actions.map((action) => ({
+      tool: action.tool,
+      reason: action.action,
+      params: action.params,
+      requiresHumanReview: action.requiresHumanInput,
+    })));
+    expect(result.nextActions).toEqual(actions);
+  });
+
+  it("allows matching prior scoped approval in guidance without removing the applying review flag", () => {
+    const result = translateWorkflowResult(basePayload({
+      phase: "plan_ready",
+      nextActions: [{
+        action: "review_plan",
+        tool: "video_pipeline_resume",
+        params: {runId: "run_fixture", artifactId: "relocate_plan", resumeAction: "apply_relocate_move_plan"},
+        requiresHumanInput: true,
+      }],
+    }));
+
+    expect(result.nextStep).toContain("explicit user approval covers its current inspected scope");
+    expect(result.nextStep).toContain("matching prior approval is sufficient");
+    expect(result.nextStep).toContain("Otherwise");
+    expect(result.nextActions[0].requiresHumanInput).toBe(true);
+    expect(result.followUpToolCalls[0].requiresHumanReview).toBe(true);
+  });
+
   it.each([
     ["complete", true, "complete"],
     ["blocked", false, "source_root_blocked"],

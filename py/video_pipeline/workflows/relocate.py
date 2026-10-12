@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from run_metadata_batches_promptv1 import extract_air_date
 
 from video_pipeline.domain.move_apply_stats import aggregate_move_apply
 from video_pipeline.platform.pathscan_common import (
@@ -17,6 +18,7 @@ from video_pipeline.platform.pathscan_common import (
 )
 
 from video_pipeline.platform.resources import default_program_aliases
+from video_pipeline.domain.routing_inventory import default_relocate_roots
 
 from .models import (
     ArtifactRef,
@@ -37,6 +39,9 @@ from .source_root import (
     write_json,
 )
 from .store import WorkflowStore, sha256_file
+from video_pipeline.platform.writer_lock import serialized_workflow
+from video_pipeline.platform.sqlite_snapshot import check_integrity
+from video_pipeline.application.reviewed_metadata import apply_reviewed_metadata
 
 PythonRunner = Callable[[Path, list[str], str | None], str]
 PowerShellRunner = Callable[[str, list[str]], dict[str, Any]]
@@ -55,6 +60,9 @@ class RelocateDryRunConfig:
     db: str
     roots: list[str] | None = None
     roots_file_path: str = ""
+    source_root: str = ""
+    ts_root: str = ""
+    program_titles: list[str] | None = None
     extensions: list[str] | None = None
     drive_routes: str = ""
     limit: int = 0
@@ -77,6 +85,11 @@ class RelocateApplyConfig:
     artifact_id: str = "relocate_plan"
     db: str | None = None
     on_dst_exists: str | None = None
+    gate_id: str = ""
+    artifact_ids: list[str] = field(default_factory=list)
+    review_yaml_paths: list[str] = field(default_factory=list)
+    run_revision: int | None = None
+    review_digests: dict[str, str] = field(default_factory=dict)
 
 
 def local_path_from_any(path_str: str) -> Path:
@@ -109,6 +122,58 @@ def next_gate_id(run: Any, base_id: str) -> str:
     return f"{base_id}_{idx:04d}"
 
 
+def metadata_review_inputs(run: Any, gate: Any) -> tuple[list[ArtifactRef], ArtifactRef | None]:
+    extracts: list[ArtifactRef] = []
+    queues: dict[str, ArtifactRef] = {}
+    for review_id in gate.artifact_ids:
+        review = run.artifacts.get(review_id)
+        if review is None or review.type != "metadata_review_yaml":
+            continue
+        for extract_id in review.input_artifact_ids:
+            extract = run.artifacts.get(extract_id)
+            if extract is None or extract.type != "metadata_extract_output":
+                continue
+            extracts.append(extract)
+            for queue_id in extract.input_artifact_ids:
+                queue = run.artifacts.get(queue_id)
+                if queue is not None and queue.type == "relocate_metadata_queue":
+                    queues[queue.id] = queue
+    queue = next(iter(queues.values())) if len(queues) == 1 else None
+    return extracts, queue
+
+
+def metadata_reextract_action(run: Any, gate: Any) -> NextAction | None:
+    """Offer a non-applying repair only for detectable filename/date conflicts."""
+    extracts, queue = metadata_review_inputs(run, gate)
+    if queue is None or queue.status != ArtifactStatus.AVAILABLE.value:
+        return None
+    try:
+        conflicts = sum(
+            1
+            for artifact in extracts
+            for row in read_jsonl_rows(local_path_from_any(artifact.path))
+            if (expected := extract_air_date(str(row.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]))
+            and row.get("air_date") != expected
+            and row.get("human_reviewed") is not True
+        )
+    except (OSError, ValueError):
+        return None
+    if not conflicts:
+        return None
+    return NextAction(
+        action="reextract_relocate_metadata",
+        label=f"Repair {conflicts} filename/date conflicts without applying metadata",
+        tool="video_pipeline_resume",
+        params={
+            "runId": run.run_id,
+            "gateId": gate.id,
+            "artifactIds": [queue.id, *gate.artifact_ids],
+            "resumeAction": "reextract_relocate_metadata",
+        },
+        requires_human_input=False,
+    )
+
+
 class RelocateWorkflowService:
     def __init__(
         self,
@@ -121,7 +186,10 @@ class RelocateWorkflowService:
         self.powershell_runner = powershell_runner
         self.py_root = py_root or Path(__file__).resolve().parents[2]
 
+    @serialized_workflow
     def dry_run(self, config: RelocateDryRunConfig) -> WorkflowResult:
+        if not config.roots and not config.roots_file_path:
+            config.roots = default_relocate_roots(config.source_root, config.dest_root, config.ts_root, config.drive_routes)
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
         db_path = str(local_path_from_any(config.db))
         run = store.init_run(
@@ -133,6 +201,7 @@ class RelocateWorkflowService:
                 "db": db_path,
                 "roots": list(config.roots or []),
                 "rootsFilePath": config.roots_file_path,
+                "programTitles": list(config.program_titles or []),
                 "extensions": list(config.extensions or []),
                 "driveRoutes": config.drive_routes,
                 "limit": int(config.limit),
@@ -166,14 +235,17 @@ class RelocateWorkflowService:
                 outcome="relocate_dry_run_failed",
             )
 
+    @serialized_workflow
     def resume(self, config: RelocateApplyConfig, *, action: str = "apply_relocate_move_plan") -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
         if action == "register_unregistered":
             return self._resume_register_unregistered(store, config.run_id)
         if action in {"prepare_relocate_metadata", "review_relocate_metadata"}:
             return self._resume_metadata_action(store, config.run_id, action)
+        if action == "reextract_relocate_metadata":
+            return self._resume_reextract_metadata(store, config.run_id)
         if action == "apply_reviewed_metadata":
-            return self._resume_reviewed_metadata(store, config.run_id)
+            return self._resume_reviewed_metadata(store, config)
         if action != "apply_relocate_move_plan":
             diagnostic = Diagnostic(
                 code="relocate_resume_action_unsupported",
@@ -184,6 +256,7 @@ class RelocateWorkflowService:
             return self._block_apply(store, config.run_id, "relocate_resume_action_unsupported", diagnostic)
         return self.apply(config)
 
+    @serialized_workflow
     def apply(self, config: RelocateApplyConfig) -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
         try:
@@ -234,6 +307,7 @@ class RelocateWorkflowService:
             backup_path = local_path_from_any(backup_path_raw) if backup_path_raw else None
             backup_artifact = None
             if backup_path and backup_path.exists():
+                check_integrity(backup_path)
                 backup_artifact = store.register_artifact(
                     config.run_id,
                     artifact_type="relocate_db_backup",
@@ -244,17 +318,11 @@ class RelocateWorkflowService:
                     metadata={"summary": backup_summary},
                 )
             else:
-                backup_summary_path = logs_dir / "relocate_db_backup.json"
-                write_json(backup_summary_path, backup_summary)
-                backup_artifact = store.register_artifact(
-                    config.run_id,
-                    artifact_type="relocate_db_backup",
-                    path=backup_summary_path,
-                    producer="backup_mediaops_db.py",
-                    artifact_id="relocate_db_backup",
-                    input_artifact_ids=[plan_artifact.id],
-                    metadata={"summary": backup_summary, "backupFileMissing": True},
-                )
+                raise RelocateApplyRejected(Diagnostic(
+                    code="relocate_apply_backup_missing", severity=DiagnosticSeverity.ERROR,
+                    message="backup returned success without an existing snapshot; apply aborted",
+                    details={"backupPath": backup_path_raw},
+                ))
             try:
                 self.python_runner(
                     self.py_root / "backup_mediaops_db.py",
@@ -284,7 +352,8 @@ class RelocateWorkflowService:
                 for row in planned_rows:
                     f.write(
                         json.dumps(
-                            {"path_id": row.get("path_id"), "src": row.get("src"), "dst": row.get("dst")},
+                            {"path_id": row.get("path_id"), "src": row.get("src"), "dst": row.get("dst"),
+                             "precondition": row.get("precondition"), "file_id": row.get("file_id")},
                             ensure_ascii=False,
                         )
                         + "\n"
@@ -463,6 +532,8 @@ class RelocateWorkflowService:
             args.extend(["--scan-error-threshold", str(int(config.scan_error_threshold))])
         if config.drive_routes:
             args.extend(["--drive-routes", config.drive_routes])
+        if config.program_titles:
+            args.extend(["--program-titles-json", json.dumps(config.program_titles, ensure_ascii=False)])
 
         raw = self.python_runner(self.py_root / "relocate_existing_files.py", args, str(self.py_root))
         summary = parse_last_json_object_line(raw)
@@ -517,6 +588,15 @@ class RelocateWorkflowService:
             )
 
         self._append_summary_diagnostics(store, run_id, summary)
+
+        if summary.get("routingInventoryPath"):
+            run = store.read_run(run_id)
+            inventory_id = next_artifact_id(run, "relocate_routing_inventory")
+            inventory_target = plan_dir / f"{inventory_id}.json"
+            shutil.copyfile(local_path_from_any(summary["routingInventoryPath"]), inventory_target)
+            store.register_artifact(run_id, artifact_type="relocate_routing_inventory", path=inventory_target,
+                                    producer="relocate_existing_files.py", artifact_id=inventory_id,
+                                    input_artifact_ids=[diagnostics_artifact.id])
 
         planned_moves = int(summary.get("plannedMoves") or 0)
         already_correct = int(summary.get("alreadyCorrect") or 0)
@@ -696,6 +776,8 @@ class RelocateWorkflowService:
             args.extend(["--scan-error-threshold", str(cfg.scan_error_threshold)])
         if cfg.drive_routes:
             args.extend(["--drive-routes", cfg.drive_routes])
+        if cfg.program_titles:
+            args.extend(["--program-titles-json", json.dumps(cfg.program_titles, ensure_ascii=False)])
 
         raw = self.python_runner(self.py_root / "relocate_existing_files.py", args, str(self.py_root))
         summary = parse_last_json_object_line(raw)
@@ -960,6 +1042,52 @@ class RelocateWorkflowService:
 
         return self._prepare_metadata_review(store, run_id, queue_artifact)
 
+    def _resume_reextract_metadata(self, store: WorkflowStore, run_id: str) -> WorkflowResult:
+        run = store.read_run(run_id)
+        try:
+            if run.flow != WorkflowFlow.RELOCATE.value or run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
+                raise ValueError("metadata re-extraction requires a relocate run in review_required")
+            gates = [
+                gate for gate in run.review_gates.values()
+                if gate.type == "metadata_review" and gate.status == ReviewGateStatus.OPEN.value
+            ]
+            if len(gates) != 1:
+                raise ValueError("metadata re-extraction requires exactly one open metadata_review gate")
+            old_gate = gates[0]
+            extracts, queue = metadata_review_inputs(run, old_gate)
+            if queue is None or queue.status != ArtifactStatus.AVAILABLE.value:
+                raise ValueError("review lineage must identify one available run-scoped metadata queue")
+            queue_path = local_path_from_any(queue.path)
+            if not queue_path.is_relative_to(store.run_dir(run_id).resolve()):
+                raise ValueError("metadata queue must belong to the current run directory")
+            if sha256_file(queue_path) != queue.sha256:
+                raise ValueError("metadata queue checksum mismatch")
+            self._prepare_metadata_review(store, run_id, queue)
+            current = store.read_run(run_id)
+            new_gate_id = current.review_gate_ids[-1]
+            if new_gate_id == old_gate.id:
+                raise ValueError("re-extraction did not create a replacement review gate")
+            store.update_review_gate(
+                run_id, old_gate.id, status=ReviewGateStatus.SUPERSEDED,
+                resolution={"action": "reextract_relocate_metadata", "supersededByGateId": new_gate_id},
+            )
+            current = store.read_run(run_id)
+            for artifact_id in [*old_gate.artifact_ids, *(artifact.id for artifact in extracts)]:
+                current.artifacts[artifact_id].status = ArtifactStatus.SUPERSEDED.value
+            store.write_run(current)
+            return self._metadata_review_result(store, run_id, new_gate_id)
+        except Exception as exc:
+            current = store.read_run(run_id)
+            current.diagnostics.append(Diagnostic(
+                code="relocate_metadata_reextract_failed", severity=DiagnosticSeverity.ERROR,
+                message=str(exc), details={"runId": run_id, "exceptionType": type(exc).__name__},
+            ))
+            store.write_run(current)
+            return self._result(
+                ok=False, store=store, run_id=run_id, phase=current.phase,
+                outcome="relocate_metadata_reextract_failed",
+            )
+
     def _prepare_metadata_review(
         self,
         store: WorkflowStore,
@@ -989,10 +1117,13 @@ class RelocateWorkflowService:
                 "50",
                 "--start-batch",
                 "1",
+                "--output-only",
             ],
             str(self.py_root),
         )
         extract_summary = parse_last_json_object_line(extract_raw)
+        if extract_summary.get("ok") is not True:
+            raise RuntimeError(f"relocate metadata extraction failed: {extract_summary or extract_raw}")
         output_paths = string_array(extract_summary.get("outputJsonlPaths"))
         latest_output = extract_summary.get("latestOutputJsonlPath")
         if not output_paths and isinstance(latest_output, str) and latest_output:
@@ -1091,13 +1222,14 @@ class RelocateWorkflowService:
             if artifact_id in run.artifacts
             and run.artifacts[artifact_id].type == "metadata_review_yaml"
         ]
+        repair = metadata_reextract_action(run, gate)
         return self._result(
             ok=False,
             store=store,
             run_id=run_id,
             phase=WorkflowPhase.REVIEW_REQUIRED,
             outcome="relocate_metadata_review_required",
-            next_actions=[
+            next_actions=([repair] if repair else []) + [
                 NextAction(
                     action="review_metadata",
                     label="Review extracted relocate metadata YAML",
@@ -1117,8 +1249,10 @@ class RelocateWorkflowService:
     def _resume_reviewed_metadata(
         self,
         store: WorkflowStore,
-        run_id: str,
+        config: RelocateApplyConfig,
     ) -> WorkflowResult:
+        run_id = config.run_id
+        metadata_summary = None
         try:
             run = store.read_run(run_id)
             if run.flow != WorkflowFlow.RELOCATE.value:
@@ -1149,12 +1283,13 @@ class RelocateWorkflowService:
                     message="open relocate metadata_review gate is missing",
                     details={"runId": run_id},
                 ))
+            metadata_summary = apply_reviewed_metadata(store, config)
             for gate in open_metadata_gates:
                 store.update_review_gate(
                     run_id,
                     gate.id,
                     status=ReviewGateStatus.APPROVED,
-                    resolution={"action": "apply_reviewed_metadata"},
+                    resolution={"action": "apply_reviewed_metadata", "metadataApply": metadata_summary},
                 )
             rerun = store.read_run(run_id)
             cfg = self._config_from_run(rerun)
@@ -1165,15 +1300,24 @@ class RelocateWorkflowService:
                 str(local_path_from_any(str(rerun.config_snapshot.get("db") or ""))),
             )
         except RelocateApplyRejected as exc:
-            return self._block_apply(store, run_id, "relocate_review_rejected", exc.diagnostic)
+            if metadata_summary is not None:
+                exc.diagnostic.details.update(metadataCommitted=True, metadataApply=metadata_summary)
+                return self._block_apply(store, run_id, "relocate_plan_after_review_failed", exc.diagnostic)
+            return WorkflowResult(ok=False, run_id=run_id, flow="relocate", phase=run.phase,
+                                  outcome="relocate_review_rejected", diagnostics=[exc.diagnostic])
         except Exception as exc:
             diagnostic = Diagnostic(
                 code="relocate_review_failed",
                 severity=DiagnosticSeverity.ERROR,
                 message=str(exc),
-                details={"exceptionType": type(exc).__name__},
+                details={"exceptionType": type(exc).__name__, "metadataCommitted": metadata_summary is not None},
             )
-            return self._block_apply(store, run_id, "relocate_review_failed", diagnostic)
+            if metadata_summary is not None:
+                diagnostic.details["metadataApply"] = metadata_summary
+                return self._block_apply(store, run_id, "relocate_plan_after_review_failed", diagnostic)
+            return WorkflowResult(ok=False, run_id=run_id, flow="relocate",
+                                  phase=run.phase if 'run' in locals() else "unknown",
+                                  outcome="relocate_review_failed", diagnostics=[diagnostic])
 
     def _approve_open_gates(
         self,
@@ -1202,6 +1346,7 @@ class RelocateWorkflowService:
             db=str(snapshot.get("db") or ""),
             roots=[str(v) for v in snapshot.get("roots") or [] if isinstance(v, str) and v],
             roots_file_path=str(snapshot.get("rootsFilePath") or ""),
+            program_titles=[str(v) for v in snapshot.get("programTitles") or [] if isinstance(v, str) and v],
             extensions=[str(v) for v in snapshot.get("extensions") or [] if isinstance(v, str) and v],
             drive_routes=str(snapshot.get("driveRoutes") or ""),
             limit=int(snapshot.get("limit") or 0),

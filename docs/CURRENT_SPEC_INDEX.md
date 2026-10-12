@@ -2,7 +2,26 @@
 
 このファイルはプラグインの現在の動作を把握するためのドキュメントエントリポイント。
 
+2026-10-10の見直しは[設計監査](reviews/2026-10-10-design-audit.md)、
+[ADR-0011](adr/0011-unified-application-kernel-and-recoverable-operations.md)、
+[移行計画](reviews/2026-10-10-redesign-roadmap.md)を参照。
+これらは次期設計の提案であり、以下の現行tool/操作契約を変更しない。
+
+M0の実装済み修正は [ADR-0012](adr/0012-m0-integrity-boundaries.md) と
+[実装・検証報告](reviews/2026-10-10-m0-implementation.md)を参照。
+metadata反映はPythonのrun/gate検証後に1 transactionで行い、原本をrenameしない。
+公開tool名は4つのまま。後段M1-M5は未実装。
+
 v0.3.0の確定的CLIとファイル同一性は [ADR 0009](adr/0009-deterministic-execution-and-file-identity.md) を参照。公開ツール契約はV2のまま維持する。
+
+作業データの保存先・cache整理は [ADR 0010](adr/0010-managed-artifact-retention.md) と
+`openclaw video-pipeline-artifacts --help` を参照。旧データはread-onlyで集計し、
+管理された完了cacheのみ可逆に退避する。監査記録のTTL永久削除は行わない。
+
+録画の細かい隔離ディレクトリを確認する時は、
+`openclaw video-pipeline-quarantine-catalog --help` と READMEの「細かい隔離フォルダを
+開かずに確認する」を参照。既存の検証済みhandoffを全ドライブ横断の検索可能な
+一覧へ表示し、元の配置・exact-run復元・DB・V2 tool契約は変更しない。
 
 ## 1) 推奨読み順
 
@@ -49,6 +68,12 @@ v0.3.0の確定的CLIとファイル同一性は [ADR 0009](adr/0009-determinist
 
 - 第一: `ReviewGate.artifactIds`
 - 第二: `video_pipeline_inspect_artifact {"runId":"...", "artifactId":"..."}`
+
+### 「ジャンル別配置先へ作品を集約する案は？」
+
+- `video_pipeline_start {"flow":"relocate", "programTitles":["<正式作品名>"]}`。roots省略時は設定済み全メディア配置先を検索する。
+- `relocate_routing_inventory` artifactが作品別の所在・容量・配置先・判定理由、`relocate_plan`が移動候補と保留理由を保持する。
+- 実装: `py/video_pipeline/domain/routing_inventory.py`、`py/relocate_existing_files.py`。
 - 第三: `skills/extract-review/SKILL.md` と `skills/move-review/SKILL.md`
 
 ### 「artifact の中身や checksum を確認したい」

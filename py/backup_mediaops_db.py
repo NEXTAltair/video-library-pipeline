@@ -1,7 +1,7 @@
 """SQLite DB のバックアップ・リストア・ローテーション。
 
-バックアップ方式: shutil.copy2() によるファイルコピー。
-命名規則: mediaops.sqlite.bak_{YYYYMMDD}_{HHMMSS}[_{descriptor}]
+バックアップ方式: SQLite online backup + integrity_check。
+命名規則: mediaops.sqlite.bak_{YYYYMMDD}_{HHMMSS}[_{descriptor}]_{unique_id}
 保存先: DB と同じディレクトリ (e.g. /mnt/b/_AI_WORK/db/)
 """
 
@@ -11,9 +11,12 @@ import argparse
 import json
 import os
 import re
-import shutil
+import sqlite3
+import uuid
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+from video_pipeline.platform.sqlite_snapshot import online_snapshot, check_integrity, readonly_connection
 
 
 def _ts_now() -> str:
@@ -26,7 +29,7 @@ def _bak_pattern(db_path: str) -> re.Pattern:
 
 
 def backup_db(db_path: str, descriptor: str = "") -> tuple[bool, str, str]:
-    """DB ファイルをコピーしてバックアップを作成する。
+    """WALを含む整合したSQLite snapshotを、一意の新規パスへ作成する。
 
     Args:
         db_path: 現在の DB パス
@@ -40,20 +43,18 @@ def backup_db(db_path: str, descriptor: str = "") -> tuple[bool, str, str]:
 
     ts = _ts_now()
     desc = descriptor.strip()
+    if desc and not re.fullmatch(r"[A-Za-z0-9_.-]+", desc):
+        return False, "", "invalid backup descriptor"
     if desc:
         backup_path = f"{db_path}.bak_{ts}_{desc}"
     else:
         backup_path = f"{db_path}.bak_{ts}"
 
+    backup_path += "_" + uuid.uuid4().hex
     try:
-        shutil.copy2(db_path, backup_path)
-    except OSError as e:
-        return False, "", f"copy failed: {e}"
-
-    orig_size = os.path.getsize(db_path)
-    bak_size = os.path.getsize(backup_path)
-    if orig_size != bak_size:
-        return False, backup_path, f"size mismatch after copy: orig={orig_size} bak={bak_size}"
+        online_snapshot(db_path, backup_path)
+    except (OSError, sqlite3.Error, ValueError, TimeoutError) as e:
+        return False, "", f"snapshot failed: {e}"
 
     return True, backup_path, ""
 
@@ -74,6 +75,8 @@ def list_backups(db_path: str) -> list[dict]:
         return []
 
     for name in entries:
+        if ".failed_" in name or name.endswith(("-wal", "-shm", "-journal")):
+            continue
         m = pattern.match(name)
         if not m:
             continue
@@ -117,40 +120,37 @@ def restore_db(db_path: str, backup_path: str) -> tuple[bool, str]:
     if not os.path.isfile(backup_path):
         return False, f"backup_path does not exist or is not a file: {backup_path}"
 
+    try:
+        check_integrity(backup_path)
+    except (OSError, sqlite3.Error, ValueError) as e:
+        return False, f"invalid restore snapshot: {e}"
+    if Path(db_path).resolve() == Path(backup_path).resolve():
+        return False, "cannot restore a database onto itself"
+
     if os.path.isfile(db_path):
         ok, pre_restore_path, err = backup_db(db_path, descriptor="pre_restore")
         if not ok:
             return False, f"failed to back up current DB before restore: {err}"
 
     try:
-        shutil.copy2(backup_path, db_path)
-    except OSError as e:
-        return False, f"restore copy failed: {e}"
-
-    bak_size = os.path.getsize(backup_path)
-    restored_size = os.path.getsize(db_path)
-    if bak_size != restored_size:
-        return False, f"size mismatch after restore: backup={bak_size} restored={restored_size}"
+        with closing(readonly_connection(backup_path)) as source, closing(sqlite3.connect(db_path)) as target:
+            source.backup(target)
+        check_integrity(db_path)
+    except (OSError, sqlite3.Error, ValueError) as e:
+        return False, f"restore failed: {e}"
 
     return True, ""
 
 
 def rotate_backups(db_path: str, keep: int = 10) -> tuple[int, list[str]]:
-    """古いバックアップを削除して keep 件に保つ。
+    """Compatibility no-op: unclassified snapshots may be referenced by old runs.
 
     Returns:
         (deleted_count, deleted_paths)
     """
-    backups = list_backups(db_path)
-    to_delete = backups[keep:]
-    deleted_paths = []
-    for entry in to_delete:
-        try:
-            os.remove(entry["path"])
-            deleted_paths.append(entry["path"])
-        except OSError:
-            pass
-    return len(deleted_paths), deleted_paths
+    if keep < 0:
+        raise ValueError("keep must be nonnegative")
+    return 0, []
 
 
 def _main():
@@ -196,6 +196,7 @@ def _main():
             "keep": args.keep,
             "deleted_count": deleted_count,
             "deleted_paths": deleted_paths,
+            "retention": "protected_unclassified",
         }
         print(json.dumps(result, ensure_ascii=False, indent=2))
 

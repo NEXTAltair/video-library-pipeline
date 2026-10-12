@@ -11,6 +11,7 @@ export const INTERNAL_WINDOWS_SCRIPTS = [
   "_long_path_utils.ps1",
   "enumerate_files_jsonl.ps1",
   "normalize_case_dirs.ps1",
+  "inspect_move.ps1",
 ] as const;
 
 export const MANAGED_WINDOWS_SCRIPTS = [...REQUIRED_WINDOWS_SCRIPTS, ...INTERNAL_WINDOWS_SCRIPTS] as const;

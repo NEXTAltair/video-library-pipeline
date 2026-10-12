@@ -74,6 +74,7 @@ PowerShellスクリプトが必要な理由は主に2点である。
 | `unwatched_inventory.ps1` | sourceRootのファイル列挙からJSONL出力。単一ルート、ハッシュ生成対応 | `unwatched_pipeline_runner.py` |
 | `enumerate_files_jsonl.ps1` | 汎用ファイル列挙からJSONL出力。複数ルート、破損検出対応 | `pathscan_common.py` |
 | `apply_move_plan.ps1` | 移動計画JSONLから物理ファイル移動。行ごとにok/errorを記録 | `unwatched_pipeline_runner.py`, `relocate_existing_files.py`, `dedup_recordings.py` |
+| `inspect_move.ps1` | WSLのUTF-8ファイル名制限に遭遇したrelocate候補の存在・サイズ・更新日時・移動先衝突をWindowsで読み取り専用検証 | `move_preflight.py`, `relocate_existing_files.py` |
 
 ## Prerequisites
 

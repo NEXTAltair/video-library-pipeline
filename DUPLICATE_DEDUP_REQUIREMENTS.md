@@ -2,6 +2,49 @@
 
 ## Current Implementation Status (2026-02-25) [CURRENT]
 
+### 2026-10-06: Active maintenance path
+
+The V1 `video_pipeline_dedup_recordings` / `dedup_rebroadcasts` adapters below are
+**not registered** on the active V2 public tool surface. Their code is historical,
+not an authorized automation entrypoint. The active explicit maintenance CLI is
+`openclaw video-pipeline-dedup` (`py/dedup_cli.py`). See README's duplicate section.
+
+It preserves original and repeat broadcasts **separately**, with no hash-exact
+exception to that policy. Unknown/conflicting flags are deferred. Within one kind,
+trusted same-episode candidates are ranked using real ffprobe dimensions; material
+duration/subtitle/program-identity conflicts and held/changed files are deferred.
+Apply is per-volume recoverable quarantine with immutable location/file identities,
+native keeper guards, online DB backup and durable idempotent move receipts.
+Preview writes no media DB data. An exact run has a guarded restore path.
+No permanent deletion, automatic purge or implicit scheduler is shipped.
+
+Explicit date-first maintenance can resolve a duration conflict only with a
+concrete full-content coverage review naming unchanged source/keeper recordings,
+reviewed unmatched intervals, complete retained program and checksum-bound proof.
+It cannot override original-period protection, holds, season/edition identity,
+real subtitle contradictions or keeper quality. One missing subtitle may be
+reconciled only by an explicit full-content review carrying both exact observed
+labels in `subtitle_discrepancy_review`; two different named subtitles stay
+protected even if a review asserts equality. A matching bare episode marker
+(`\#2` / `第2話`) is not a separately named subtitle; preserve its raw discovery
+value in the plan and do not erase named or mismatching subtitles.
+
+An omnibus filename whose first episode/range label contradicts a single declared
+episode is held as `filename_omnibus_episode_scope_conflict`. A sanitized label
+such as `#2530#25` is not proof of episode 25 only; never infer its missing range
+or compare/quarantine the whole recording against one single-episode keeper.
+
+A blank or bare-marker discovery subtitle can be repaired from a literal label
+strictly delimited by the exact episode marker and recording-date suffix in the
+unchanged filename. Another validated same-work/edition/episode recording must
+independently carry the same parsed filename label. Preserve the original
+discovery value and both filename witnesses in the plan, without editing the DB
+or input evidence. Never override an existing named label: a contradicting parsed
+filename is held. The full-content review requirement above still applies when a
+label remains missing, and duration/quality/edition guards are unchanged.
+
+The remaining older status/design text is retained as historical context.
+
 This document is kept as a **requirements + design-history** record, and the dedup feature is already implemented.
 To avoid confusion, this section summarizes the current behavior before the historical requirement text below.
 

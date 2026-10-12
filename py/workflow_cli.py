@@ -6,10 +6,13 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any
+from contextlib import redirect_stdout
+import sys
 
 from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
+from video_pipeline.workflows.relocate import metadata_reextract_action
 from video_pipeline.workflows import (
     NextAction,
     RelocateApplyConfig,
@@ -70,6 +73,7 @@ def _run_to_status(run: Any, *, include_artifacts: bool) -> dict[str, Any]:
                 "status",
                 "createdAt",
                 "updatedAt",
+                "revision",
                 "nextActions",
             )
             if key in payload
@@ -185,7 +189,8 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
                 if artifact_id in run.artifacts
                 and run.artifacts[artifact_id].type == "metadata_review_yaml"
             ]
-            return [
+            repair = metadata_reextract_action(run, metadata_gate)
+            return ([repair] if repair else []) + [
                 NextAction(
                     action="review_metadata",
                     label="Review extracted relocate metadata YAML",
@@ -279,6 +284,9 @@ def _cmd_start(args: argparse.Namespace) -> dict[str, Any]:
                 db=args.db,
                 roots=_parse_json_array(args.roots_json),
                 roots_file_path=args.roots_file_path,
+                source_root=args.source_root,
+                ts_root=args.ts_root,
+                program_titles=_parse_json_array(args.program_titles_json),
                 extensions=_parse_json_array(args.extensions_json),
                 drive_routes=args.drive_routes_path,
                 limit=args.limit,
@@ -333,6 +341,11 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                 run_id=args.run_id,
                 artifact_id=artifact_id or "source_root_move_plan",
                 db=args.db or None,
+                gate_id=getattr(args, "gate_id", ""),
+                artifact_ids=_parse_json_array(getattr(args, "artifact_ids_json", "")),
+                review_yaml_paths=_parse_json_array(getattr(args, "review_yaml_paths_json", "")),
+                run_revision=getattr(args, "run_revision", None),
+                review_digests=json.loads(getattr(args, "review_digests_json", "") or "{}"),
             ),
             action=action or "apply_source_root_move_plan",
         )
@@ -345,6 +358,11 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                 artifact_id=artifact_id or "relocate_plan",
                 db=args.db or None,
                 on_dst_exists=args.on_dst_exists or None,
+                gate_id=getattr(args, "gate_id", ""),
+                artifact_ids=_parse_json_array(getattr(args, "artifact_ids_json", "")),
+                review_yaml_paths=_parse_json_array(getattr(args, "review_yaml_paths_json", "")),
+                run_revision=getattr(args, "run_revision", None),
+                review_digests=json.loads(getattr(args, "review_digests_json", "") or "{}"),
             ),
             action=action or "apply_relocate_move_plan",
         )
@@ -426,6 +444,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--flow", choices=["source_root", "relocate"], required=True)
     start.add_argument("--windows-ops-root", required=True)
     start.add_argument("--source-root", default="")
+    start.add_argument("--ts-root", default="")
     start.add_argument("--dest-root", required=True)
     start.add_argument("--db", required=True)
     start.add_argument("--drive-routes-path", default="")
@@ -433,6 +452,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--max-files-per-run", type=int, default=200)
     start.add_argument("--allow-needs-review", action="store_true")
     start.add_argument("--roots-json", default="[]")
+    start.add_argument("--program-titles-json", default="[]")
     start.add_argument("--roots-file-path", default="")
     start.add_argument("--extensions-json", default="[]")
     start.add_argument("--limit", type=int, default=0)
@@ -454,6 +474,11 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--on-dst-exists", choices=["error", "rename_suffix"], default="")
     resume.add_argument("--superseded-by-run-id", default="")
     resume.add_argument("--reason", default="")
+    resume.add_argument("--gate-id", default="")
+    resume.add_argument("--artifact-ids-json", default="")
+    resume.add_argument("--review-yaml-paths-json", default="")
+    resume.add_argument("--run-revision", type=int)
+    resume.add_argument("--review-digests-json", default="")
 
     status = sub.add_parser("status")
     status.add_argument("--windows-ops-root", required=True)
@@ -475,16 +500,13 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
-        if args.command == "start":
-            _json_out(_cmd_start(args))
-        elif args.command == "resume":
-            _json_out(_cmd_resume(args))
-        elif args.command == "status":
-            _json_out(_cmd_status(args))
-        elif args.command == "inspect-artifact":
-            _json_out(_cmd_inspect_artifact(args))
-        else:
-            parser.error(f"unsupported command: {args.command}")
+        commands = {"start": _cmd_start, "resume": _cmd_resume,
+                    "status": _cmd_status, "inspect-artifact": _cmd_inspect_artifact}
+        # Helpers may log, but the protocol always has exactly one JSON object.
+        with redirect_stdout(sys.stderr):
+            payload = commands[args.command](args)
+        _json_out(payload)
+        return 0 if payload.get("ok") is True else 1
     except Exception as exc:
         _json_out({"ok": False, "error": str(exc), "exceptionType": type(exc).__name__})
         return 1

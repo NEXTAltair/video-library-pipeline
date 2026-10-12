@@ -122,10 +122,14 @@ function Resolve-UniquePathSuffixLong {
 function Get-ChildFilesLong {
   param(
     [Parameter(Mandatory = $true)][string]$Root,
-    [ref]$Warnings
+    [ref]$Warnings,
+    [string[]]$ExcludedDirectoryNames = @('_AI_WORK', 'quarantine_v3', '$RECYCLE.BIN', 'System Volume Information')
   )
 
   $rootNormal = Convert-FromLongPathLiteral (Convert-ToLongPathLiteral $Root)
+  foreach ($part in ($rootNormal -split '[\\/]')) {
+    if ($part -in $ExcludedDirectoryNames) { return }
+  }
   if (-not (Test-PathDirLong $rootNormal)) {
     throw "root not found or not a directory: $rootNormal"
   }
@@ -145,7 +149,10 @@ function Get-ChildFilesLong {
 
     foreach ($entryLong in $entries) {
       try {
+        $attributes = [System.IO.File]::GetAttributes($entryLong)
+        if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
         if ([System.IO.Directory]::Exists($entryLong)) {
+          if ([System.IO.Path]::GetFileName($entryLong) -in $ExcludedDirectoryNames) { continue }
           $stack.Push($entryLong)
           continue
         }

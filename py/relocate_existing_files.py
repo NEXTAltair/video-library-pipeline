@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import uuid
 from pathlib import Path
@@ -47,6 +48,8 @@ from pathscan_common import (
     wsl_to_windows_path,
 )
 from windows_pwsh_bridge import run_pwsh_json
+from video_pipeline.domain.routing_inventory import is_excluded_media_path, title_in_scope, summarize_routing
+from video_pipeline.domain.move_preflight import inspect_move
 
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
 
@@ -139,6 +142,7 @@ def main() -> int:
     )
     ap.add_argument("--roots-json", default="")
     ap.add_argument("--roots-file-path", default="")
+    ap.add_argument("--program-titles-json", default="[]")
     ap.add_argument("--extensions-json", default="")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--allow-needs-review", default="false")
@@ -160,6 +164,12 @@ def main() -> int:
         help="Skip suspicious program_title checks (swallowed/shortened title, subtitle separator)",
     )
     args = ap.parse_args()
+    program_titles = parse_json_arg(args.program_titles_json, [])
+    if not isinstance(program_titles, list) or any(not isinstance(t, str) or not t.strip() for t in program_titles):
+        raise SystemExit("program titles must be a JSON array of nonempty titles")
+    program_titles = [t.strip() for t in program_titles]
+    # Explicit routing configuration must not silently fall back to B.
+    routes = load_drive_routes(windows_to_wsl_path(args.drive_routes)) if args.drive_routes else None
 
     db_path = windows_to_wsl_path(args.db)
     if not os.path.exists(db_path):
@@ -214,26 +224,35 @@ def main() -> int:
     scanned, scan_warnings, scan_errors, fallback_stats = scan_files(
         roots=roots,
         exts=set(extensions),
-        detect_corruption=True,
+        detect_corruption=False,
         read_bytes=4096,
         scan_retry_count=scan_retry_count,
         windows_ops_root=str(ops_root),
     )
-    if limit > 0:
-        scanned = scanned[:limit]
+    scanned = [sf for sf in scanned if not is_excluded_media_path(sf.win_path)]
 
-    con = connect_db(db_path)
-    create_schema_if_needed(con)
-
-    routes = None
-    if args.drive_routes and os.path.exists(args.drive_routes):
-        routes = load_drive_routes(args.drive_routes)
+    if args.apply or args.register_unregistered_only:
+        con = connect_db(db_path)
+        create_schema_if_needed(con)
+    else:
+        con = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+    # One lookup pass avoids a full paths-table scan per media file.
+    path_rows = {normalize_win_for_id(r["path"]): r for r in con.execute(
+        "SELECT p.path_id,p.path,m.program_title FROM paths p LEFT JOIN path_metadata m ON m.path_id=p.path_id")}
+    holds = {}
+    if con.execute("SELECT 1 FROM sqlite_master WHERE name='recording_holds'").fetchone():
+        holds = {str(r["path_id"]): str(r["reason"]) for r in con.execute("SELECT path_id,reason FROM recording_holds WHERE resolved_at IS NULL")}
+    file_states = {}
+    if con.execute("SELECT 1 FROM sqlite_master WHERE name='path_file_state'").fetchone():
+        file_states = {str(r["path_id"]): str(r["file_id"]) for r in con.execute("SELECT path_id,file_id FROM path_file_state")}
 
     ts = ts_compact()
     plan_path = move_dir / f"relocate_plan_{ts}.jsonl"
     apply_path = move_dir / f"relocate_apply_{ts}.jsonl"
     internal_move_plan_path = move_dir / f"_relocate_move_plan_internal_{ts}.jsonl"
     queue_path = llm_dir / f"relocate_metadata_queue_{ts}.jsonl"
+    inventory_path = move_dir / f"relocate_routing_inventory_{ts}.json"
 
     rows_for_plan: list[dict[str, Any]] = []
     rows_for_move: list[dict[str, Any]] = []
@@ -256,26 +275,51 @@ def main() -> int:
     auto_registered_observations = 0
     auto_registered_files_committed: list[dict[str, Any]] = []
     errors: list[str] = list(scan_errors)
+    selected_files = 0
+    held_skipped = 0
+    metadata_mismatch_skipped = 0
+    preflight_skipped = 0
+    candidate_info: dict[str, dict[str, Any]] = {}
 
     try:
         for sf in scanned:
+            path_row = path_rows.get(normalize_win_for_id(sf.win_path))
+            title = str(path_row["program_title"] or "") if path_row else ""
+            in_scope, title_mismatch = title_in_scope(program_titles, title, str(sf.name or ""))
+            if not in_scope:
+                continue
+            if limit > 0 and selected_files >= limit:
+                break
+            selected_files += 1
+            candidate_info[normalize_win_for_id(sf.win_path)] = {"size_bytes": sf.size, "mtimeUtc": sf.mtime_utc,
+                                                               "program_title": title or None}
             ts_row = now_iso()
-            if sf.corrupt_candidate:
+            pid = str(path_row["path_id"]) if path_row else None
+            if pid in holds:
+                held_skipped += 1
+                rows_for_plan.append({"path_id": pid, "src": sf.win_path, "status": "skipped",
+                                      "reason": "recording_hold", "hold_reason": holds[pid], "ts": ts_row})
+                continue
+            if title_mismatch:
+                metadata_mismatch_skipped += 1
+                rows_for_plan.append({"path_id": pid, "src": sf.win_path, "status": "skipped",
+                                      "reason": "program_title_mismatch", "ts": ts_row})
+                continue
+            if sf.corrupt_candidate or sf.size == 0:
                 corrupt_candidates += 1
                 rows_for_plan.append(
                     {
                         "src": sf.win_path,
                         "status": "error",
-                        "reason": f"corrupt_candidate:{sf.corrupt_reason}",
+                        "reason": f"corrupt_candidate:{sf.corrupt_reason or 'size_zero'}",
                         "ts": ts_row,
                     }
                 )
                 continue
 
-            path_row = fetchone(con, "SELECT path_id, path FROM paths WHERE path = ?", (sf.win_path,))
             if not path_row:
                 unregistered_skipped += 1
-                pending_auto = bool(args.apply)
+                pending_auto = bool(args.apply or args.register_unregistered_only)
                 rows_for_plan.append(
                     {
                         "src": sf.win_path,
@@ -405,11 +449,24 @@ def main() -> int:
                         "reason": "already_correct",
                         "program_title": md.get("program_title"),
                         "air_date": md.get("air_date"),
+                        "genre_route": vr.genre_route,
                         "ts": ts_row,
                     }
                 )
                 continue
 
+            precondition, preflight_reason = inspect_move(
+                sf.win_path, dst, {"size": sf.size, "mtimeUtc": sf.mtime_utc},
+                windows_probe=lambda src, dest: run_pwsh_json(
+                    str(ops_root / "scripts" / "inspect_move.ps1"),
+                    ["-Src", src, "-Dst", dest], normalize_args=False,
+                ),
+            )
+            if preflight_reason:
+                preflight_skipped += 1
+                rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "dst": dst, "status": "skipped",
+                                      "reason": preflight_reason, "genre_route": vr.genre_route, "ts": ts_row})
+                continue
             planned_moves += 1
             reason = "recompute_destination"
             plan_row: dict[str, Any] = {
@@ -421,13 +478,31 @@ def main() -> int:
                 "program_title": md.get("program_title"),
                 "air_date": md.get("air_date"),
                 "ts": ts_row,
+                "precondition": precondition,
+                "file_id": file_states.get(path_id),
             }
             if vr.genre_route:
                 plan_row["genre_route"] = vr.genre_route
             rows_for_plan.append(plan_row)
-            row_move = {"path_id": path_id, "src": sf.win_path, "dst": dst}
+            row_move = {"path_id": path_id, "src": sf.win_path, "dst": dst, "precondition": precondition,
+                        "file_id": file_states.get(path_id)}
             rows_for_move.append(row_move)
             plan_reason_map[(path_id, sf.win_path, dst)] = reason
+
+        # No arbitrary winner when two sources resolve to the same destination.
+        destination_counts: dict[str, int] = {}
+        for row in rows_for_move:
+            key = normalize_win_for_id(row["dst"])
+            destination_counts[key] = destination_counts.get(key, 0) + 1
+        for row in rows_for_plan:
+            row.update({k: v for k, v in candidate_info[normalize_win_for_id(row["src"])].items() if k not in row})
+            if row["status"] == "planned" and destination_counts.get(normalize_win_for_id(row["dst"]), 0) > 1:
+                row.update(status="skipped", reason="destination_collision_in_plan")
+                planned_moves -= 1
+                preflight_skipped += 1
+        rows_for_move = [r for r in rows_for_move if destination_counts[normalize_win_for_id(r["dst"])] == 1]
+        routing_inventory = summarize_routing(rows_for_plan, roots_win, scanned, program_titles)
+        inventory_path.write_text(json.dumps(routing_inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
         # commit any mark_metadata_needs_review writes (apply mode only)
         if args.apply:
@@ -443,6 +518,7 @@ def main() -> int:
                             "db": db_path,
                             "dest_root": dest_root_win,
                             "roots": roots_win,
+                            "program_titles": program_titles,
                             "apply": bool(args.apply),
                             "allow_needs_review": allow_needs_review,
                             "allow_unreviewed_metadata": allow_unreviewed_metadata,
@@ -822,6 +898,12 @@ def main() -> int:
             "db": db_path,
             "destRoot": dest_root_win,
             "roots": roots_win,
+            "programTitles": program_titles,
+            "selectedFiles": selected_files,
+            "routingInventoryPath": str(inventory_path),
+            "heldSkipped": held_skipped,
+            "metadataMismatchSkipped": metadata_mismatch_skipped,
+            "preflightSkipped": preflight_skipped,
             "planPath": str(plan_path),
             "applyPath": str(apply_path) if args.apply else None,
             "metadataQueuePath": metadata_queue_path,

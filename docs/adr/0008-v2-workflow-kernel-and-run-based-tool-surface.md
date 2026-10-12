@@ -1,6 +1,6 @@
 # ADR-0008: V2 ワークフローカーネルと run-based tool surface
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-04-24
 - Related Issues:
   - [#102 V2 redesign: run-based workflow kernel for video-library-pipeline](https://github.com/NEXTAltair/video-library-pipeline/issues/102)

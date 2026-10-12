@@ -220,6 +220,7 @@ class WorkflowRun:
     artifacts: dict[str, ArtifactRef] = field(default_factory=dict)
     review_gates: dict[str, ReviewGate] = field(default_factory=dict)
     resolution: dict[str, Any] = field(default_factory=dict)
+    revision: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -236,6 +237,7 @@ class WorkflowRun:
             "artifacts": {k: v.to_dict() for k, v in self.artifacts.items()},
             "reviewGates": {k: v.to_dict() for k, v in self.review_gates.items()},
             "resolution": self.resolution,
+            "revision": self.revision,
         }
 
     @classmethod
@@ -263,6 +265,7 @@ class WorkflowRun:
             artifacts=artifacts,
             review_gates=review_gates,
             resolution=dict(data.get("resolution") or {}),
+            revision=int(data.get("revision", 0)),
         )
 
 

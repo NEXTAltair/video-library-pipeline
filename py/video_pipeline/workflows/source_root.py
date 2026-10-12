@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -30,6 +30,8 @@ from .models import (
     WorkflowResult,
 )
 from .store import WorkflowStore, sha256_file
+from video_pipeline.platform.writer_lock import serialized_workflow
+from video_pipeline.application.reviewed_metadata import apply_reviewed_metadata
 
 PythonRunner = Callable[[Path, list[str], str | None], str]
 PowerShellRunner = Callable[[str, list[str]], dict[str, Any]]
@@ -60,6 +62,11 @@ class SourceRootApplyConfig:
     run_id: str
     artifact_id: str = "source_root_move_plan"
     db: str | None = None
+    gate_id: str = ""
+    artifact_ids: list[str] = field(default_factory=list)
+    review_yaml_paths: list[str] = field(default_factory=list)
+    run_revision: int | None = None
+    review_digests: dict[str, str] = field(default_factory=dict)
 
 
 def run_py_uv(script: Path, args: list[str], cwd: str | None = None) -> str:
@@ -142,6 +149,7 @@ class SourceRootWorkflowService:
         self.powershell_runner = powershell_runner
         self.py_root = py_root or Path(__file__).resolve().parents[2]
 
+    @serialized_workflow
     def dry_run(self, config: SourceRootDryRunConfig) -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
         db_path = str(local_path_from_any(config.db))
@@ -181,6 +189,7 @@ class SourceRootWorkflowService:
                 diagnostics=failed_run.diagnostics,
             )
 
+    @serialized_workflow
     def resume(self, config: SourceRootApplyConfig, *, action: str = "apply_source_root_move_plan") -> WorkflowResult:
         if action == "apply_reviewed_metadata":
             return self._resume_reviewed_metadata(config)
@@ -258,6 +267,7 @@ class SourceRootWorkflowService:
 
     def _resume_reviewed_metadata(self, config: SourceRootApplyConfig) -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        metadata_summary = None
         try:
             run = store.read_run(config.run_id)
             if run.flow != WorkflowFlow.SOURCE_ROOT.value:
@@ -290,25 +300,36 @@ class SourceRootWorkflowService:
                     details={"runId": config.run_id, "gateId": gate.id, "gateStatus": gate.status},
                 ))
 
+            metadata_summary = apply_reviewed_metadata(store, config)
             store.update_review_gate(
                 config.run_id,
                 gate.id,
                 status=ReviewGateStatus.APPROVED,
-                resolution={"action": "apply_reviewed_metadata"},
+                resolution={"action": "apply_reviewed_metadata", "metadataApply": metadata_summary},
             )
             store.transition_run(config.run_id, WorkflowPhase.METADATA_ACCEPTED)
             return self._plan_after_metadata_accepted(store, config.run_id)
         except SourceRootApplyRejected as exc:
-            return self._block_apply(store, config.run_id, "source_root_review_rejected", exc.diagnostic)
+            if metadata_summary is not None:
+                exc.diagnostic.details.update(metadataCommitted=True, metadataApply=metadata_summary)
+                return self._block_apply(store, config.run_id, "source_root_plan_after_review_failed", exc.diagnostic)
+            return WorkflowResult(ok=False, run_id=config.run_id, flow="source_root",
+                                  phase=run.phase, outcome="source_root_review_rejected", diagnostics=[exc.diagnostic])
         except Exception as exc:
             diagnostic = Diagnostic(
                 code="source_root_review_failed",
                 severity=DiagnosticSeverity.ERROR,
                 message=str(exc),
-                details={"exceptionType": type(exc).__name__},
+                details={"exceptionType": type(exc).__name__, "metadataCommitted": metadata_summary is not None},
             )
-            return self._block_apply(store, config.run_id, "source_root_review_failed", diagnostic)
+            if metadata_summary is not None:
+                diagnostic.details["metadataApply"] = metadata_summary
+                return self._block_apply(store, config.run_id, "source_root_plan_after_review_failed", diagnostic)
+            return WorkflowResult(ok=False, run_id=config.run_id, flow="source_root",
+                                  phase=run.phase if 'run' in locals() else "unknown",
+                                  outcome="source_root_review_failed", diagnostics=[diagnostic])
 
+    @serialized_workflow
     def apply(self, config: SourceRootApplyConfig) -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
         try:

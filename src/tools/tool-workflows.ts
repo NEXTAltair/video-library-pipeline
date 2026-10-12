@@ -1,7 +1,7 @@
-import { parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
+import { parseJsonObject, resolvePythonScript, runCmdAsync, toToolResult } from "./runtime";
 import type { AnyObj, GetCfgFn, PluginApi } from "./types";
-import { registerToolApplyReviewedMetadata } from "./tool-apply-reviewed-metadata";
 import { translateWorkflowResult, type WorkflowResultPayload } from "../workflows/workflow-result-translator";
+import { ensureWindowsScripts } from "../platform/windows-scripts-bootstrap";
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -17,20 +17,35 @@ function addFlag(args: string[], flag: string, enabled: unknown) {
   if (enabled === true) args.push(flag);
 }
 
-function runWorkflowCli(command: string, args: string[], okPayload: (parsed: AnyObj) => AnyObj) {
+async function runWorkflowCli(command: string, args: string[], okPayload: (parsed: AnyObj) => AnyObj) {
+  if (command === "start" || command === "resume") {
+    const rootIndex = args.indexOf("--windows-ops-root");
+    const scripts = ensureWindowsScripts({ windowsOpsRoot: args[rootIndex + 1] });
+    if (!scripts.ok) {
+      return toToolResult({ ok: false, tool: `video_pipeline_${command}`,
+        error: "Windows scripts provisioning failed", scripts });
+    }
+  }
   const resolved = resolvePythonScript("workflow_cli.py");
-  const result = runCmd("uv", ["run", "python", resolved.scriptPath, command, ...args], resolved.cwd);
+  const result = await runCmdAsync("uv", ["run", "python", resolved.scriptPath, command, ...args], resolved.cwd);
   const parsed = parseJsonObject(result.stdout);
-  if (parsed) {
+  const validShape = parsed && typeof parsed.ok === "boolean"
+    && (parsed.ok === false || (command === "start" || command === "resume"
+      ? isWorkflowResultPayload(parsed)
+      : command === "status" ? Array.isArray(parsed.runs) || (parsed.run && typeof parsed.run === "object")
+      : parsed.artifact && typeof parsed.artifact === "object"));
+  if (validShape && (parsed!.ok === false || (result.ok && result.code === 0))) {
     return toToolResult(okPayload(parsed));
   }
     return toToolResult({
       ok: false,
       tool: command === "inspect-artifact" ? "video_pipeline_inspect_artifact" : `video_pipeline_${command}`,
-      error: "workflow_cli.py did not return a JSON object",
+      error: parsed?.ok === true && (!result.ok || result.code !== 0)
+        ? "workflow process failed despite a success payload; execution may be incomplete"
+        : "workflow_cli.py did not return a valid JSON result",
       exitCode: result.code,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: result.stdout.slice(-8192),
+    stderr: result.stderr.slice(-8192),
   });
 }
 
@@ -45,56 +60,6 @@ function isWorkflowResultPayload(value: AnyObj): value is WorkflowResultPayload 
 function workflowToolResult(parsed: AnyObj): AnyObj {
   if (isWorkflowResultPayload(parsed)) return translateWorkflowResult(parsed);
   return parsed;
-}
-
-function objectFromToolResult(value: unknown): AnyObj {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const maybeResult = value as AnyObj;
-    const text = maybeResult.content?.[0]?.text;
-    if (typeof text === "string") {
-      const parsed = parseJsonObject(text);
-      if (parsed) return parsed;
-    }
-    return maybeResult;
-  }
-  return { ok: false, error: "tool returned a non-object result" };
-}
-
-function getInternalApplyReviewedMetadataTool(api: PluginApi, getCfg: GetCfgFn) {
-  let tool: { execute: (id: string, params: AnyObj) => Promise<unknown> } | null = null;
-  const internalApi: PluginApi = {
-    ...api,
-    registerTool(def) {
-      tool = def;
-    },
-    on: api.on ?? (() => undefined),
-  };
-  registerToolApplyReviewedMetadata(internalApi, getCfg);
-  if (!tool) throw new Error("failed to initialize internal reviewed metadata tool");
-  return tool;
-}
-
-async function applyReviewedMetadataForResume(api: PluginApi, getCfg: GetCfgFn, params: AnyObj): Promise<AnyObj[]> {
-  const reviewYamlPaths = stringArray(params.reviewYamlPaths);
-  if (reviewYamlPaths.length === 0) {
-    return [{
-      ok: false,
-      error: "resumeAction=apply_reviewed_metadata requires reviewYamlPaths from nextActions params",
-      runId: params.runId,
-    }];
-  }
-
-  const tool = getInternalApplyReviewedMetadataTool(api, getCfg);
-  const results: AnyObj[] = [];
-  for (const sourceYamlPath of reviewYamlPaths) {
-    const result = objectFromToolResult(await tool.execute("internal-apply-reviewed-metadata", {
-      sourceYamlPath,
-      markHumanReviewed: true,
-    }));
-    results.push(result);
-    if (result.ok !== true) break;
-  }
-  return results;
 }
 
 function registerStart(api: PluginApi, getCfg: GetCfgFn) {
@@ -112,6 +77,7 @@ function registerStart(api: PluginApi, getCfg: GetCfgFn) {
         driveRoutesPath: { type: "string" },
         maxFilesPerRun: { type: "integer", minimum: 1, maximum: 5000 },
         roots: { type: "array", items: { type: "string" } },
+        programTitles: { type: "array", minItems: 1, items: { type: "string", minLength: 1 }, description: "Relocate only these canonical works while scanning all parent roots." },
         rootsFilePath: { type: "string" },
         extensions: { type: "array", items: { type: "string" } },
         limit: { type: "integer", minimum: 0, maximum: 100000 },
@@ -131,6 +97,7 @@ function registerStart(api: PluginApi, getCfg: GetCfgFn) {
         "--flow", String(params.flow),
         "--windows-ops-root", cfg.windowsOpsRoot,
         "--source-root", cfg.sourceRoot,
+        "--ts-root", cfg.tsRoot || "",
         "--dest-root", cfg.destRoot,
         "--db", cfg.db,
         "--drive-routes-path", String(params.driveRoutesPath || cfg.driveRoutesPath || ""),
@@ -139,6 +106,7 @@ function registerStart(api: PluginApi, getCfg: GetCfgFn) {
       if (typeof params.runId === "string" && params.runId.trim()) args.push("--run-id", params.runId.trim());
       addFlag(args, "--allow-needs-review", params.allowNeedsReview);
       if (Array.isArray(params.roots)) args.push("--roots-json", JSON.stringify(stringArray(params.roots)));
+      if (Array.isArray(params.programTitles)) args.push("--program-titles-json", JSON.stringify(stringArray(params.programTitles)));
       if (typeof params.rootsFilePath === "string") args.push("--roots-file-path", params.rootsFilePath);
       if (Array.isArray(params.extensions)) args.push("--extensions-json", JSON.stringify(stringArray(params.extensions)));
       const limit = finiteInteger(params.limit);
@@ -174,6 +142,8 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
         gateId: { type: "string" },
         artifactIds: { type: "array", items: { type: "string" } },
         reviewYamlPaths: { type: "array", items: { type: "string" } },
+        runRevision: { type: "integer", minimum: 0 },
+        reviewDigests: { type: "object", additionalProperties: { type: "string", pattern: "^[a-f0-9]{64}$" } },
         onDstExists: { type: "string", enum: ["error", "rename_suffix"] },
         supersededByRunId: { type: "string" },
         reason: { type: "string" },
@@ -199,23 +169,12 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
       }
       if (typeof params.reason === "string" && params.reason.trim()) args.push("--reason", params.reason.trim());
       if (action === "apply_reviewed_metadata") {
-        const metadataResults = await applyReviewedMetadataForResume(api, getCfg, params);
-        const failed = metadataResults.find((result) => result.ok !== true);
-        if (failed) {
-          return toToolResult({
-            ok: false,
-            tool: "video_pipeline_resume",
-            runId: params.runId,
-            action,
-            outcome: "workflow_review_metadata_apply_failed",
-            reviewedMetadataResults: metadataResults,
-            error: failed.error ?? "failed to apply reviewed metadata",
-          });
-        }
-        return runWorkflowCli("resume", args, (parsed) => ({
-          ...workflowToolResult(parsed),
-          reviewedMetadataResults: metadataResults,
-        }));
+        if (typeof params.gateId === "string") args.push("--gate-id", params.gateId);
+        if (Array.isArray(params.artifactIds)) args.push("--artifact-ids-json", JSON.stringify(stringArray(params.artifactIds)));
+        if (Array.isArray(params.reviewYamlPaths)) args.push("--review-yaml-paths-json", JSON.stringify(stringArray(params.reviewYamlPaths)));
+        const revision = finiteInteger(params.runRevision);
+        if (revision !== null) args.push("--run-revision", String(revision));
+        if (params.reviewDigests) args.push("--review-digests-json", JSON.stringify(params.reviewDigests));
       }
       return runWorkflowCli("resume", args, workflowToolResult);
     },

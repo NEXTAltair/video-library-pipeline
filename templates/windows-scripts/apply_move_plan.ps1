@@ -30,6 +30,19 @@ Ensure-DirectoryLong $moveDir
 
 function J([hashtable]$h) { ([pscustomobject]$h | ConvertTo-Json -Compress -Depth 6) }
 
+function Assert-NoReparseAncestors([string]$Path) {
+  $current = $Path
+  while ($current) {
+    if (Test-PathAnyLong $current) {
+      $attributes = [System.IO.File]::GetAttributes((Convert-ToLongPathLiteral $current))
+      if ($attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'path_reparse_point' }
+    }
+    $parent = [System.IO.Path]::GetDirectoryName($current.TrimEnd('\'))
+    if ($parent -eq $current) { break }
+    $current = $parent
+  }
+}
+
 $sw = New-Object System.IO.StreamWriter($out, $false, (New-Object System.Text.UTF8Encoding($false)))
 try {
   $sw.WriteLine((J @{ _meta = @{ kind='move_apply'; run_id=$runId; plan=$PlanJsonl; dry_run=[bool]$DryRun; on_dst_exists=$OnDstExists; generated_at=(Get-Date).ToString('o') } }))
@@ -116,17 +129,36 @@ try {
       # No-op if missing.
     }
 
-    if ($DryRun) {
-      $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$true; dry_run=$true }))
-      return
-    }
-
+    $keepHandles = [System.Collections.Generic.List[System.IO.FileStream]]::new()
     try {
+      Assert-NoReparseAncestors $src
+      Assert-NoReparseAncestors $dstFinal
+      $keepers = if ($o.keeps) { @($o.keeps) } elseif ($o.keep) { @($o.keep) } else { @() }
+      foreach ($keeper in $keepers) {
+        if ($keeper.path -eq $src -or $keeper.path -eq $dstFinal -or !(Test-PathFileLong $keeper.path)) {
+          throw 'keeper_missing_or_invalid'
+        }
+        Assert-NoReparseAncestors $keeper.path
+        $keepInfo = [System.IO.FileInfo]::new((Convert-ToLongPathLiteral $keeper.path))
+        if (($keepInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'keeper_reparse_point' }
+        # Retain an open read-only handle across the move: Windows rejects writes
+        # and deletion of the keeper while a duplicate is being quarantined.
+        $keepHandles.Add([System.IO.File]::Open((Convert-ToLongPathLiteral $keeper.path), [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read))
+        $keepInfo.Refresh()
+        $keepTime = if ($keeper.mtime_utc -is [DateTime]) { [DateTimeOffset]$keeper.mtime_utc } else { [DateTimeOffset]::Parse([string]$keeper.mtime_utc) }
+        if ($keepInfo.Length -ne [long]$keeper.size_bytes -or [Math]::Abs(($keepInfo.LastWriteTimeUtc - $keepTime.UtcDateTime).TotalMilliseconds) -gt 5) { throw 'keeper_changed' }
+      }
+      if ($DryRun) {
+        $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$true; dry_run=$true }))
+        return
+      }
       Move-FileLong -Src $src -Dst $dstFinal -Overwrite $false
       $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; file_id=$o.file_id; ok=$true }))
       $sw.Flush()
     } catch {
       $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$false; error=$_.Exception.Message }))
+    } finally {
+      foreach ($handle in $keepHandles) { $handle.Dispose() }
     }
   }
 }

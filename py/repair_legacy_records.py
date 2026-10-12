@@ -8,6 +8,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
+from video_pipeline.platform.sqlite_snapshot import online_snapshot
 from mediaops_schema import connect_db, create_schema_if_needed
 from pathscan_common import now_iso, windows_to_wsl_path
 from video_pipeline.db.file_identity import ensure_identity_schema, ensure_location, observe_file
@@ -133,8 +134,7 @@ def main():
     backup = out / ("before-repair.sqlite" if args.apply else "repair-preview.sqlite")
     if args.apply and backup.exists():
         raise SystemExit("repair backup already exists; use a new outdir")
-    with sqlite3.connect(f"file:{args.db}?mode=ro",uri=True) as source, sqlite3.connect(backup) as dest:
-        source.backup(dest)
+    online_snapshot(args.db, backup)
     pairs = json.loads(Path(args.pairs_json).read_text())["pairs"]
     result = repair(target,pairs,json.loads(Path(args.titles_json).read_text()),strict=args.apply,archive_orphans=args.archive_orphans)
     result.update(apply=args.apply,db=str(target),backup=str(backup))

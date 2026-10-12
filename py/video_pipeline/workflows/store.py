@@ -26,6 +26,7 @@ from .models import (
     phase_status,
 )
 from .state_machine import validate_transition
+from video_pipeline.platform.writer_lock import serialized_store, workflow_writer
 
 RUN_SUBDIRS = ("inventory", "metadata", "review", "plan", "apply", "logs")
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -63,6 +64,10 @@ class WorkflowStore:
     def manifest_path(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "run.json"
 
+    def writer_scope(self):
+        return workflow_writer(self.windows_ops_root)
+
+    @serialized_store
     def init_run(
         self,
         flow: WorkflowFlow | str,
@@ -101,8 +106,16 @@ class WorkflowStore:
             )
         return run
 
+    @serialized_store
     def write_run(self, run: WorkflowRun) -> None:
         path = self.manifest_path(run.run_id)
+        if path.exists():
+            current = self.read_run(run.run_id)
+            if current.revision != run.revision:
+                raise ValueError(f"workflow revision conflict: {run.run_id} expected {run.revision}, current {current.revision}")
+        elif run.revision != 0:
+            raise ValueError(f"workflow manifest missing for revision {run.revision}: {run.run_id}")
+        run.revision += 1
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as f:
             json.dump(run.to_dict(), f, ensure_ascii=False, indent=2, sort_keys=True)
@@ -112,6 +125,7 @@ class WorkflowStore:
             temporary = f.name
         os.replace(temporary, path)
 
+    @serialized_store
     def transition_run(self, run_id: str, to_phase: WorkflowPhase | str) -> WorkflowRun:
         run = self.read_run(run_id)
         validate_transition(run.phase, to_phase)
@@ -122,6 +136,7 @@ class WorkflowStore:
         self.write_run(run)
         return run
 
+    @serialized_store
     def register_artifact(
         self,
         run_id: str,
@@ -169,6 +184,7 @@ class WorkflowStore:
         self.write_run(run)
         return artifact
 
+    @serialized_store
     def create_review_gate(
         self,
         run_id: str,
@@ -197,6 +213,7 @@ class WorkflowStore:
         self.write_run(run)
         return gate
 
+    @serialized_store
     def update_review_gate(
         self,
         run_id: str,
@@ -216,6 +233,7 @@ class WorkflowStore:
         self.write_run(run)
         return gate
 
+    @serialized_store
     def update_review_gate_artifacts(
         self,
         run_id: str,
@@ -231,6 +249,7 @@ class WorkflowStore:
         self.write_run(run)
         return gate
 
+    @serialized_store
     def supersede_run(
         self,
         run_id: str,

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { CmdResult } from "./types";
 
@@ -37,6 +37,66 @@ export function runCmd(command: string, args: string[], cwd?: string): CmdResult
     args,
     cwd,
   };
+}
+
+/** Public tools must not block the Gateway while a child waits for a writer.
+ * Deadline/output failures kill the POSIX process group, including uv's Python.
+ * This is bounded process execution, not the durable-job contract of ADR-0011.
+ */
+export async function runCmdAsync(
+  command: string, args: string[], cwd?: string,
+  opts: { timeoutMs?: number; maxOutputBytes?: number } = {},
+): Promise<CmdResult> {
+  const env = path.basename(command) === "uv" ? {
+    ...process.env,
+    UV_PROJECT_ENVIRONMENT: process.env.OPENCLAW_VIDEO_PIPELINE_VENV || path.join(
+      process.env.OPENCLAW_STATE_DIR || path.join(os.homedir(), ".openclaw"),
+      "plugin-runtime", "video-library-pipeline", ".venv",
+    ),
+  } : process.env;
+  return new Promise((resolve) => {
+    let stdout = "", stderr = "", bytes = 0, failure = "";
+    const child = spawn(command, args, { cwd, env, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const signalGroup = (signal: NodeJS.Signals) => {
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch { /* process already exited */ }
+    };
+    const fail = (reason: string) => {
+      if (failure) return;
+      failure = reason;
+      signalGroup("SIGTERM");
+      killTimer = setTimeout(() => signalGroup("SIGKILL"), 1000);
+    };
+    const timer = setTimeout(() => fail("command deadline exceeded; execution may be incomplete"), opts.timeoutMs ?? 30 * 60 * 1000);
+    const collect = (chunk: Buffer, channel: "stdout" | "stderr") => {
+      bytes += chunk.length;
+      if (bytes > (opts.maxOutputBytes ?? 32 * 1024 * 1024)) {
+        fail("command output limit exceeded; execution may be incomplete");
+        return;
+      }
+      if (channel === "stdout") stdout += chunk.toString("utf8");
+      else stderr += chunk.toString("utf8");
+    };
+    // setEncoding preserves UTF-8 sequences split across pipe chunks.
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => collect(Buffer.from(chunk), "stdout"));
+    child.stderr.on("data", (chunk: string) => collect(Buffer.from(chunk), "stderr"));
+    child.on("error", (error) => { failure = error.message; });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      // A stopped wrapper can leave a native descendant alive. On failure,
+      // terminate any remaining members before allowing another invocation.
+      if (failure) signalGroup("SIGKILL");
+      resolve({ ok: code === 0 && !failure, code: failure ? 1 : code ?? 1,
+        stdout, stderr: [stderr, failure || (signal ? `terminated by ${signal}` : "")].filter(Boolean).join("\n"),
+        command, args, cwd });
+    });
+  });
 }
 
 // Openclaw の実行コンテキストでは Windows PATH が継承されないため

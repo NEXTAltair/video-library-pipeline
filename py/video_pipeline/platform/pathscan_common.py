@@ -15,6 +15,7 @@ from windows_pwsh_bridge import run_pwsh_jsonl
 DEFAULT_EXTENSIONS = [".mp4"]
 DEFAULT_SCAN_RETRY_COUNT = 1
 MAX_SUMMARY_WARNINGS = 200
+EXCLUDED_SCAN_DIRECTORIES = {"_ai_work", "quarantine_v3", "$recycle.bin", "system volume information"}
 
 
 def now_iso() -> str:
@@ -59,9 +60,10 @@ def split_win(p: str) -> tuple[str | None, str | None, str | None, str | None]:
 
 def canonicalize_windows_path(s: str) -> str:
     raw = str(s)
-    if raw.startswith("/mnt/") and len(raw) > 6 and raw[6] == "/":
-        drive = raw[5].upper()
-        rest = raw.split(f"/mnt/{raw[5]}/", 1)[1].replace("/", "\\")
+    mount = re.fullmatch(r"/mnt/([A-Za-z])(?:/(.*))?", raw)
+    if mount:
+        drive = mount.group(1).upper()
+        rest = (mount.group(2) or "").replace("/", "\\")
         p = f"{drive}:\\{rest}"
     else:
         p = raw.replace("/", "\\")
@@ -80,11 +82,6 @@ def windows_to_wsl_path(s: str) -> str:
 
 
 def wsl_to_windows_path(s: str) -> str:
-    s = str(s)
-    if s.startswith("/mnt/") and len(s) > 6 and s[6] == "/":
-        drive = s[5].upper()
-        rest = s.split(f"/mnt/{s[5]}/", 1)[1].replace("/", "\\")
-        return f"{drive}:\\{rest}"
     return canonicalize_windows_path(s)
 
 
@@ -340,6 +337,8 @@ def scan_files(
     seen: set[str] = set()
     for root_raw in roots:
         root = Path(root_raw)
+        if any(part.casefold() in EXCLUDED_SCAN_DIRECTORIES for part in root.parts):
+            continue
         if not root.exists():
             errors.append(f"root missing: {root_raw}")
             continue
@@ -390,6 +389,8 @@ def scan_files(
                 warnings.append(f"walk failed: root={root_raw} path={failed_path or '?'} :: {e}")
 
             for dirpath, _dirnames, filenames in os.walk(str(root), onerror=_on_walk_error):
+                _dirnames[:] = [d for d in _dirnames if d.casefold() not in EXCLUDED_SCAN_DIRECTORIES
+                               and not (Path(dirpath) / d).is_symlink()]
                 for fname in filenames:
                     _collect_file(Path(dirpath) / fname)
 
@@ -415,6 +416,8 @@ def scan_files(
                         )
 
                     for dirpath, _dirnames, filenames in os.walk(str(target_path), onerror=_on_retry_error):
+                        _dirnames[:] = [d for d in _dirnames if d.casefold() not in EXCLUDED_SCAN_DIRECTORIES
+                                       and not (Path(dirpath) / d).is_symlink()]
                         for fname in filenames:
                             _collect_file(Path(dirpath) / fname)
                 unresolved = attempt_failed

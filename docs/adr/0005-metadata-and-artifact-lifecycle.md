@@ -114,7 +114,9 @@ B:\_AI_WORK/
 `archive/` ディレクトリは2系統あり、管理方法が異なる。
 
 - `llm/archive/`: `apply_reviewed_metadata` のupsert成功後に、使用したYAML、抽出出力JSONL、対応する入力JSONLを非圧縮で自動アーカイブする。
-- `move/archive/`: `rotate_move_audit_logs.py` が移動計画・結果JSONLをgzip圧縮してアーカイブする。
+- `move/archive/`: `rotate_move_audit_logs.py --apply` が既知の旧移動計画・結果JSONLを検証済みgzipへ変換する。既定はpreview。TTLによる削除はしない。
+
+2026-10-09以降のcache/evidence分離と可逆整理は [ADR 0010](0010-managed-artifact-retention.md) を参照。
 
 ## Artifact Lifecycle
 

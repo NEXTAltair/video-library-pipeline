@@ -77,8 +77,10 @@ def _check_sqlite_version() -> None:
 
 
 def _backup_db(db_path: str) -> str:
-    backup_path = db_path + f".backup_v3_{now_iso().replace(':', '').replace('-', '')}"
-    shutil.copy2(db_path, backup_path)
+    from backup_mediaops_db import backup_db
+    ok, backup_path, error = backup_db(db_path, "schema_v3")
+    if not ok:
+        raise RuntimeError(error)
     return backup_path
 
 

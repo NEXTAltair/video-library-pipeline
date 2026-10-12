@@ -297,7 +297,8 @@ def test_source_root_fixture_review_yaml_handoff_round_trip(tmp_path) -> None:
     assert Path(review_path).read_text(encoding="utf-8") == "hints: []\n"
 
 
-def test_source_root_resume_apply_reviewed_metadata_closes_gate_and_plans(tmp_path) -> None:
+def test_source_root_resume_apply_reviewed_metadata_closes_gate_and_plans(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("video_pipeline.workflows.source_root.apply_reviewed_metadata", lambda store, config: {"ok": True, "rows": 1})
     harness = SourceRootWorkflowHarness(tmp_path, run_id="run_fixture_review_resume", needs_review=True)
     initial = harness.service().dry_run(harness.cfg).to_dict()
     assert initial["phase"] == "review_required"

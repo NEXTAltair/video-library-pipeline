@@ -2,7 +2,7 @@
   "id": "video-library-pipeline",
   "name": "Video Library Pipeline",
   "description": "Config-driven video library pipeline for inventory, metadata extraction, move planning, apply, and audit logging.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "requires": {
     "plugins": ["czkawka-cli"]
   },

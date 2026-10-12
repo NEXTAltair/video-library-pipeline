@@ -2,11 +2,16 @@ __pycache__
 *.yaml
 dist/
 node_modules/
+.venv/
+.pytest_cache/
+.tmp/
+memory/
 .codex
 
 # Local audit logs and SQLite backups contain private library state.
 artifacts/
 
 !pnpm-workspace.yaml
+!pnpm-lock.yaml
 
 !rules/*.example.yaml

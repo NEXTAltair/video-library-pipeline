@@ -4,13 +4,18 @@
 ドキュメント体系と情報源マッピングは `docs/CURRENT_SPEC_INDEX.md` から参照すること。
 ステージ順序と責務境界については `FLOW_AND_OWNERSHIP.md` を参照すること。
 
-## スコープ
+## 現行V2のスコープ
 
-- プラグインパッケージ: `extensions/video-library-pipeline`
-- ツールエントリポイント: `src/tools/tool-run.ts`, `src/tools/tool-backfill.ts`, `src/tools/tool-relocate.ts`, `src/tools/tool-dedup.ts`, `src/tools/tool-status.ts`, `src/tools/tool-validate.ts`, `src/tools/tool-reextract.ts`, `src/tools/tool-ingest-epg.ts`, `src/tools/tool-detect-rebroadcasts.ts`
-- Python オーケストレーション: `py/unwatched_pipeline_runner.py`, `py/backfill_moved_files.py`, `py/relocate_existing_files.py`, `py/dedup_recordings.py`, `py/run_metadata_batches_promptv1.py`, `py/ingest_program_txt.py`, `py/detect_rebroadcasts.py`
-- Python 共有ロジック: `py/video_pipeline/domain/*.py`, `py/video_pipeline/db/*.py`, `py/video_pipeline/platform/*.py`
-- Windows 操作: `<windowsOpsRoot>/scripts` 配下のスクリプト
+- プラグイン: このパッケージ(`@nextaltair/video-library-pipeline`)
+- 公開tool: `video_pipeline_start` / `video_pipeline_resume` / `video_pipeline_status` / `video_pipeline_inspect_artifact`
+- Adapter: `src/tools/tool-workflows.ts` -> `py/workflow_cli.py`
+- Workflow/application: `py/video_pipeline/workflows/`、`py/video_pipeline/application/`
+- DB/domain/platform: `py/video_pipeline/{db,domain,platform}/`
+- 日次・重複隔離・成果物整理: README記載の明示的maintenance CLI。V2 gateの迂回ではない。
+
+旧V1のdirect toolやrebroadcast削除スクリプトは通常操作として公開されていない。
+下部の旧tool別条件はhistorical implementationの参考情報であり、公開toolの入力要件ではない。
+M0の現行整合性契約は [ADR-0012](docs/adr/0012-m0-integrity-boundaries.md) を参照。
 
 ## プラグイン設定コントラクト
 
@@ -38,11 +43,11 @@
 
 - ヒントファイル `rules/program_aliases.yaml` は任意。欠損時は AI のみのモードで抽出を継続する。ファイルが存在する場合は `pyyaml` で読み込める必要があり、読み込み不能なら抽出を停止する
 - バックフィルルートファイル `rules/backfill_roots.yaml` は backfill ツールへのオプション入力。未設定時は `destRoot` を使用
-- 再配置ルートファイル `rules/relocate_roots.yaml` は relocate ツールへのオプション入力。安全のため、relocate には依然として明示的な `roots` または `rootsFilePath` が必要
+- 再配置ルートファイル `rules/relocate_roots.yaml` は relocate ツールへのオプション入力。V2 relocateでは省略可。設定済みの親rootを使い、明示rootsは拡張しない
 - 放送バケットルール `rules/broadcast_buckets.yaml` は dedup ツールが使用（terrestrial / bs_cs / unknown 分類）
 - ドライブルーティングルール `rules/drive_routes.yaml` は移動計画時にジャンル別デスト振り分けで使用
 - `db/move/llm` はランナーが欠損時に自動作成する
-- `scripts` は実行時に必要だが、ディレクトリ/ファイルの欠損は `video_pipeline_validate` および `video_pipeline_analyze_and_move_videos` 実行時にプラグインテンプレートから自動プロビジョニングされる
+- `scripts` は実行時に必要だが、ディレクトリ/ファイルの欠損は V2 start/resumeと明示的maintenance CLIの実行時にプラグインテンプレートから自動プロビジョニングされる
 - `<windowsOpsRoot>/scripts` 配下のプラグイン管理スクリプトは validate/run/backfill/relocate/dedup 実行時にテンプレートから自動同期される（欠損または古いファイルは更新される）
 - ユーザーカスタムスクリプトはプラグイン管理外であり上書きされない
 

@@ -9,7 +9,7 @@ vi.mock("./runtime", async () => {
   return {
     ...actual,
     resolvePythonScript: vi.fn(() => ({ scriptPath: "/ext/py/workflow_cli.py", cwd: "/ext/py", source: "extension" })),
-    runCmd: vi.fn(),
+    runCmdAsync: vi.fn(),
     toToolResult: vi.fn((obj: Record<string, unknown>) => obj),
   };
 });
@@ -26,7 +26,10 @@ vi.mock("./tool-apply-reviewed-metadata", () => ({
 }));
 
 import { registerWorkflowTools } from "./tool-workflows";
-import { runCmd } from "./runtime";
+import { runCmdAsync } from "./runtime";
+import { ensureWindowsScripts } from "../platform/windows-scripts-bootstrap";
+
+vi.mock("../platform/windows-scripts-bootstrap", () => ({ ensureWindowsScripts: vi.fn() }));
 
 function createMockApi() {
   return { registerTool: vi.fn() };
@@ -66,10 +69,22 @@ function cmdResult(stdout: Record<string, unknown>, ok = true) {
 describe("V2 workflow tools", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(ensureWindowsScripts).mockReturnValue({ok: true, scriptsDir: "/ops/scripts",
+      created: [], updated: [], existing: [], failed: [], missingTemplates: []});
+  });
+
+  it("refuses to start with stale Windows scripts when provisioning fails", async () => {
+    vi.mocked(ensureWindowsScripts).mockReturnValueOnce({ok: false, scriptsDir: "/ops/scripts",
+      created: [], updated: [], existing: [], failed: [{name: "_long_path_utils.ps1",path: "/ops/scripts/_long_path_utils.ps1",error: "access denied"}], missingTemplates: []});
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+    const result = await getRegisteredTool(api, "video_pipeline_start").execute("call", {flow: "relocate"});
+    expect(result.ok).toBe(false);
+    expect(runCmdAsync).not.toHaveBeenCalled();
   });
 
   it("starts sourceRoot through workflow_cli.py and translates WorkflowResult", async () => {
-    vi.mocked(runCmd).mockReturnValue(cmdResult({
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
       ok: true,
       runId: "run_source",
       flow: "source_root",
@@ -101,7 +116,7 @@ describe("V2 workflow tools", () => {
       allowNeedsReview: true,
     });
 
-    expect(runCmd).toHaveBeenCalledWith("uv", expect.arrayContaining([
+    expect(runCmdAsync).toHaveBeenCalledWith("uv", expect.arrayContaining([
       "run",
       "python",
       "/ext/py/workflow_cli.py",
@@ -129,7 +144,7 @@ describe("V2 workflow tools", () => {
   });
 
   it("starts relocate with relocate-specific options", async () => {
-    vi.mocked(runCmd).mockReturnValue(cmdResult({
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
       ok: true,
       runId: "run_relocate",
       flow: "relocate",
@@ -146,6 +161,7 @@ describe("V2 workflow tools", () => {
     await getRegisteredTool(api, "video_pipeline_start").execute("call-2", {
       flow: "relocate",
       roots: ["B:\\VideoLibrary"],
+      programTitles: ["爆上戦隊ブンブンジャー"],
       extensions: [".mp4", ".mkv"],
       limit: 100,
       allowUnreviewedMetadata: true,
@@ -158,11 +174,13 @@ describe("V2 workflow tools", () => {
       skipSuspiciousTitleCheck: true,
     });
 
-    expect(runCmd).toHaveBeenCalledWith("uv", expect.arrayContaining([
+    expect(runCmdAsync).toHaveBeenCalledWith("uv", expect.arrayContaining([
       "--flow",
       "relocate",
       "--roots-json",
       JSON.stringify(["B:\\VideoLibrary"]),
+      "--program-titles-json",
+      JSON.stringify(["爆上戦隊ブンブンジャー"]),
       "--extensions-json",
       JSON.stringify([".mp4", ".mkv"]),
       "--limit",
@@ -183,7 +201,7 @@ describe("V2 workflow tools", () => {
   });
 
   it("resumes using resumeAction alias and translates WorkflowResult", async () => {
-    vi.mocked(runCmd).mockReturnValue(cmdResult({
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
       ok: true,
       runId: "run_relocate",
       flow: "relocate",
@@ -204,7 +222,7 @@ describe("V2 workflow tools", () => {
       onDstExists: "rename_suffix",
     });
 
-    expect(runCmd).toHaveBeenCalledWith("uv", expect.arrayContaining([
+    expect(runCmdAsync).toHaveBeenCalledWith("uv", expect.arrayContaining([
       "resume",
       "--run-id",
       "run_relocate",
@@ -223,7 +241,7 @@ describe("V2 workflow tools", () => {
   });
 
   it("forwards audited supersede parameters", async () => {
-    vi.mocked(runCmd).mockReturnValue(cmdResult({
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
       ok: true,
       runId: "run_old",
       flow: "relocate",
@@ -244,7 +262,7 @@ describe("V2 workflow tools", () => {
       reason: "fresh scan replaced stale filesystem snapshot",
     });
 
-    expect(runCmd).toHaveBeenCalledWith("uv", expect.arrayContaining([
+    expect(runCmdAsync).toHaveBeenCalledWith("uv", expect.arrayContaining([
       "resume",
       "--run-id",
       "run_old",
@@ -257,9 +275,9 @@ describe("V2 workflow tools", () => {
     ]), "/ext/py");
   });
 
-  it("applies reviewed sourceRoot metadata before resuming the workflow", async () => {
+  it("delegates reviewed metadata and its run/gate scope to one Python boundary", async () => {
     mocks.applyReviewedExecute.mockResolvedValue({ ok: true, rows: 1, sourceYamlPath: "/ops/review.yaml" });
-    vi.mocked(runCmd).mockReturnValue(cmdResult({
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
       ok: true,
       runId: "run_source_review",
       flow: "source_root",
@@ -288,23 +306,26 @@ describe("V2 workflow tools", () => {
       runId: "run_source_review",
       resumeAction: "apply_reviewed_metadata",
       reviewYamlPaths: ["/ops/review.yaml"],
+      gateId: "metadata_review",
+      artifactIds: ["review_1"],
+      runRevision: 12,
     });
 
-    expect(mocks.applyReviewedExecute).toHaveBeenCalledWith("internal-apply-reviewed-metadata", {
-      sourceYamlPath: "/ops/review.yaml",
-      markHumanReviewed: true,
-    });
-    expect(runCmd).toHaveBeenCalledWith("uv", expect.arrayContaining([
+    expect(mocks.applyReviewedExecute).not.toHaveBeenCalled();
+    expect(runCmdAsync).toHaveBeenCalledWith("uv", expect.arrayContaining([
       "resume",
       "--run-id",
       "run_source_review",
       "--action",
       "apply_reviewed_metadata",
+      "--gate-id", "metadata_review",
+      "--artifact-ids-json", '["review_1"]',
+      "--review-yaml-paths-json", '["/ops/review.yaml"]',
+      "--run-revision", "12",
     ]), "/ext/py");
     expect(result).toMatchObject({
       ok: true,
       phase: "plan_ready",
-      reviewedMetadataResults: [{ ok: true, rows: 1, sourceYamlPath: "/ops/review.yaml" }],
       followUpToolCalls: [
         {
           tool: "video_pipeline_resume",
@@ -320,29 +341,38 @@ describe("V2 workflow tools", () => {
     });
   });
 
-  it("does not resume when reviewed metadata application fails", async () => {
-    mocks.applyReviewedExecute.mockResolvedValue({ ok: false, error: "bad yaml" });
+  it("re-extracts relocate candidates without calling reviewed metadata application", async () => {
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
+      ok: false, runId: "run_repair", flow: "relocate", phase: "review_required",
+      outcome: "relocate_metadata_review_required", artifacts: [], gates: [],
+      nextActions: [], diagnostics: [],
+    }));
     const api = createMockApi();
     registerWorkflowTools(api as never, () => cfg());
-
-    const result = await getRegisteredTool(api, "video_pipeline_resume").execute("call-review-fail", {
-      runId: "run_source_review",
-      resumeAction: "apply_reviewed_metadata",
-      reviewYamlPaths: ["/ops/review.yaml"],
+    await getRegisteredTool(api, "video_pipeline_resume").execute("repair", {
+      runId: "run_repair", resumeAction: "reextract_relocate_metadata",
     });
+    expect(mocks.applyReviewedExecute).not.toHaveBeenCalled();
+    expect(runCmdAsync).toHaveBeenCalledWith("uv", expect.arrayContaining([
+      "resume", "--run-id", "run_repair", "--action", "reextract_relocate_metadata",
+    ]), "/ext/py");
+  });
 
-    expect(runCmd).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      ok: false,
-      outcome: "workflow_review_metadata_apply_failed",
-      error: "bad yaml",
+  it("returns Python preflight failure without a separate metadata write", async () => {
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({ ok: false, error: "review YAML does not belong to this run/gate" }, false));
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+    const result = await getRegisteredTool(api, "video_pipeline_resume").execute("fail", {
+      runId: "run_source_review", resumeAction: "apply_reviewed_metadata", reviewYamlPaths: ["/other/review.yaml"],
     });
+    expect(mocks.applyReviewedExecute).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: false, error: "review YAML does not belong to this run/gate" });
   });
 
   it("returns status and inspect JSON without WorkflowResult translation", async () => {
     const api = createMockApi();
     registerWorkflowTools(api as never, () => cfg());
-    vi.mocked(runCmd).mockReturnValueOnce(cmdResult({
+    vi.mocked(runCmdAsync).mockResolvedValueOnce(cmdResult({
       ok: true,
       hints: { ok: true, hintsFilePresent: true, hintsLoadable: true },
       runs: [{ runId: "run_a" }],
@@ -356,14 +386,14 @@ describe("V2 workflow tools", () => {
       hints: { ok: true, hintsFilePresent: true, hintsLoadable: true },
       runs: [{ runId: "run_a" }],
     });
-    expect(runCmd).toHaveBeenLastCalledWith("uv", expect.arrayContaining([
+    expect(runCmdAsync).toHaveBeenLastCalledWith("uv", expect.arrayContaining([
       "status",
       "--limit",
       "5",
       "--include-artifacts",
     ]), "/ext/py");
 
-    vi.mocked(runCmd).mockReturnValueOnce(cmdResult({ ok: true, artifact: { id: "relocate_plan" } }));
+    vi.mocked(runCmdAsync).mockResolvedValueOnce(cmdResult({ ok: true, artifact: { id: "relocate_plan" } }));
     const inspected = await getRegisteredTool(api, "video_pipeline_inspect_artifact").execute("call-5", {
       runId: "run_a",
       artifactId: "relocate_plan",
@@ -371,7 +401,7 @@ describe("V2 workflow tools", () => {
       previewBytes: 128,
     });
     expect(inspected).toEqual({ ok: true, artifact: { id: "relocate_plan" } });
-    expect(runCmd).toHaveBeenLastCalledWith("uv", expect.arrayContaining([
+    expect(runCmdAsync).toHaveBeenLastCalledWith("uv", expect.arrayContaining([
       "inspect-artifact",
       "--run-id",
       "run_a",
@@ -384,7 +414,7 @@ describe("V2 workflow tools", () => {
   });
 
   it("returns structured failure when workflow_cli.py emits malformed JSON", async () => {
-    vi.mocked(runCmd).mockReturnValue({
+    vi.mocked(runCmdAsync).mockResolvedValue({
       ok: false,
       code: 1,
       stdout: "not json",
@@ -400,10 +430,24 @@ describe("V2 workflow tools", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: "workflow_cli.py did not return a JSON object",
+      error: "workflow_cli.py did not return a valid JSON result",
       exitCode: 1,
       stdout: "not json",
       stderr: "boom",
     });
+  });
+
+  it.each([
+    {ok: false, code: 7, stdout: JSON.stringify({ok:true, runId:"run",flow:"source_root",phase:"complete",outcome:"done"})},
+    {ok: true, code: 0, stdout: JSON.stringify({ok:true})},
+    {ok: true, code: 0, stdout: 'log line\n{"ok":true}'},
+    {ok: false, code: 1, stdout: ''},
+  ])("fails closed for process/protocol inconsistencies: %j", async (processResult) => {
+    vi.mocked(runCmdAsync).mockResolvedValue({...processResult,stderr:"",command:"uv",args:[]});
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+    const result = await getRegisteredTool(api, "video_pipeline_start").execute("fail-closed", {flow:"source_root"});
+    expect(result.ok).toBe(false);
+    expect(result.followUpToolCalls).toBeUndefined();
   });
 });

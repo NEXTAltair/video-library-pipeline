@@ -36,6 +36,7 @@ PAT_HHMM = re.compile(r"(\d{4})_(\d{2})_(\d{2})_(\d{4})(?=\.[^.]+$)")
 PAT_COMPACT_14 = re.compile(r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?=\.[^.]+$)")
 PAT_COMPACT_12 = re.compile(r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(?=\.[^.]+$)")
 PAT_HYPH_HHMM = re.compile(r"(\d{4})-(\d{2})-(\d{2})-(\d{4})(?=\.[^.]+$)")
+PAT_HYPH_COL = re.compile(r"(\d{4})-(\d{2})-(\d{2})-(\d{2}):(\d{2})(?=\.[^.]+$)")
 
 REQUIRED = {
     "program_title",
@@ -89,7 +90,7 @@ def norm_ws(s: str) -> str:
 
 def extract_air_date(name: str) -> str | None:
     n = norm_ws(name)
-    for p in (PAT_US_DUP, PAT_US_PAREN, PAT_US, PAT_SP, PAT_COL, PAT_HHMM, PAT_COMPACT_14, PAT_COMPACT_12, PAT_HYPH_HHMM):
+    for p in (PAT_US_DUP, PAT_US_PAREN, PAT_US, PAT_SP, PAT_COL, PAT_HHMM, PAT_COMPACT_14, PAT_COMPACT_12, PAT_HYPH_HHMM, PAT_HYPH_COL):
         m = p.search(n)
         if m:
             return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
@@ -98,7 +99,7 @@ def extract_air_date(name: str) -> str | None:
 
 def strip_suffix(name: str) -> str:
     n = norm_ws(name)
-    for p in (PAT_US_DUP, PAT_US_PAREN, PAT_US, PAT_SP, PAT_COL, PAT_HHMM, PAT_COMPACT_14, PAT_COMPACT_12, PAT_HYPH_HHMM):
+    for p in (PAT_US_DUP, PAT_US_PAREN, PAT_US, PAT_SP, PAT_COL, PAT_HHMM, PAT_COMPACT_14, PAT_COMPACT_12, PAT_HYPH_HHMM, PAT_HYPH_COL):
         m = p.search(n)
         if m:
             return n[: m.start()].rstrip(" _-")
@@ -799,12 +800,14 @@ def main() -> int:
     ap.add_argument("--start-batch", type=int, default=1)
     ap.add_argument("--max-batches", type=int, default=None)
     ap.add_argument("--model", default="rule_based/title-v2")
-    ap.add_argument("--extraction-version", default="rule_based_title_v2_20261006")
+    ap.add_argument("--extraction-version", default="rule_based_title_v2_20261007")
     ap.add_argument("--hints", default="")
     ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--ignore-human-reviewed", action="store_true")
     ap.add_argument("--prepare-only", action="store_true",
                     help="Write input JSONL batches and exit without running extraction or upserting to DB.")
+    ap.add_argument("--output-only", action="store_true",
+                    help="Extract candidate JSONL using a read-only DB connection; do not upsert metadata or EPG links.")
     args = ap.parse_args()
 
     try:
@@ -837,8 +840,14 @@ def main() -> int:
     title_auto_corrected = 0
     generated_input_jsonl_paths: list[str] = []
     generated_output_jsonl_paths: list[str] = []
-    from mediaops_schema import connect_db
-    db_con = connect_db(args.db)
+    from mediaops_schema import connect_db, register_custom_functions
+    if args.output_only:
+        db_con = sqlite3.connect(Path(args.db).resolve().as_uri() + "?mode=ro", uri=True)
+        db_con.row_factory = sqlite3.Row
+        db_con.execute("PRAGMA query_only = ON")
+        register_custom_functions(db_con)
+    else:
+        db_con = connect_db(args.db)
     epg_cache = _EpgCache(db_con)
     program_dict = _ProgramDictionary(db_con)
     canonical_sources = load_canonical_title_sources(db_con)
@@ -905,6 +914,7 @@ def main() -> int:
                 if isinstance(mtime, str) and len(mtime) >= 10 and mtime[4] == "-" and mtime[7] == "-":
                     air = mtime[:10]
                     reasons.append("air_date_from_mtime")
+                    needs = True
                     conf = min(conf, 0.72)
                 else:
                     if prog not in ("塚原卜伝",):
@@ -985,16 +995,17 @@ def main() -> int:
                 print(f"E {e}")
             raise SystemExit(f"validation failed: {epath} errors={len(errs)}")
 
-        from upsert_path_metadata_jsonl import main as _upsert_main  # type: ignore
-        import sys
+        if not args.output_only:
+            from upsert_path_metadata_jsonl import main as _upsert_main  # type: ignore
+            import sys
 
-        sys.argv = ["upsert", "--db", args.db, "--in", str(epath), "--source", "rule_based"]
-        if args.franchise_rules:
-            sys.argv += ["--franchise-rules", args.franchise_rules]
-        if _upsert_main() != 0:
-            raise SystemExit(f"upsert failed: {epath}")
+            sys.argv = ["upsert", "--db", args.db, "--in", str(epath), "--source", "rule_based"]
+            if args.franchise_rules:
+                sys.argv += ["--franchise-rules", args.franchise_rules]
+            if _upsert_main() != 0:
+                raise SystemExit(f"upsert failed: {epath}")
 
-        if path_program_links:
+        if path_program_links and not args.output_only:
             try:
                 db_con.executemany(
                     """
@@ -1081,6 +1092,7 @@ def main() -> int:
                 "ok": True,
                 "tool": "run_metadata_batches_promptv1",
                 "prepareOnly": False,
+                "outputOnly": bool(args.output_only),
                 "queuePath": str(args.queue),
                 "outdir": str(outdir),
                 "batchSize": int(args.batch_size),

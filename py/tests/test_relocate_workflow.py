@@ -1,5 +1,8 @@
 import json
+import sqlite3
 from pathlib import Path
+from video_pipeline.workflows.relocate import metadata_reextract_action
+from video_pipeline.workflows.store import sha256_file
 
 from video_pipeline.workflows import (
     RelocateApplyConfig,
@@ -190,6 +193,53 @@ def assert_json_shape(payload: dict) -> None:
         assert {"id", "type", "path", "sha256", "createdAt", "producer", "status", "inputArtifactIds", "metadata"} <= set(artifact)
 
 
+def test_relocate_default_scope_and_work_filter_survive_recheck(tmp_path):
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_work_scope")
+    harness.cfg.roots = None
+    harness.cfg.source_root = r"B:\Unwatched"
+    harness.cfg.ts_root = r"J:\TVFile"
+    harness.cfg.program_titles = ["Show"]
+    routes = tmp_path / "routes.yaml"
+    routes.write_text('default_dest: "B:\\\\VideoLibrary"\nroutes:\n  - genre: anime\n    dest_root: "D:\\\\Anime"\n')
+    harness.cfg.drive_routes = str(routes)
+    result = harness.dry_run()
+    assert result.ok
+    snapshot = harness.manifest()["configSnapshot"]
+    assert snapshot["roots"] == [r"B:\Unwatched", r"B:\VideoLibrary", r"D:\Anime", r"J:\TVFile"]
+    assert snapshot["programTitles"] == ["Show"]
+    restored = harness.service()._config_from_run(WorkflowStore(Path(harness.cfg.windows_ops_root)).read_run("run_work_scope"))
+    assert restored.roots == snapshot["roots"]
+    assert restored.program_titles == ["Show"]
+    args = harness.calls[0][1]
+    assert json.loads(args[args.index("--program-titles-json") + 1]) == ["Show"]
+
+
+def test_relocate_explicit_roots_are_not_expanded(tmp_path):
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_explicit_scope")
+    harness.cfg.source_root = r"E:\DoNotScan"
+    harness.cfg.ts_root = r"J:\DoNotScan"
+    assert harness.dry_run().ok
+    assert harness.manifest()["configSnapshot"]["roots"] == [r"B:\VideoLibrary"]
+
+
+def test_relocate_inventory_is_a_checksum_tracked_run_artifact(tmp_path):
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_inventory_artifact")
+
+    def runner(script, args, cwd):
+        summary = json.loads(harness.python_runner(script, args, cwd))
+        inventory = tmp_path / "inventory.json"
+        inventory.write_text('{"selectedFiles": 1, "works": []}\n')
+        summary["routingInventoryPath"] = str(inventory)
+        return json.dumps(summary)
+
+    result = RelocateWorkflowService(python_runner=runner, py_root=tmp_path).dry_run(harness.cfg)
+    store = WorkflowStore(Path(harness.cfg.windows_ops_root))
+    artifact = store.read_run("run_inventory_artifact").artifacts["relocate_routing_inventory"]
+    assert result.ok and artifact.sha256
+    assert json.loads(Path(artifact.path).read_text())["selectedFiles"] == 1
+    assert artifact.input_artifact_ids == ["relocate_diagnostics"]
+
+
 def test_relocate_dry_run_plan_ready_registers_plan_and_next_action(tmp_path) -> None:
     harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_plan", scenario="plan_ready")
 
@@ -294,9 +344,92 @@ def test_relocate_metadata_prepare_creates_review_yaml_gate(tmp_path) -> None:
         "action": "prepare_relocate_metadata"
     }
     assert manifest["reviewGates"]["metadata_review"]["status"] == "open"
+    extraction_args = next(args for script, args in harness.calls if script == "run_metadata_batches_promptv1.py")
+    assert "--output-only" in extraction_args
 
 
-def test_relocate_reviewed_metadata_rechecks_run_and_reaches_plan_ready(tmp_path) -> None:
+def prepared_metadata_harness(tmp_path):
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_reextract", scenario="metadata_gap")
+    harness.dry_run()
+    harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="prepare_relocate_metadata",
+    )
+    return harness, WorkflowStore(Path(harness.cfg.windows_ops_root))
+
+
+def test_relocate_reextract_offers_non_applying_repair_and_supersedes_old_gate(tmp_path):
+    from workflow_cli import _next_actions_for_run
+
+    harness, store = prepared_metadata_harness(tmp_path)
+    run = store.read_run(harness.cfg.run_id)
+    artifact = run.artifacts["metadata_extract_output"]
+    old_path = Path(artifact.path)
+    old_path.write_text(json.dumps({
+        "path_id": "p1", "path": r"N:\Show2024-03-10-09：30.mp4",
+        "program_title": "Show", "air_date": "2024-03-31", "needs_review": False,
+    }) + "\n", encoding="utf-8")
+    artifact.sha256 = sha256_file(old_path)
+    store.write_run(run)
+    before = old_path.read_bytes()
+    old_yaml = Path(run.artifacts["metadata_review_yaml"].path).read_bytes()
+    db_before = Path(harness.cfg.db).read_bytes()
+    action = metadata_reextract_action(run, run.review_gates["metadata_review"])
+    assert action.requires_human_input is False
+    assert action.params["resumeAction"] == "reextract_relocate_metadata"
+    assert _next_actions_for_run(run)[0].to_dict() == action.to_dict()
+
+    result = harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="reextract_relocate_metadata",
+    ).to_dict()
+
+    manifest = harness.manifest()
+    assert result["phase"] == "review_required"
+    assert manifest["reviewGates"]["metadata_review"]["status"] == "superseded"
+    assert manifest["reviewGates"]["metadata_review_0002"]["status"] == "open"
+    assert manifest["artifacts"]["metadata_extract_output"]["status"] == "superseded"
+    assert manifest["artifacts"]["metadata_review_yaml"]["status"] == "superseded"
+    assert result["nextActions"][0]["params"]["gateId"] == "metadata_review_0002"
+    assert old_path.read_bytes() == before
+    assert Path(run.artifacts["metadata_review_yaml"].path).read_bytes() == old_yaml
+    assert Path(harness.cfg.db).read_bytes() == db_before
+    assert len([script for script, _ in harness.calls if script == "run_metadata_batches_promptv1.py"]) == 2
+
+
+def test_relocate_reextract_rejects_changed_queue_and_preserves_review(tmp_path):
+    harness, store = prepared_metadata_harness(tmp_path)
+    run = store.read_run(harness.cfg.run_id)
+    Path(run.artifacts["relocate_metadata_queue"].path).write_text("{}\n")
+    call_count = len(harness.calls)
+    result = harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="reextract_relocate_metadata",
+    ).to_dict()
+    assert result["outcome"] == "relocate_metadata_reextract_failed"
+    assert "checksum mismatch" in result["diagnostics"][-1]["message"]
+    assert harness.manifest()["reviewGates"]["metadata_review"]["status"] == "open"
+    assert len(harness.calls) == call_count
+
+
+def test_relocate_failed_reextract_does_not_supersede_or_approve_review(tmp_path):
+    harness, store = prepared_metadata_harness(tmp_path)
+    def fail_extract(script, args, cwd):
+        if script.name == "run_metadata_batches_promptv1.py":
+            return json.dumps({"ok": False, "error": "extraction failure"})
+        return harness.python_runner(script, args, cwd)
+    service = RelocateWorkflowService(python_runner=fail_extract, py_root=tmp_path)
+    result = service.resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id),
+        action="reextract_relocate_metadata",
+    ).to_dict()
+    assert result["outcome"] == "relocate_metadata_reextract_failed"
+    assert store.read_run(harness.cfg.run_id).review_gates["metadata_review"].status == "open"
+    assert "metadata_review_0002" not in harness.manifest()["reviewGates"]
+
+
+def test_relocate_reviewed_metadata_rechecks_run_and_reaches_plan_ready(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("video_pipeline.workflows.relocate.apply_reviewed_metadata", lambda store, config: {"ok": True, "rows": 1})
     harness = RelocateWorkflowHarness(tmp_path, run_id="run_relocate_reviewed", scenario="metadata_gap")
     harness.dry_run()
     store = WorkflowStore(Path(harness.cfg.windows_ops_root))
@@ -322,7 +455,7 @@ def test_relocate_reviewed_metadata_rechecks_run_and_reaches_plan_ready(tmp_path
     assert payload["phase"] == "plan_ready"
     manifest = harness.manifest()
     assert manifest["reviewGates"]["metadata_review"]["status"] == "approved"
-    assert manifest["reviewGates"]["metadata_review"]["resolution"] == {"action": "apply_reviewed_metadata"}
+    assert manifest["reviewGates"]["metadata_review"]["resolution"] == {"action": "apply_reviewed_metadata", "metadataApply": {"ok": True, "rows": 1}}
 
 
 def test_relocate_review_resume_action_approves_gate_and_reaches_plan_ready(tmp_path) -> None:
@@ -550,7 +683,8 @@ def test_relocate_apply_registers_artifacts_after_backup_and_completes(tmp_path)
         calls.append((script.name, list(args)))
         if script.name == "backup_mediaops_db.py" and args[args.index("--action") + 1] == "backup":
             backup_path = Path(cfg.windows_ops_root) / "db" / "mediaops.sqlite.bak_20260426_pre_relocate_apply"
-            backup_path.write_text("db backup", encoding="utf-8")
+            with sqlite3.connect(backup_path) as con:
+                con.execute("CREATE TABLE fixture (id INTEGER)")
             return json.dumps({"ok": True, "action": "backup", "backup_path": str(backup_path), "error": ""}, ensure_ascii=False)
         if script.name == "backup_mediaops_db.py" and args[args.index("--action") + 1] == "rotate":
             return json.dumps({"ok": True, "action": "rotate", "deleted_count": 0}, ensure_ascii=False)
@@ -616,6 +750,19 @@ def test_relocate_apply_registers_artifacts_after_backup_and_completes(tmp_path)
     ]
 
 
+def test_relocate_refuses_successful_backup_payload_without_snapshot(tmp_path):
+    cfg, _ = register_relocate_plan_ready_run(tmp_path, run_id="run_backup_missing")
+    native_calls = []
+    def python_runner(script, args, cwd=None):
+        return json.dumps({"ok": True, "backup_path": str(tmp_path / "absent.sqlite")})
+    service = RelocateWorkflowService(python_runner=python_runner,
+                                     powershell_runner=lambda *args: native_calls.append(args))
+    result = service.resume(cfg)
+    assert not result.ok
+    assert result.diagnostics[-1].code == "relocate_apply_backup_missing"
+    assert not native_calls
+
+
 def test_relocate_apply_uses_run_scoped_on_dst_exists_policy(tmp_path) -> None:
     cfg, _plan_path = register_relocate_plan_ready_run(
         tmp_path,
@@ -626,7 +773,8 @@ def test_relocate_apply_uses_run_scoped_on_dst_exists_policy(tmp_path) -> None:
     def fake_python_runner(script: Path, args: list[str], _cwd: str | None = None) -> str:
         if script.name == "backup_mediaops_db.py" and args[args.index("--action") + 1] == "backup":
             backup_path = Path(cfg.windows_ops_root) / "db" / "mediaops.sqlite.bak_20260426_pre_relocate_apply"
-            backup_path.write_text("db backup", encoding="utf-8")
+            with sqlite3.connect(backup_path) as con:
+                con.execute("CREATE TABLE fixture (id INTEGER)")
             return json.dumps({"ok": True, "action": "backup", "backup_path": str(backup_path), "error": ""}, ensure_ascii=False)
         if script.name == "backup_mediaops_db.py" and args[args.index("--action") + 1] == "rotate":
             return json.dumps({"ok": True, "action": "rotate", "deleted_count": 0}, ensure_ascii=False)

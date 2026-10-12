@@ -6,11 +6,14 @@ metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipe
 
 # V2 Move Plan Review
 
+Read `video-library-pipeline` if not already loaded in this turn. Apply its
+Continuation and Authorization Contract throughout this branch.
+
 ## Rule
 
 - Use only V2 public tools.
 - Apply/move must be run-scoped: `runId` + plan `artifactId`.
-- Require explicit user confirmation before resuming an action that applies a plan.
+- Require explicit user approval covering the current inspected move scope. Reuse existing scope-based approval after comparing the current plan; a new turn/run/artifact does not itself require another question. Exact-artifact approval remains exact-artifact only.
 - Never pass a filesystem `planPath` guessed from a previous run or latest file.
 - Never apply a stale plan. If source or destination state may have changed, create a fresh same-flow dry-run and compare it first.
 
@@ -45,8 +48,8 @@ metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipe
    - plan artifact ID and path
    - source/destination examples from preview when available
    - diagnostics or gates still attached to the run
-6. Ask for explicit approval to apply the current plan.
-7. After approval, call the exact resume params returned by the workflow:
+6. Check existing approval against the whole current plan scope: operation, source recordings/titles/roots, destinations, collision policy and exclusions. Keep held, quarantined and title-mismatched recordings protected. If the plan is within the approved scope, continue without asking again. If approval is absent, narrower than the plan, or explicitly tied to an old artifact, finish the concrete review and ask once for the uncovered scope. Establish coverage using supported artifact inspection (`previewBytes` up to 65536) and run-scoped routing/diagnostic summaries; a few preview rows alone are not proof of whole-plan coverage. If the public surface cannot expose necessary evidence, diagnose and repair that inspection gap under the shared contract rather than asking the user to waive it.
+7. Once covered by approval and all freshness/gate checks pass, call the exact current resume params returned by the workflow:
    ```json
    video_pipeline_resume {
      "runId": "<runId>",
@@ -54,11 +57,11 @@ metadata: {"openclaw":{"emoji":"📦","requires":{"plugins":["video-library-pipe
      "resumeAction": "<resumeAction from nextActions>"
    }
    ```
-8. Report final `phase`, `outcome`, diagnostics, and apply artifacts.
+8. Verify apply receipts and current state. Inspect failed/truncated responses before any retry; never repeat verified moves. Continue any remaining authorized stage, then report the requested outcome and protected exclusions.
 
 ## Completion Criteria
 
 - `phase == "complete"` with `outcome == "workflow_run_superseded"` means the stale snapshot was safely retired without moving files.
 - `phase == "complete"` after apply means the V2 workflow is complete.
-- `phase == "blocked"` or `phase == "failed"` means stop and report diagnostics.
+- `phase == "blocked"` or `phase == "failed"` invokes the shared recovery contract: reconcile partial moves/DB updates, resolve bounded authorized causes and refresh the plan through public V2. Preserve failed-run evidence; never blindly retry apply or weaken guards.
 - Distinguish physical move completion from metadata review, supersession, or DB-only operations.

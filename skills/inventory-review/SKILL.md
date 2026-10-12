@@ -6,12 +6,15 @@ metadata: {"openclaw":{"emoji":"📋","requires":{"plugins":["video-library-pipe
 
 # SourceRoot V2 Run Start
 
+Read `video-library-pipeline` if not already loaded in this turn. Apply its
+Continuation and Authorization Contract throughout this branch.
+
 ## Rule
 
 - Use only the V2 public tools.
 - Start with `video_pipeline_start`; do not call hidden legacy tools.
 - Do not infer latest files from `windowsOpsRoot/llm` or `windowsOpsRoot/move`.
-- Stop for human review whenever the returned `nextActions` or `followUpToolCalls` require it.
+- A human-review flag blocks an uncovered applying action, not inspection/repair or the whole task. Finish preparation and check existing scoped approval through the shared contract before asking.
 - If `complete_empty_plan` is returned with `requiresHumanInput: false`, call its exact resume params directly. The plugin revalidates the artifact checksum, recorded `planned=0`, and absence of plan operations before completing the run.
 
 ## Tool Sequence
@@ -39,7 +42,7 @@ metadata: {"openclaw":{"emoji":"📋","requires":{"plugins":["video-library-pipe
 3. If `nextActions` returns `complete_empty_plan` with `requiresHumanInput: false`, call the exact `video_pipeline_resume` params and verify `phase == "complete"`.
 4. If `phase == "review_required"`, hand off to `skills/extract-review/SKILL.md` with the full result.
 5. If `phase == "plan_ready"` with a human review action, hand off to `skills/move-review/SKILL.md` with the returned plan action.
-6. If `phase == "blocked"` or `phase == "failed"`, report diagnostics and stop.
+6. If `phase == "blocked"` or `phase == "failed"`, inspect diagnostics and partial effects, then follow the shared recovery contract. Stop only when no authorized step can proceed, with a concrete owner and resume condition.
 
 ## Human Review Checklist
 
@@ -54,3 +57,4 @@ metadata: {"openclaw":{"emoji":"📋","requires":{"plugins":["video-library-pipe
 - To metadata review: pass `runId`, open gate details, and artifact IDs from `gates`.
 - To move review: pass the `followUpToolCalls` entry whose reason/action is plan review.
 - Empty sourceRoot plans do not hand off to move review; complete them through their returned resume action.
+- Handoff continues in this same main-agent task; it is not a reason to end the turn or request another "continue".

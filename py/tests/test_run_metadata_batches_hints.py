@@ -1,4 +1,9 @@
 import run_metadata_batches_promptv1 as mod
+import hashlib
+import json
+import sys
+
+import pytest
 
 
 def test_load_hints_missing_file_is_ai_only_and_stdout_clean(tmp_path, capsys):
@@ -113,3 +118,45 @@ def test_program_dictionary_skips_broadcast_frame_titles(make_db):
     )
 
     assert result == "機動戦士ガンダム 水星の魔女"
+
+
+@pytest.mark.parametrize("suffix", ["2024-03-10-09:30", "2024-03-10-09：30", "２０２４-０３-１０-０９：３０"])
+def test_hyphen_colon_recording_date_is_used_and_removed_from_title(suffix):
+    name = f'爆上戦隊ブンブンジャー「情報屋は認めない」{suffix}.mp4'
+    assert mod.extract_air_date(name) == "2024-03-10"
+    assert mod.strip_suffix(name) == '爆上戦隊ブンブンジャー「情報屋は認めない」'
+
+
+def test_output_only_extracts_dates_flags_mtime_and_never_changes_database(tmp_path, monkeypatch, capsys):
+    from mediaops_schema import connect_db, create_schema_if_needed
+    import upsert_path_metadata_jsonl
+
+    db = tmp_path / "mediaops.sqlite"
+    con = connect_db(str(db))
+    create_schema_if_needed(con)
+    con.close()
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    queue = tmp_path / "queue.jsonl"
+    queue.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in [
+        {"path_id": "p1", "path": r"N:\Show2024-03-10-09：30.mp4",
+         "name": "Show2024-03-10-09：30.mp4", "mtime_utc": "2024-03-31T00:00:00Z"},
+        {"path_id": "p2", "path": r"N:\Show.mp4", "name": "Show.mp4",
+         "mtime_utc": "2024-03-31T00:00:00Z"},
+    ]) + "\n", encoding="utf-8")
+
+    def reject_upsert():
+        raise AssertionError("output-only extraction must not call metadata upsert")
+
+    monkeypatch.setattr(upsert_path_metadata_jsonl, "main", reject_upsert)
+    monkeypatch.setattr(sys, "argv", ["extract", "--db", str(db), "--queue", str(queue),
+                                    "--outdir", str(tmp_path / "out"), "--output-only"])
+    assert mod.main() == 0
+    summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert summary["outputOnly"] is True
+    assert summary["processed"] == 2
+    rows = [json.loads(line) for line in (tmp_path / "out" / "llm_filename_extract_output_0001_0002.jsonl").read_text().splitlines()]
+    assert rows[0]["air_date"] == "2024-03-10"
+    assert "air_date_from_mtime" not in (rows[0]["needs_review_reason"] or "")
+    assert rows[1]["needs_review"] is True
+    assert "air_date_from_mtime" in rows[1]["needs_review_reason"]
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before

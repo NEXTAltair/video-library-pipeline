@@ -81,7 +81,11 @@ function toFollowUpToolCall(action: WorkflowNextAction): WorkflowFollowUpToolCal
 function nextStepFor(followUpToolCalls: WorkflowFollowUpToolCall[]): string | undefined {
   if (followUpToolCalls.length === 0) return undefined;
   if (followUpToolCalls.some((call) => call.requiresHumanReview)) {
-    return "Review the referenced workflow artifacts with the user, then execute followUpToolCalls when approved.";
+    const approval = "Review the referenced workflow artifacts. Execute a review-required action only when explicit user approval covers its current inspected scope; matching prior approval is sufficient. Otherwise finish available non-applying preparation before asking for concrete approval.";
+    if (followUpToolCalls.some((call) => !call.requiresHumanReview)) {
+      return "Complete the applicable non-review preparation first using its exact followUpToolCalls params, then refresh status and inspect the replacement artifacts before any applying action. " + approval;
+    }
+    return approval;
   }
   return "Proceed with followUpToolCalls to continue the workflow.";
 }

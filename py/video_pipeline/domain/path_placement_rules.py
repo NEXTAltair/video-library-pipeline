@@ -141,7 +141,8 @@ class DriveRoutes:
                 if route.genre == pre:
                     return route, f"pre_resolved_genre:{pre}"
 
-        # 1. Try EPG genre match
+        # Unambiguous EPG categories (e.g. movie) retain priority. The shared
+        # anime/tokusatsu category is a fallback, not proof of anime.
         epg_genres = md.get("epg_genres") or []
         epg_genre_str = md.get("epg_genre") or ""
         # Collect all genre strings
@@ -160,20 +161,24 @@ class DriveRoutes:
         if epg_genre_str:
             genre_strings.append(str(epg_genre_str))
 
+        shared_category_match = None
         for route in self.routes:
             for pattern in route.epg_genre_match:
                 for gs in genre_strings:
                     if _epg_genre_matches(gs, pattern):
+                        if pattern in {"アニメ/特撮 - *", "アニメ/特撮"}:
+                            if shared_category_match is None:
+                                shared_category_match = (route, f"epg_genre:{pattern}")
+                            continue
                         return route, f"epg_genre:{pattern}"
 
-        # 2. Try title pattern match
-        program_title = str(md.get("program_title") or "")
-        title_lower = program_title.lower()
+        title_lower = normalize_title_for_comparison(str(md.get("program_title") or ""))
         for route in self.routes:
             for pattern in route.title_patterns:
-                if pattern.lower() in title_lower:
+                if pattern and normalize_title_for_comparison(pattern) in title_lower:
                     return route, f"title_pattern:{pattern}"
-
+        if shared_category_match:
+            return shared_category_match
         return None, "no_match"
 
 

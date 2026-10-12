@@ -6,19 +6,22 @@ explicit scheduled policy: fresh, conflict-free operations only, no review bypas
 """
 from __future__ import annotations
 import argparse
-import fcntl
 import json
 import os
 import sqlite3
 import subprocess
 import sys
+import uuid
 from pathlib import Path
+from video_pipeline.platform.writer_lock import workflow_writer
+from video_pipeline.platform.sqlite_snapshot import online_snapshot
 from video_pipeline.workflows.source_root import (
     SourceRootWorkflowService, SourceRootDryRunConfig, SourceRootApplyConfig,
     parse_last_json_object_line, write_json, local_path_from_any,
 )
 from video_pipeline.workflows.store import WorkflowStore
 from video_pipeline.domain.move_apply_stats import aggregate_move_apply
+from video_pipeline.platform.artifact_retention import create_workspace, finish_workspace
 
 PY_ROOT = Path(__file__).resolve().parent
 
@@ -67,12 +70,30 @@ def evaluate_plan(run):
 
 
 def execute(args):
+    if args.apply:
+        return _execute(args)
+    # Keep development checkouts clean and distinguish disposable DB clones from
+    # durable run manifests/plans. Failed and review-required previews stay held.
+    ops = local_path_from_any(args.windows_ops_root)
+    ops.mkdir(parents=True, exist_ok=True)
+    workspace = create_workspace(ops / "artifacts", "preview_" + uuid.uuid4().hex)
+    try:
+        payload, code = _execute(args, preview_workspace=workspace)
+    except Exception:
+        finish_workspace(workspace, status="failed")
+        raise
+    status = "complete" if payload.get("ok") and payload.get("phase") == "complete" else "blocked"
+    finish_workspace(workspace, status=status)
+    payload["artifactWorkspace"] = str(workspace)
+    return payload, code
+
+
+def _execute(args, *, preview_workspace=None):
     ops = local_path_from_any(args.windows_ops_root)
     db = local_path_from_any(args.db)
     ops.mkdir(parents=True,exist_ok=True)
     # A single owner across CLI, scheduled and preview invocations.
-    with (ops / "daily.lock").open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with workflow_writer(ops):
         if not Path(args.drive_routes).is_file():
             raise ValueError("振り分け設定が存在しません: " + args.drive_routes)
         import shutil
@@ -87,13 +108,11 @@ def execute(args):
         recovered = recover_receipts(ops,db) if args.apply else []
         workflow_ops = ops
         if not args.apply:
-            import tempfile
-            workflow_ops = Path(tempfile.mkdtemp(prefix="preview_",dir=ops))
+            workflow_ops = preview_workspace / "evidence"
             import shutil
             shutil.copytree(ops / "scripts",workflow_ops / "scripts")
-            preview_db = workflow_ops / "mediaops.sqlite"
-            with sqlite3.connect(f"file:{db}?mode=ro",uri=True) as source, sqlite3.connect(preview_db) as target:
-                source.backup(target)
+            preview_db = preview_workspace / "cache" / "mediaops.sqlite"
+            online_snapshot(db, preview_db)
             db = preview_db
         epg = parse_last_json_object_line(run_python(PY_ROOT / "ingest_program_txt.py", ["--db",str(db),"--ts-root",args.ts_root,"--apply"]))
         if epg.get("ok") is not True or epg.get("parseFailed",0):
