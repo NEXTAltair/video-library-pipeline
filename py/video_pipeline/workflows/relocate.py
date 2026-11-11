@@ -47,6 +47,20 @@ PythonRunner = Callable[[Path, list[str], str | None], str]
 PowerShellRunner = Callable[[str, list[str]], dict[str, Any]]
 
 
+# The request was wrong, not the run: report it and leave the run resumable.
+CALL_REJECTION_CODES = frozenset({
+    "relocate_resume_action_unsupported",
+    "relocate_registration_wrong_flow",
+    "relocate_apply_wrong_flow",
+    "relocate_apply_wrong_phase",
+    "relocate_apply_review_gate_blocked",
+    "relocate_apply_plan_not_in_run",
+    "relocate_apply_invalid_artifact_type",
+    "relocate_apply_plan_not_available",
+    "relocate_apply_plan_not_current",
+})
+
+
 class RelocateApplyRejected(Exception):
     def __init__(self, diagnostic: Diagnostic) -> None:
         self.diagnostic = diagnostic
@@ -622,7 +636,11 @@ class RelocateWorkflowService:
                         action="register_unregistered",
                         label="Register untracked files without moving them",
                         tool="video_pipeline_resume",
-                        params={"runId": run_id, "artifactIds": [diagnostics_artifact.id]},
+                        params={
+                            "runId": run_id,
+                            "artifactIds": [diagnostics_artifact.id],
+                            "resumeAction": "register_unregistered",
+                        },
                         requires_human_input=False,
                     )
                 ],
@@ -674,7 +692,11 @@ class RelocateWorkflowService:
                         action="prepare_relocate_metadata",
                         label="Prepare missing or blocked relocate metadata",
                         tool="video_pipeline_resume",
-                        params={"runId": run_id, "artifactIds": artifact_ids},
+                        params={
+                            "runId": run_id,
+                            "artifactIds": artifact_ids,
+                            "resumeAction": "prepare_relocate_metadata",
+                        },
                         requires_human_input=has_review_blocker,
                     )
                 ],
@@ -704,6 +726,7 @@ class RelocateWorkflowService:
                             "runId": run_id,
                             "gateId": gate.id,
                             "artifactIds": [diagnostics_artifact.id],
+                            "resumeAction": "review_relocate_metadata",
                         },
                         requires_human_input=True,
                     )
@@ -956,15 +979,7 @@ class RelocateWorkflowService:
                 message=f"run is not a relocate workflow: {run.flow}",
                 details={"runId": run_id, "flow": run.flow, "action": action},
             )
-            run.diagnostics.append(diagnostic)
-            store.write_run(run)
-            return self._result(
-                ok=False,
-                store=store,
-                run_id=run_id,
-                phase=run.phase,
-                outcome="relocate_resume_action_rejected",
-            )
+            return self._reject_call(run, "relocate_resume_action_rejected", diagnostic)
         if run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
             diagnostic = Diagnostic(
                 code="relocate_resume_wrong_phase",
@@ -972,15 +987,7 @@ class RelocateWorkflowService:
                 message=f"relocate metadata resume requires phase review_required, got {run.phase}",
                 details={"runId": run_id, "phase": run.phase, "action": action},
             )
-            run.diagnostics.append(diagnostic)
-            store.write_run(run)
-            return self._result(
-                ok=False,
-                store=store,
-                run_id=run_id,
-                phase=run.phase,
-                outcome="relocate_resume_action_rejected",
-            )
+            return self._reject_call(run, "relocate_resume_action_rejected", diagnostic)
 
         existing_review_gate = next(
             (
@@ -1044,9 +1051,13 @@ class RelocateWorkflowService:
 
     def _resume_reextract_metadata(self, store: WorkflowStore, run_id: str) -> WorkflowResult:
         run = store.read_run(run_id)
+        if run.flow != WorkflowFlow.RELOCATE.value or run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
+            return self._reject_call(run, "relocate_metadata_reextract_failed", Diagnostic(
+                code="relocate_metadata_reextract_wrong_phase", severity=DiagnosticSeverity.ERROR,
+                message="metadata re-extraction requires a relocate run in review_required",
+                details={"runId": run_id, "flow": run.flow, "phase": run.phase},
+            ))
         try:
-            if run.flow != WorkflowFlow.RELOCATE.value or run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
-                raise ValueError("metadata re-extraction requires a relocate run in review_required")
             gates = [
                 gate for gate in run.review_gates.values()
                 if gate.type == "metadata_review" and gate.status == ReviewGateStatus.OPEN.value
@@ -1446,6 +1457,8 @@ class RelocateWorkflowService:
                 outcome=outcome,
                 diagnostics=[diagnostic],
             )
+        if diagnostic.code in CALL_REJECTION_CODES:
+            return self._reject_call(run, outcome, diagnostic)
         run.diagnostics.append(diagnostic)
         store.write_run(run)
         if run.flow == WorkflowFlow.RELOCATE.value and run.phase not in {
@@ -1461,6 +1474,19 @@ class RelocateWorkflowService:
             run_id=run_id,
             phase=final_run.phase,
             outcome=outcome,
+        )
+
+    def _reject_call(self, run: Any, outcome: str, diagnostic: Diagnostic) -> WorkflowResult:
+        # Not persisted: repeating a bad call must not grow or alter the manifest.
+        return WorkflowResult(
+            ok=False,
+            run_id=run.run_id,
+            flow=run.flow,
+            phase=run.phase,
+            outcome=outcome,
+            artifacts=[run.artifacts[aid] for aid in run.artifact_ids],
+            gates=[run.review_gates[gid] for gid in run.review_gate_ids],
+            diagnostics=[*run.diagnostics, diagnostic],
         )
 
     def _record_failure(self, store: WorkflowStore, run_id: str, diagnostic: Diagnostic) -> None:

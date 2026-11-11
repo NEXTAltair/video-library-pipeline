@@ -168,14 +168,13 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
         args.push("--superseded-by-run-id", params.supersededByRunId.trim());
       }
       if (typeof params.reason === "string" && params.reason.trim()) args.push("--reason", params.reason.trim());
-      if (action === "apply_reviewed_metadata") {
-        if (typeof params.gateId === "string") args.push("--gate-id", params.gateId);
-        if (Array.isArray(params.artifactIds)) args.push("--artifact-ids-json", JSON.stringify(stringArray(params.artifactIds)));
-        if (Array.isArray(params.reviewYamlPaths)) args.push("--review-yaml-paths-json", JSON.stringify(stringArray(params.reviewYamlPaths)));
-        const revision = finiteInteger(params.runRevision);
-        if (revision !== null) args.push("--run-revision", String(revision));
-        if (params.reviewDigests) args.push("--review-digests-json", JSON.stringify(params.reviewDigests));
-      }
+      // Returned params are passed verbatim, so every key is forwarded for every action.
+      if (typeof params.gateId === "string") args.push("--gate-id", params.gateId);
+      if (Array.isArray(params.artifactIds)) args.push("--artifact-ids-json", JSON.stringify(stringArray(params.artifactIds)));
+      if (Array.isArray(params.reviewYamlPaths)) args.push("--review-yaml-paths-json", JSON.stringify(stringArray(params.reviewYamlPaths)));
+      const revision = finiteInteger(params.runRevision);
+      if (revision !== null) args.push("--run-revision", String(revision));
+      if (params.reviewDigests) args.push("--review-digests-json", JSON.stringify(params.reviewDigests));
       return runWorkflowCli("resume", args, workflowToolResult);
     },
   });

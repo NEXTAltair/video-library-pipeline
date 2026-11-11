@@ -1,7 +1,9 @@
 import argparse
 
 from video_pipeline.workflows import WorkflowFlow, WorkflowPhase, WorkflowStore
-from workflow_cli import _cmd_inspect_artifact, _cmd_status
+import pytest
+
+from workflow_cli import _cmd_inspect_artifact, _cmd_resume, _cmd_status, _next_actions_for_run, build_parser
 
 
 def test_workflow_cli_status_lists_recent_runs(tmp_path):
@@ -251,6 +253,7 @@ def test_workflow_cli_status_prefers_open_relocate_review_gate_over_stale_queue(
             "runId": "run_relocate_review",
             "gateId": "relocate_metadata_review",
             "artifactIds": ["relocate_diagnostics"],
+            "resumeAction": "review_relocate_metadata",
         },
         "requiresHumanInput": True,
     }
@@ -346,3 +349,77 @@ def test_workflow_cli_inspect_artifact_returns_related_gates_and_preview(tmp_pat
     assert payload["exists"] is True
     assert payload["relatedGates"][0]["id"] == "relocate_plan_review"
     assert payload["contentPreview"] == '{"ok": true}\n'
+
+
+def _relocate_review_run(ops_root, run_id, *, unregistered=0, queue=False, gate=False):
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.RELOCATE, run_id=run_id, config_snapshot={"db": str(ops_root / "db.sqlite")})
+    run_dir = ops_root / "runs" / run_id
+    diagnostics = run_dir / "logs" / "diagnostics.json"
+    diagnostics.write_text("{}", encoding="utf-8")
+    store.register_artifact(run_id, artifact_type="relocate_diagnostics", path=diagnostics, producer="test",
+                            artifact_id="relocate_diagnostics",
+                            metadata={"summary": {"unregisteredSkipped": unregistered}})
+    if queue:
+        queue_path = run_dir / "metadata" / "queue.jsonl"
+        queue_path.write_text("{}\n", encoding="utf-8")
+        store.register_artifact(run_id, artifact_type="relocate_metadata_queue", path=queue_path,
+                                producer="test", artifact_id="relocate_metadata_queue")
+    if gate:
+        store.create_review_gate(run_id, gate_type="relocate_metadata_review",
+                                 artifact_ids=["relocate_diagnostics"], gate_id="relocate_metadata_review")
+    store.transition_run(run_id, WorkflowPhase.METADATA_EXTRACTED)
+    store.transition_run(run_id, WorkflowPhase.REVIEW_REQUIRED)
+    return store
+
+
+@pytest.mark.parametrize("shape,expected", [
+    ({"unregistered": 2}, "register_unregistered"),
+    ({"queue": True}, "prepare_relocate_metadata"),
+    ({}, "prepare_relocate_metadata"),
+    ({"gate": True}, "review_relocate_metadata"),
+])
+def test_status_next_action_params_carry_resume_action(tmp_path, shape, expected):
+    # #136: status rebuilds the same actions; their params must be callable as returned.
+    store = _relocate_review_run(tmp_path / "ops", "run_status_params", **shape)
+    actions = _next_actions_for_run(store.read_run("run_status_params"))
+    assert [item.params["resumeAction"] for item in actions] == [expected]
+
+
+def _resume_args(ops_root, **params):
+    argv = ["resume", "--windows-ops-root", str(ops_root), "--run-id", params["runId"]]
+    if params.get("resumeAction"):
+        argv += ["--action", params["resumeAction"]]
+    return build_parser().parse_args(argv)
+
+
+def test_resume_without_action_does_not_apply_or_change_the_run(tmp_path):
+    # #136: an omitted action used to be treated as apply and blocked the run.
+    ops_root = tmp_path / "ops"
+    store = _relocate_review_run(ops_root, "run_no_action", unregistered=1)
+    manifest = store.manifest_path("run_no_action")
+    before = manifest.read_bytes()
+
+    payload = _cmd_resume(_resume_args(ops_root, runId="run_no_action"))
+
+    assert payload["ok"] is False
+    assert payload["outcome"] == "resume_action_required"
+    assert payload["phase"] == "review_required"
+    assert payload["nextActions"][0]["params"]["resumeAction"] == "register_unregistered"
+    assert manifest.read_bytes() == before
+
+
+def test_rejected_resume_returns_the_currently_valid_actions(tmp_path):
+    # #137: a wrong call keeps the run usable and says what can be called instead.
+    ops_root = tmp_path / "ops"
+    store = _relocate_review_run(ops_root, "run_wrong_action", unregistered=1)
+    manifest = store.manifest_path("run_wrong_action")
+    before = manifest.read_bytes()
+
+    payload = _cmd_resume(_resume_args(ops_root, runId="run_wrong_action", resumeAction="apply_relocate_move_plan"))
+
+    assert payload["ok"] is False
+    assert payload["phase"] == "review_required"
+    assert payload["diagnostics"][-1]["code"] == "relocate_apply_wrong_phase"
+    assert payload["nextActions"][0]["params"]["resumeAction"] == "register_unregistered"
+    assert manifest.read_bytes() == before

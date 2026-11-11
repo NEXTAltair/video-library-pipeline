@@ -218,7 +218,11 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
                     action="register_unregistered",
                     label="Register untracked files without moving them",
                     tool="video_pipeline_resume",
-                    params={"runId": run.run_id, "artifactIds": [diagnostics_id]},
+                    params={
+                        "runId": run.run_id,
+                        "artifactIds": [diagnostics_id],
+                        "resumeAction": "register_unregistered",
+                    },
                     requires_human_input=False,
                 )
             ]
@@ -234,6 +238,7 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
                         "runId": run.run_id,
                         "gateId": review_gate.id,
                         "artifactIds": list(review_gate.artifact_ids),
+                        "resumeAction": "review_relocate_metadata",
                     },
                     requires_human_input=True,
                 )
@@ -244,7 +249,11 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
                     action="prepare_relocate_metadata",
                     label="Prepare missing or blocked relocate metadata",
                     tool="video_pipeline_resume",
-                    params={"runId": run.run_id, "artifactIds": [queue_id]},
+                    params={
+                        "runId": run.run_id,
+                        "artifactIds": [queue_id],
+                        "resumeAction": "prepare_relocate_metadata",
+                    },
                     requires_human_input=review_gate is not None,
                 )
             ]
@@ -254,11 +263,26 @@ def _next_actions_for_run(run: Any) -> list[NextAction]:
                     action="prepare_relocate_metadata",
                     label="Prepare missing or blocked relocate metadata",
                     tool="video_pipeline_resume",
-                    params={"runId": run.run_id, "artifactIds": [diagnostics_id]},
+                    params={
+                        "runId": run.run_id,
+                        "artifactIds": [diagnostics_id],
+                        "resumeAction": "prepare_relocate_metadata",
+                    },
                     requires_human_input=False,
                 )
             ]
     return []
+
+
+def _with_current_next_actions(store: WorkflowStore, payload: dict[str, Any]) -> dict[str, Any]:
+    """A rejected call leaves the run usable; tell the caller what is valid now."""
+    if payload.get("ok") is False and not payload.get("nextActions"):
+        try:
+            run = store.read_run(str(payload.get("runId") or ""))
+            payload["nextActions"] = [item.to_dict() for item in _next_actions_for_run(run)]
+        except Exception:
+            pass
+    return payload
 
 
 def _cmd_start(args: argparse.Namespace) -> dict[str, Any]:
@@ -311,6 +335,24 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
     run = store.read_run(args.run_id)
     action = args.action or None
     artifact_id = args.artifact_id or None
+    if action is None:
+        # Never guess: an omitted action used to mean "apply" and broke runs.
+        return {
+            "ok": False,
+            "runId": run.run_id,
+            "flow": run.flow,
+            "phase": run.phase,
+            "outcome": "resume_action_required",
+            "artifacts": [],
+            "gates": [],
+            "nextActions": [item.to_dict() for item in _next_actions_for_run(run)],
+            "diagnostics": [{
+                "code": "resume_action_required",
+                "severity": "error",
+                "message": "resumeAction is required; pass the exact params from nextActions",
+                "details": {"runId": run.run_id, "phase": run.phase},
+            }],
+        }
     if action == "supersede_run":
         superseded_run = store.supersede_run(
             args.run_id,
@@ -347,9 +389,9 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                 run_revision=getattr(args, "run_revision", None),
                 review_digests=json.loads(getattr(args, "review_digests_json", "") or "{}"),
             ),
-            action=action or "apply_source_root_move_plan",
+            action=action,
         )
-        return result.to_dict()
+        return _with_current_next_actions(store, result.to_dict())
     if run.flow == "relocate":
         result = RelocateWorkflowService().resume(
             RelocateApplyConfig(
@@ -364,9 +406,9 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                 run_revision=getattr(args, "run_revision", None),
                 review_digests=json.loads(getattr(args, "review_digests_json", "") or "{}"),
             ),
-            action=action or "apply_relocate_move_plan",
+            action=action,
         )
-        return result.to_dict()
+        return _with_current_next_actions(store, result.to_dict())
     raise ValueError(f"unsupported run flow: {run.flow}")
 
 

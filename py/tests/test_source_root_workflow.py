@@ -802,9 +802,10 @@ def test_source_root_apply_rejects_plan_artifact_from_another_run(tmp_path) -> N
 
     payload = result.to_dict()
     assert payload["ok"] is False
-    assert payload["phase"] == "blocked"
+    assert payload["phase"] == "plan_ready"
     assert payload["outcome"] == "source_root_apply_rejected"
     assert payload["diagnostics"][-1]["code"] == "source_root_apply_plan_not_in_run"
+    assert store.read_run("run_b").phase == "plan_ready"
 
 
 def test_source_root_apply_rejects_open_review_gate(tmp_path) -> None:
@@ -822,8 +823,9 @@ def test_source_root_apply_rejects_open_review_gate(tmp_path) -> None:
 
     payload = result.to_dict()
     assert payload["ok"] is False
-    assert payload["phase"] == "blocked"
+    assert payload["phase"] == "plan_ready"
     assert payload["diagnostics"][-1]["code"] == "source_root_apply_review_gate_blocked"
+    assert store.read_run(cfg.run_id).phase == "plan_ready"
     assert payload["diagnostics"][-1]["details"]["blockingGateIds"] == ["metadata_review"]
 
 
@@ -848,8 +850,9 @@ def test_source_root_apply_rejects_rejected_review_gate(tmp_path) -> None:
 
     payload = result.to_dict()
     assert payload["ok"] is False
-    assert payload["phase"] == "blocked"
+    assert payload["phase"] == "plan_ready"
     assert payload["diagnostics"][-1]["code"] == "source_root_apply_review_gate_blocked"
+    assert store.read_run(cfg.run_id).phase == "plan_ready"
     assert payload["diagnostics"][-1]["details"]["blockingGateStatuses"] == {"metadata_review": "rejected"}
 
 
@@ -896,7 +899,7 @@ def test_source_root_apply_rejects_terminal_run_without_blocked_transition(tmp_p
     manifest_path = Path(cfg.windows_ops_root) / "runs" / cfg.run_id / "run.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["phase"] == "complete"
-    assert manifest["diagnostics"][-1]["code"] == "source_root_apply_wrong_phase"
+    assert manifest["diagnostics"] == []
 
 
 def test_source_root_apply_rejects_other_flow_without_blocking_run(tmp_path) -> None:
@@ -918,7 +921,7 @@ def test_source_root_apply_rejects_other_flow_without_blocking_run(tmp_path) -> 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["flow"] == "relocate"
     assert manifest["phase"] == "plan_ready"
-    assert manifest["diagnostics"][-1]["code"] == "source_root_apply_wrong_flow"
+    assert manifest["diagnostics"] == []
 
 
 def test_source_root_apply_registers_apply_artifacts_and_completes(tmp_path) -> None:
@@ -984,3 +987,22 @@ def test_source_root_apply_registers_apply_artifacts_and_completes(tmp_path) -> 
     assert manifest["artifacts"]["source_root_move_apply_log"]["inputArtifactIds"] == ["source_root_move_plan"]
     assert manifest["artifacts"]["source_root_db_update"]["inputArtifactIds"] == ["source_root_move_apply_log"]
     assert manifest["artifacts"]["source_root_move_apply_stats"]["metadata"]["summary"]["succeeded"] == 1
+
+
+def test_source_root_wrong_call_leaves_run_resumable(tmp_path) -> None:
+    # #137: a mistaken call is reported, never turned into a terminal run.
+    cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_wrong_call")
+    store = WorkflowStore(Path(cfg.windows_ops_root))
+    before = store.manifest_path(cfg.run_id).read_bytes()
+    service = SourceRootWorkflowService(py_root=tmp_path)
+
+    for action, code in (
+        ("no_such_action", "source_root_resume_action_unsupported"),
+        ("complete_empty_source_root_plan", "source_root_empty_plan_not_empty"),
+    ):
+        rejected = service.resume(cfg, action=action).to_dict()
+        assert rejected["ok"] is False
+        assert rejected["phase"] == "plan_ready"
+        assert rejected["diagnostics"][-1]["code"] == code
+
+    assert store.manifest_path(cfg.run_id).read_bytes() == before
