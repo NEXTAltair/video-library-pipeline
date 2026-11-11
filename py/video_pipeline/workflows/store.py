@@ -133,8 +133,35 @@ class WorkflowStore:
         run.phase = WorkflowPhase(to_phase).value
         run.status = phase_status(to_phase).value
         run.updated_at = now
+        if run.phase in {WorkflowPhase.BLOCKED.value, WorkflowPhase.FAILED.value}:
+            # A dead run cannot be decided on; leaving its gates open only misleads status.
+            self._cancel_open_gates(run, now, f"run_{run.phase}")
         self.write_run(run)
         return run
+
+    @staticmethod
+    def _cancel_open_gates(run: WorkflowRun, now: str, reason: str) -> list[str]:
+        cancelled = []
+        for gate in run.review_gates.values():
+            if gate.status == ReviewGateStatus.OPEN.value:
+                gate.status = ReviewGateStatus.CANCELLED.value
+                gate.resolved_at = now
+                gate.resolution = {"action": "cancel_stale_gates", "reason": reason, "runPhase": run.phase}
+                cancelled.append(gate.id)
+        return cancelled
+
+    @serialized_store
+    def cancel_stale_gates(self, run_id: str) -> list[str]:
+        """Close open gates of a run that is already blocked or failed (evidence stays in the manifest)."""
+        run = self.read_run(run_id)
+        if run.phase not in {WorkflowPhase.BLOCKED.value, WorkflowPhase.FAILED.value}:
+            raise ValueError(f"only blocked or failed runs can have stale gates cancelled: {run.run_id} is {run.phase}")
+        now = now_iso()
+        cancelled = self._cancel_open_gates(run, now, f"run_{run.phase}")
+        if cancelled:
+            run.updated_at = now
+            self.write_run(run)
+        return cancelled
 
     @serialized_store
     def register_artifact(

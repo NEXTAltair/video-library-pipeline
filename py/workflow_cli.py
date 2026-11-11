@@ -361,6 +361,16 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                 "details": {"runId": run.run_id, "phase": run.phase},
             }],
         }
+    if action == "cancel_stale_gates":
+        cancelled = store.cancel_stale_gates(args.run_id)
+        done = store.read_run(args.run_id)
+        return {
+            "ok": True, "runId": done.run_id, "flow": done.flow, "phase": done.phase,
+            "outcome": "stale_gates_cancelled", "artifacts": [], "gates": [], "nextActions": [],
+            "diagnostics": [{"code": "stale_gates_cancelled", "severity": "info",
+                             "message": f"cancelled {len(cancelled)} open gate(s) of a {done.phase} run",
+                             "details": {"gateIds": cancelled}}],
+        }
     if action == "supersede_run":
         superseded_run = store.supersede_run(
             args.run_id,
@@ -437,18 +447,26 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
     if runs_root.exists():
         manifests = sorted(runs_root.glob("*/run.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         for manifest in manifests:
+            beyond_page = len(runs) >= args.limit
+            # Past the requested page only runs with an open gate matter; skip parsing the rest.
+            if beyond_page and not args.include_artifacts and '"status": "open"' not in manifest.read_text(encoding="utf-8"):
+                continue
             run = store.read_run(manifest.parent.name)
             full_runs.append(run.to_dict())
-            if len(runs) < args.limit:
+            if not beyond_page:
                 runs.append(_run_to_status(run, include_artifacts=args.include_artifacts,
                                            run_dir=store.run_dir(run.run_id)))
     open_gates = []
+    stale_open_gates = 0
     latest_artifacts = []
     for run in full_runs:
         review_gates = run.get("reviewGates") if isinstance(run.get("reviewGates"), dict) else {}
         for gate in review_gates.values():
             if isinstance(gate, dict) and gate.get("status") == "open":
-                open_gates.append({"runId": run.get("runId"), **gate})
+                if run.get("status") == "active":
+                    open_gates.append({"runId": run.get("runId"), **gate})
+                else:
+                    stale_open_gates += 1
         artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
         for artifact in artifacts.values():
             if isinstance(artifact, dict):
@@ -458,6 +476,9 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
         "hints": hints,
         "runs": runs,
         "openGates": open_gates,
+        # Open gates of blocked/failed/complete runs: not actionable, counted so they are not hidden.
+        # Close them with resumeAction "cancel_stale_gates" (blocked/failed) or "supersede_run" (active).
+        "staleOpenGates": stale_open_gates,
         "latestArtifacts": latest_artifacts[: args.limit] if args.include_artifacts else [],
     }
 

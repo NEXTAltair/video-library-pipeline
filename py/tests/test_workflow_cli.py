@@ -423,3 +423,58 @@ def test_rejected_resume_returns_the_currently_valid_actions(tmp_path):
     assert payload["diagnostics"][-1]["code"] == "relocate_apply_wrong_phase"
     assert payload["nextActions"][0]["params"]["resumeAction"] == "register_unregistered"
     assert manifest.read_bytes() == before
+
+
+def _status_args(ops_root, **kw):
+    base = dict(windows_ops_root=str(ops_root), run_id="", limit=1, include_artifacts=False, hints_path="")
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def _run_with_open_gate(ops_root, run_id):
+    store = WorkflowStore(ops_root)
+    store.init_run(WorkflowFlow.RELOCATE, run_id=run_id, config_snapshot={})
+    store.create_review_gate(run_id, gate_type="relocate_metadata_review", artifact_ids=[], gate_id="g")
+    return store
+
+
+def test_terminal_transition_cancels_open_gates(tmp_path):
+    # #140: a blocked or failed run can no longer be decided on.
+    store = _run_with_open_gate(tmp_path / "ops", "run_dies")
+    store.transition_run("run_dies", WorkflowPhase.BLOCKED)
+    gate = store.read_run("run_dies").review_gates["g"]
+    assert gate.status == "cancelled" and gate.resolution["reason"] == "run_blocked"
+
+
+def test_status_lists_only_gates_of_active_runs_and_counts_the_rest(tmp_path):
+    ops_root = tmp_path / "ops"
+    live = _run_with_open_gate(ops_root, "run_live")
+    legacy = _run_with_open_gate(ops_root, "run_legacy_blocked")
+    # Legacy manifests were blocked while their gates stayed open.
+    run = legacy.read_run("run_legacy_blocked")
+    run.phase, run.status = "blocked", "blocked"
+    legacy.write_run(run)
+    for n in range(5):
+        WorkflowStore(ops_root).init_run(WorkflowFlow.RELOCATE, run_id=f"run_filler_{n}", config_snapshot={})
+
+    payload = _cmd_status(_status_args(ops_root))
+    assert [g["runId"] for g in payload["openGates"]] == ["run_live"]
+    assert payload["staleOpenGates"] == 1
+
+
+def test_cancel_stale_gates_action_closes_legacy_gates_only_for_terminal_runs(tmp_path):
+    ops_root = tmp_path / "ops"
+    store = _run_with_open_gate(ops_root, "run_legacy")
+    run = store.read_run("run_legacy")
+    run.phase, run.status = "failed", "failed"
+    store.write_run(run)
+    parser_args = lambda rid: build_parser().parse_args(
+        ["resume", "--windows-ops-root", str(ops_root), "--run-id", rid, "--action", "cancel_stale_gates"])
+
+    payload = _cmd_resume(parser_args("run_legacy"))
+    assert payload["ok"] and payload["outcome"] == "stale_gates_cancelled"
+    assert store.read_run("run_legacy").review_gates["g"].status == "cancelled"
+
+    _run_with_open_gate(ops_root, "run_active")
+    with pytest.raises(ValueError, match="only blocked or failed"):
+        _cmd_resume(parser_args("run_active"))
