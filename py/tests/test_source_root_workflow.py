@@ -698,7 +698,7 @@ def test_source_root_dry_run_failure_returns_failed_result_and_diagnostic(tmp_pa
     assert manifest["diagnostics"][0]["message"] == "queue generation failed"
 
 
-def register_plan_ready_run(tmp_path: Path, run_id: str = "run_source_root_apply") -> tuple[SourceRootApplyConfig, Path]:
+def register_plan_ready_run(tmp_path: Path, run_id: str = "run_source_root_apply", *, rows: int = 1) -> tuple[SourceRootApplyConfig, Path]:
     ops_root = tmp_path / "ops"
     store = WorkflowStore(ops_root)
     store.init_run(
@@ -710,14 +710,17 @@ def register_plan_ready_run(tmp_path: Path, run_id: str = "run_source_root_apply
     plan_path.write_text(
         "\n".join([
             json.dumps({"_meta": {"kind": "move_plan_from_inventory"}}, ensure_ascii=False),
-            json.dumps(
-                {
-                    "op": "move",
-                    "path_id": "p1",
-                    "src": r"B:\Unwatched\show.mp4",
-                    "dst": r"B:\VideoLibrary\Show\show.mp4",
-                },
-                ensure_ascii=False,
+            *(
+                json.dumps(
+                    {
+                        "op": "move",
+                        "path_id": f"p{n}",
+                        "src": rf"B:\Unwatched\show{n}.mp4" if n > 1 else r"B:\Unwatched\show.mp4",
+                        "dst": rf"B:\VideoLibrary\Show\show{n}.mp4" if n > 1 else r"B:\VideoLibrary\Show\show.mp4",
+                    },
+                    ensure_ascii=False,
+                )
+                for n in range(1, rows + 1)
             ),
         ])
         + "\n",
@@ -1006,3 +1009,34 @@ def test_source_root_wrong_call_leaves_run_resumable(tmp_path) -> None:
         assert rejected["diagnostics"][-1]["code"] == code
 
     assert store.manifest_path(cfg.run_id).read_bytes() == before
+
+
+def test_source_root_partial_failure_completes_run_and_offers_replan(tmp_path) -> None:
+    # #139: 46 past runs were failed wholesale by a single bad move.
+    cfg, _plan_path = register_plan_ready_run(tmp_path, run_id="run_source_root_partial", rows=3)
+    plan_rows = [json.loads(l) for l in _plan_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    data_rows = [r for r in plan_rows if "_meta" not in r]
+
+    def fake_powershell_runner(_script: str, args: list[str]) -> dict:
+        out_path = Path(cfg.windows_ops_root) / "move" / "partial.jsonl"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [json.dumps({"_meta": {"kind": "move_apply"}})]
+        for n, row in enumerate(data_rows):
+            ok = n != 0
+            rec = {"op": "move", "path_id": row.get("path_id"), "src": row["src"], "dst": row["dst"], "ok": ok}
+            if not ok:
+                rec["error"] = "dst_exists"
+            lines.append(json.dumps(rec))
+        out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return {"out_jsonl": str(out_path)}
+
+    def fake_python_runner(script: Path, _args: list[str], _cwd: str | None = None) -> str:
+        return json.dumps({"updated": 1, "events": 1})
+
+    result = SourceRootWorkflowService(
+        python_runner=fake_python_runner, powershell_runner=fake_powershell_runner, py_root=tmp_path,
+    ).resume(cfg, action="apply_source_root_move_plan")
+
+    payload = result.to_dict()
+    assert payload["outcome"] == "source_root_apply_partial" and payload["phase"] == "complete"
+    assert payload["nextActions"][0]["params"] == {"flow": "source_root"}

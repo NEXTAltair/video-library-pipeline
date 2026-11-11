@@ -160,3 +160,30 @@ def applying_next_actions(run: Any, run_dir: Path) -> list[NextAction]:
 
 def monotonic() -> float:
     return time.monotonic()
+
+
+def is_partial_apply(stats: dict[str, Any]) -> bool:
+    """Some moves succeeded and some failed: the run's work happened and must be kept."""
+    return int(stats.get("failed") or 0) > 0 and int(stats.get("succeeded") or 0) > 0
+
+
+def partial_apply_diagnostic(flow: str, stats: dict[str, Any]):
+    from .models import Diagnostic, DiagnosticSeverity
+
+    return Diagnostic(
+        code=f"{flow}_apply_partial",
+        severity=DiagnosticSeverity.WARNING,
+        message=f"{stats.get('succeeded')} moves succeeded and {stats.get('failed')} failed; "
+                "succeeded moves are recorded, failed files stayed where they were",
+        details={"moveApplyStats": stats, "errorBreakdown": stats.get("errorBreakdown", {})},
+    )
+
+
+def replan_failed_action(flow: str) -> NextAction:
+    return NextAction(
+        action="replan_failed_moves",
+        label="Preview the same flow again; files that failed are planned again from their current state",
+        tool="video_pipeline_start",
+        params={"flow": flow},
+        requires_human_input=False,
+    )

@@ -29,6 +29,7 @@ from .models import (
     WorkflowPhase,
     WorkflowResult,
 )
+from . import chunked_apply
 from .store import WorkflowStore, sha256_file
 from video_pipeline.platform.writer_lock import serialized_workflow
 from video_pipeline.application.reviewed_metadata import apply_reviewed_metadata
@@ -441,6 +442,24 @@ class SourceRootWorkflowService:
             if int(move_stats.get("totalOps") or 0) != expected_ops:
                 raise RuntimeError(f"incomplete move receipts: expected {expected_ops}, got {move_stats.get('totalOps')}")
             write_json(apply_dir / "db_committed.json", {"dbUpdate":db_update_summary,"moveStats":move_stats})
+            if chunked_apply.is_partial_apply(move_stats):
+                store.transition_run(config.run_id, WorkflowPhase.APPLIED)
+                store.transition_run(config.run_id, WorkflowPhase.COMPLETE)
+                run_now = store.read_run(config.run_id)
+                run_now.diagnostics.append(chunked_apply.partial_apply_diagnostic("source_root", move_stats))
+                store.write_run(run_now)
+                final_run = store.read_run(config.run_id)
+                return WorkflowResult(
+                    ok=False,
+                    run_id=config.run_id,
+                    flow=WorkflowFlow.SOURCE_ROOT,
+                    phase=final_run.phase,
+                    outcome="source_root_apply_partial",
+                    artifacts=[final_run.artifacts[aid] for aid in final_run.artifact_ids],
+                    gates=[final_run.review_gates[gid] for gid in final_run.review_gate_ids],
+                    next_actions=[chunked_apply.replan_failed_action("source_root")],
+                    diagnostics=final_run.diagnostics,
+                )
             if int(move_stats.get("failed") or 0) > 0:
                 diagnostic = Diagnostic(
                     code="source_root_apply_move_failures",
