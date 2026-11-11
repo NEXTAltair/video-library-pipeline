@@ -144,6 +144,12 @@ plugin 内に仮想環境を置くと、interpreter の外部リンクが OpenCl
 UV_PROJECT_ENVIRONMENT="$HOME/.openclaw/plugin-runtime/video-library-pipeline/.venv" uv sync --locked
 ```
 
+## v0.5.0: 実行の安全性
+
+- `resumeAction` を返却 params に含め、省略を暗黙の apply にしない。呼び出しの誤りで run を `blocked` にしない。
+- relocate の apply は分割実行。打ち切られても `status` の `applyProgress` で確認し、`reconcile_relocate_apply` で回収できる([ADR-0013](docs/adr/0013-chunked-recoverable-relocate-apply.md))。一部失敗は run を `complete` として失敗分の再計画を案内する。
+- [変更履歴](docs/releases/v0.5.0.md)
+
 ## v0.4.0: 整合性修正と保守CLI
 
 - reviewed metadataはrun・gate・artifact・承認範囲を検証してから、全batchを1つのtransactionで反映する。DB内のcommit receiptにより同じ受理内容の再送で二重適用しない。
@@ -172,7 +178,7 @@ openclaw video-pipeline-organize --apply --scheduled
 GitHub Releasesの配布tarballをダウンロードしてインストールする。
 
 ```sh
-openclaw plugins install npm-pack:./nextaltair-video-library-pipeline-0.4.0.tgz
+openclaw plugins install npm-pack:./nextaltair-video-library-pipeline-0.5.0.tgz
 ```
 
 監査用のデータ修復は`openclaw video-pipeline-repair-history --help`を参照。既定でコピーDBを使い、`--apply`時は直前バックアップを作る。日次処理で過去データの修復や重複削除を勝手に実行しない。
