@@ -450,6 +450,20 @@ describe("V2 workflow tools", () => {
     ]), "/ext/py");
   });
 
+  it("points a timed-out resume at status instead of inviting a repeat (#138)", async () => {
+    vi.mocked(runCmdAsync).mockResolvedValue({
+      ok: false, code: 1, stdout: "", stderr: "command deadline exceeded; execution may be incomplete",
+      command: "uv", args: [], cwd: "/ext/py",
+    });
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+    const result = await getRegisteredTool(api, "video_pipeline_resume").execute("timeout", {
+      runId: "run_slow", resumeAction: "apply_relocate_move_plan",
+    });
+    expect(result).toMatchObject({ ok: false, runId: "run_slow" });
+    expect(String((result as { recovery: string }).recovery)).toContain("video_pipeline_status");
+  });
+
   it("returns structured failure when workflow_cli.py emits malformed JSON", async () => {
     vi.mocked(runCmdAsync).mockResolvedValue({
       ok: false,

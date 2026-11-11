@@ -57,6 +57,24 @@ Continuation and Authorization Contract throughout this branch.
      "resumeAction": "<resumeAction from nextActions>"
    }
    ```
+   A relocate apply moves bounded chunks within a time budget and returns `phase: "applying"`,
+   `outcome: "relocate_apply_in_progress"` and a `continue_relocate_apply` next action. Large plans take
+   several calls. Progress is durable: each finished chunk is already recorded in the DB.
+   - Call the returned `continue_relocate_apply` params until `phase == "complete"`. Approval of the plan
+     covers the continuation; it moves only rows of the same plan that have no receipt yet.
+   - Never call `apply_relocate_move_plan` again for an `applying` run; it is rejected as
+     `relocate_apply_already_started`. Check progress with `video_pipeline_status` (`applyProgress`:
+     total/done/failed/pending, last update).
+   - A call that timed out or died returns no result but leaves the run `applying` with an interrupted marker
+     (`applyProgress.state == "interrupted"`). Do not retry the same action; follow `nextActions`:
+     `reconcile_relocate_apply` records finished chunks, inspects the one file that may have been mid-move
+     (read-only) and either resumes, or asks for `settle_interrupted_move`.
+   - `settle_interrupted_move` deletes exactly one file after re-verifying it: the source when a byte-identical
+     copy already sits at the destination (this completes the move), or a partial destination copy that differs
+     from the source. It needs approval covering the plan; report the file pair and which one is deleted.
+   - Moving files takes time; waiting on `continue_relocate_apply` calls is expected. Running them from a
+     delegate is fine as long as exactly one caller drives a run at a time (concurrent calls are serialized by
+     the writer lock and a second caller only waits or is rejected).
 8. Verify apply receipts and current state. Inspect failed/truncated responses before any retry; never repeat verified moves. Continue any remaining authorized stage, then report the requested outcome and protected exclusions.
 
 ## Completion Criteria

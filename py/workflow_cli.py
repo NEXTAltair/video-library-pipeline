@@ -13,6 +13,7 @@ from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
 from video_pipeline.workflows.relocate import metadata_reextract_action
+from video_pipeline.workflows import chunked_apply
 from video_pipeline.workflows import (
     NextAction,
     RelocateApplyConfig,
@@ -60,9 +61,12 @@ def _hints_status(path: str | None = None) -> dict[str, Any]:
         return {"ok": False, **exc.status}
 
 
-def _run_to_status(run: Any, *, include_artifacts: bool) -> dict[str, Any]:
+def _run_to_status(run: Any, *, include_artifacts: bool, run_dir: Path | None = None) -> dict[str, Any]:
     payload = run.to_dict()
-    payload["nextActions"] = [action.to_dict() for action in _next_actions_for_run(run)]
+    payload["nextActions"] = [action.to_dict() for action in _next_actions_for_run(run, run_dir)]
+    apply_progress = chunked_apply.progress(run_dir) if run_dir is not None and run.phase == "applying" else None
+    if apply_progress is not None:
+        payload["applyProgress"] = apply_progress
     if not include_artifacts:
         payload = {
             key: payload[key]
@@ -75,6 +79,7 @@ def _run_to_status(run: Any, *, include_artifacts: bool) -> dict[str, Any]:
                 "updatedAt",
                 "revision",
                 "nextActions",
+                "applyProgress",
             )
             if key in payload
         }
@@ -100,7 +105,9 @@ def _artifact_planned_count(run: Any, artifact_id: str) -> int | None:
     return planned if isinstance(planned, int) and not isinstance(planned, bool) else None
 
 
-def _next_actions_for_run(run: Any) -> list[NextAction]:
+def _next_actions_for_run(run: Any, run_dir: Path | None = None) -> list[NextAction]:
+    if run.phase == "applying":
+        return chunked_apply.applying_next_actions(run, run_dir) if run_dir is not None else []
     if run.phase == "plan_ready":
         if run.flow == "source_root":
             plan_id = _latest_artifact_id(run, "source_root_move_plan")
@@ -278,8 +285,9 @@ def _with_current_next_actions(store: WorkflowStore, payload: dict[str, Any]) ->
     """A rejected call leaves the run usable; tell the caller what is valid now."""
     if payload.get("ok") is False and not payload.get("nextActions"):
         try:
-            run = store.read_run(str(payload.get("runId") or ""))
-            payload["nextActions"] = [item.to_dict() for item in _next_actions_for_run(run)]
+            run_id = str(payload.get("runId") or "")
+            run = store.read_run(run_id)
+            payload["nextActions"] = [item.to_dict() for item in _next_actions_for_run(run, store.run_dir(run_id))]
         except Exception:
             pass
     return payload
@@ -345,7 +353,7 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
             "outcome": "resume_action_required",
             "artifacts": [],
             "gates": [],
-            "nextActions": [item.to_dict() for item in _next_actions_for_run(run)],
+            "nextActions": [item.to_dict() for item in _next_actions_for_run(run, store.run_dir(run.run_id))],
             "diagnostics": [{
                 "code": "resume_action_required",
                 "severity": "error",
@@ -419,7 +427,8 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
         return {
             "ok": True,
             "hints": hints,
-            "run": _run_to_status(store.read_run(args.run_id), include_artifacts=args.include_artifacts),
+            "run": _run_to_status(store.read_run(args.run_id), include_artifacts=args.include_artifacts,
+                                  run_dir=store.run_dir(args.run_id)),
         }
 
     runs_root = store.runs_root
@@ -431,7 +440,8 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
             run = store.read_run(manifest.parent.name)
             full_runs.append(run.to_dict())
             if len(runs) < args.limit:
-                runs.append(_run_to_status(run, include_artifacts=args.include_artifacts))
+                runs.append(_run_to_status(run, include_artifacts=args.include_artifacts,
+                                           run_dir=store.run_dir(run.run_id)))
     open_gates = []
     latest_artifacts = []
     for run in full_runs:
