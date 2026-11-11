@@ -49,6 +49,7 @@ class Env:
         self.db_rows: set[str] = set()        # srcs recorded in the fake DB
         self.on_chunk = None                  # callable(chunk_number, rows) -> kill after n rows or None
         self.chunk_calls = 0
+        self.fail_srcs: dict[str, str] = {}
         self.probe = {}                       # src -> response for settle inspect
         self.settle_calls: list[tuple[str, str]] = []
         self.cfg = RelocateApplyConfig(windows_ops_root=str(self.ops), run_id=self.run_id)
@@ -98,6 +99,10 @@ class Env:
                 out.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 raise Killed()
             self.moved_calls.append(row["src"])
+            if row["src"] in self.fail_srcs:
+                lines.append(json.dumps({"op": "move", "path_id": row["path_id"], "src": row["src"],
+                                         "dst": row["dst"], "ok": False, "error": self.fail_srcs[row["src"]]}))
+                continue
             lines.append(json.dumps({"op": "move", "path_id": row["path_id"], "src": row["src"],
                                      "dst": row["dst"], "ok": True}))
         out.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -285,3 +290,26 @@ def test_hundreds_of_files_with_budget_limits_and_two_kills_move_each_file_once(
     assert len(env.db_rows) == 320
     final = env.store.read_run(env.run_id)
     assert final.status == "complete"
+
+
+def test_partial_failure_keeps_the_successes_and_offers_a_replan(tmp_path):
+    # #139: one failed move must not turn a mostly successful run into a failed one.
+    env = Env(tmp_path, rows=12)
+    env.fail_srcs = {env.rows[3]["src"]: "dst_exists", env.rows[7]["src"]: "src_not_found"}
+    payload = resume(env, "apply_relocate_move_plan")
+    assert payload["ok"] is False and payload["outcome"] == "relocate_apply_partial"
+    assert payload["phase"] == "complete"
+    assert len(env.db_rows) == 10                                   # the successes are recorded
+    diag = payload["diagnostics"][-1]
+    assert diag["code"] == "relocate_apply_partial"
+    assert diag["details"]["errorBreakdown"] == {"dst_exists": 1, "src_not_found": 1}
+    action = payload["nextActions"][0]
+    assert action["tool"] == "video_pipeline_start" and action["params"] == {"flow": "relocate"}
+    assert env.store.read_run(env.run_id).status == "complete"
+
+
+def test_total_failure_still_fails_the_run(tmp_path):
+    env = Env(tmp_path, rows=3)
+    env.fail_srcs = {r["src"]: "dst_exists" for r in env.rows}
+    payload = resume(env, "apply_relocate_move_plan")
+    assert payload["phase"] == "failed" and payload["outcome"] == "relocate_apply_failed"

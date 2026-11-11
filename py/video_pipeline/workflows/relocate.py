@@ -581,6 +581,14 @@ class RelocateWorkflowService:
             run_id, artifact_type="relocate_move_apply_stats", path=stats_path, producer="move_apply_stats.py",
             artifact_id="relocate_move_apply_stats", input_artifact_ids=[log_artifact.id], metadata={"summary": stats},
         )
+        if chunked_apply.is_partial_apply(stats):
+            store.transition_run(run_id, WorkflowPhase.APPLIED)
+            store.transition_run(run_id, WorkflowPhase.COMPLETE)
+            self._append_diagnostic(store, run_id, chunked_apply.partial_apply_diagnostic("relocate", stats))
+            result = self._result(ok=False, store=store, run_id=run_id, phase=WorkflowPhase.COMPLETE,
+                                  outcome="relocate_apply_partial",
+                                  next_actions=[chunked_apply.replan_failed_action("relocate")])
+            return result
         if int(stats.get("failed") or 0) > 0:
             self._record_failure(store, run_id, Diagnostic(
                 code="relocate_apply_move_failures", severity=DiagnosticSeverity.ERROR,
