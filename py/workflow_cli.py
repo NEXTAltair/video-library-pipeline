@@ -106,8 +106,10 @@ def _artifact_planned_count(run: Any, artifact_id: str) -> int | None:
 
 
 def _next_actions_for_run(run: Any, run_dir: Path | None = None) -> list[NextAction]:
-    if run.phase == "applying":
-        return chunked_apply.applying_next_actions(run, run_dir) if run_dir is not None else []
+    if run_dir is not None:
+        in_apply = chunked_apply.applying_next_actions(run, run_dir)
+        if in_apply or run.phase == "applying":
+            return in_apply
     if run.phase == "plan_ready":
         if run.flow == "source_root":
             plan_id = _latest_artifact_id(run, "source_root_move_plan")

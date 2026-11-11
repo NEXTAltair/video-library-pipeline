@@ -605,6 +605,9 @@ class RelocateWorkflowService:
 
     def _resume_apply_action(self, store: WorkflowStore, run_id: str, action: str) -> WorkflowResult:
         run = store.read_run(run_id)
+        if action == "reconcile_relocate_apply" and chunked_apply.legacy_interrupted_logs(run, store.run_dir(run_id)):
+            self._adopt_legacy_apply(store, run_id)
+            run = store.read_run(run_id)
         if run.flow != WorkflowFlow.RELOCATE.value or run.phase != WorkflowPhase.APPLYING.value:
             return self._reject_call(run, "relocate_apply_action_rejected", Diagnostic(
                 code="relocate_apply_not_in_progress", severity=DiagnosticSeverity.ERROR,
@@ -630,6 +633,38 @@ class RelocateWorkflowService:
                 details={"runId": run_id, "inFlight": state.get("inFlight"), "settlement": state.get("settlement")},
             ))
         return self._run_chunks(store, run_id)
+
+    def _adopt_legacy_apply(self, store: WorkflowStore, run_id: str) -> None:
+        """Bring a run whose apply died before chunked state existed under chunked control.
+
+        Its receipt logs become chunks of the whole internal plan, so the first plan row
+        without a receipt is the one that may have been mid-move: reconcile inspects it.
+        """
+        run = store.read_run(run_id)
+        run_dir = store.run_dir(run_id)
+        logs = chunked_apply.legacy_interrupted_logs(run, run_dir)
+        internal = Path(run.artifacts["relocate_internal_move_plan"].path)
+        header = json.loads(logs[0].read_text(encoding="utf-8-sig").splitlines()[0]).get("_meta") or {}
+        now = now_iso()
+        chunks = [{
+            "index": n, "localPlan": str(internal), "localLog": str(log), "log": path_for_powershell(log),
+            "rows": len(chunked_apply.read_plan_rows(internal)), "startedAt": now, "dbUpdated": False,
+            "adoptedLegacy": True,
+        } for n, log in enumerate(logs, start=1)]
+        store.transition_run(run_id, WorkflowPhase.APPLYING)
+        chunked_apply.save_state(run_dir, {
+            "version": 1, "startedAt": now, "adoptedLegacy": True,
+            "planArtifactId": next(a for a in reversed(run.artifact_ids) if run.artifacts[a].type == "relocate_plan"),
+            "internalPlan": str(internal), "onDstExists": str(header.get("on_dst_exists") or "error"),
+            "db": str(local_path_from_any(str(run.config_snapshot.get("db") or ""))),
+            "chunks": chunks,
+            "inFlight": {"chunk": chunks[-1]["index"], "candidateSrc": None, "since": now},
+            "settlement": None, "dbSummaries": [],
+        }, now)
+        self._persist_diagnostic(store, run_id, Diagnostic(
+            code="relocate_apply_legacy_adopted", severity=DiagnosticSeverity.INFO,
+            message="adopted receipt logs of an apply interrupted before chunked execution",
+            details={"logs": [c["log"] for c in chunks]}))
 
     def _settle_probe(self, scripts_win: str, row: dict[str, Any], mode: str) -> dict[str, Any]:
         return self._powershell()(
@@ -1068,7 +1103,11 @@ class RelocateWorkflowService:
                 message=f"run is not a relocate workflow: {run.flow}",
                 details={"runId": run_id, "flow": run.flow},
             ))
-        if run.phase == WorkflowPhase.APPLYING.value:
+        if run.phase == WorkflowPhase.APPLYING.value or (
+            run.phase == WorkflowPhase.PLAN_READY.value and "relocate_internal_move_plan" in run.artifacts
+        ):
+            # A plan_ready run that already has an internal plan began applying (e.g. a call that died
+            # before chunked state existed). Re-applying would collide with its artifacts.
             raise RelocateApplyRejected(Diagnostic(
                 code="relocate_apply_already_started",
                 severity=DiagnosticSeverity.ERROR,

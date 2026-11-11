@@ -139,8 +139,22 @@ def progress(run_dir: Path) -> dict[str, Any] | None:
     }
 
 
+def legacy_interrupted_logs(run: Any, run_dir: Path) -> list[Path]:
+    """Logs of an apply that started before chunking existed and never finished."""
+    if run.phase != WorkflowPhase.PLAN_READY.value or "relocate_internal_move_plan" not in run.artifacts:
+        return []
+    if load_state(run_dir) is not None:
+        return []
+    return find_legacy_logs(run_dir.parent.parent, Path(run.artifacts["relocate_internal_move_plan"].path))
+
+
 def applying_next_actions(run: Any, run_dir: Path) -> list[NextAction]:
     """Single definition used by results and by status reconstruction."""
+    if legacy_interrupted_logs(run, run_dir):
+        return [NextAction(
+            action="reconcile_relocate_apply", label="Reconcile an apply that was interrupted before chunking",
+            tool=RESUME_TOOL, params={"runId": run.run_id, "resumeAction": "reconcile_relocate_apply"},
+        )]
     if run.phase != WorkflowPhase.APPLYING.value:
         return []
     info = progress(run_dir)
@@ -156,6 +170,34 @@ def applying_next_actions(run: Any, run_dir: Path) -> list[NextAction]:
     if info["state"] == "settlement_required":
         return [action("settle_interrupted_move", "Settle the interrupted move (verified delete)", True)]
     return [action("continue_relocate_apply", "Continue relocate apply", False)]
+
+
+def find_legacy_logs(ops_root: Path, internal_plan: Path) -> list[Path]:
+    """Receipt logs written by the pre-chunking apply for this run's internal plan.
+
+    The old apply handed the mover only the plan; the mover recorded that plan path in
+    the log header, which ties each log to exactly one run without guessing "latest".
+    """
+    from video_pipeline.platform.pathscan_common import windows_to_wsl_path
+
+    move_dir = ops_root / "move"
+    if not move_dir.is_dir() or not internal_plan.exists():
+        return []
+    wanted = internal_plan.resolve()
+    floor = internal_plan.stat().st_mtime - 1
+    found = []
+    for log in sorted(move_dir.glob("move_apply_*.jsonl"), key=lambda p: p.stat().st_mtime):
+        if log.stat().st_mtime < floor:
+            continue
+        try:
+            with log.open("r", encoding="utf-8-sig") as handle:
+                meta = json.loads(handle.readline()).get("_meta") or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        plan = meta.get("plan")
+        if plan and not meta.get("dry_run") and Path(windows_to_wsl_path(str(plan))).resolve() == wanted:
+            found.append(log)
+    return found
 
 
 def monotonic() -> float:
