@@ -358,6 +358,43 @@ describe("V2 workflow tools", () => {
     ]), "/ext/py");
   });
 
+  it("forwards returned params verbatim for non-apply actions (#136)", async () => {
+    const params = {
+      runId: "run_register", artifactIds: ["relocate_diagnostics"], gateId: "relocate_metadata_review",
+      resumeAction: "register_unregistered",
+    };
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
+      ok: false, runId: "run_register", flow: "relocate", phase: "review_required",
+      outcome: "relocate_metadata_preparation_required", artifacts: [], gates: [],
+      nextActions: [], diagnostics: [],
+    }));
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+    await getRegisteredTool(api, "video_pipeline_resume").execute("register", params);
+    const args = vi.mocked(runCmdAsync).mock.calls.at(-1)![1];
+    expect(args).toEqual(expect.arrayContaining(["--action", "register_unregistered"]));
+    expect(args).toEqual(expect.arrayContaining(["--gate-id", "relocate_metadata_review"]));
+    expect(args).toEqual(expect.arrayContaining(["--artifact-ids-json", JSON.stringify(["relocate_diagnostics"])]));
+  });
+
+  it("does not invent an action when resumeAction is omitted (#136)", async () => {
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
+      ok: false, runId: "run_no_action", flow: "relocate", phase: "review_required",
+      outcome: "resume_action_required", artifacts: [], gates: [],
+      nextActions: [{ action: "register_unregistered", tool: "video_pipeline_resume",
+        params: { runId: "run_no_action", resumeAction: "register_unregistered" } }],
+      diagnostics: [],
+    }, false));
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+    const result = await getRegisteredTool(api, "video_pipeline_resume").execute("no-action", { runId: "run_no_action" });
+    expect(vi.mocked(runCmdAsync).mock.calls.at(-1)![1]).not.toContain("--action");
+    expect(result).toMatchObject({
+      ok: false, outcome: "resume_action_required",
+      followUpToolCalls: [{ params: { resumeAction: "register_unregistered" } }],
+    });
+  });
+
   it("returns Python preflight failure without a separate metadata write", async () => {
     vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({ ok: false, error: "review YAML does not belong to this run/gate" }, false));
     const api = createMockApi();

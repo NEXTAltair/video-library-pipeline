@@ -623,8 +623,9 @@ def test_relocate_apply_rejects_cross_run_plan(tmp_path) -> None:
 
     payload = result.to_dict()
     assert payload["ok"] is False
-    assert payload["phase"] == "blocked"
+    assert payload["phase"] == "plan_ready"
     assert payload["diagnostics"][-1]["code"] == "relocate_apply_plan_not_in_run"
+    assert store.read_run("run_b").phase == "plan_ready"
 
 
 def test_relocate_apply_rejects_open_review_gate(tmp_path) -> None:
@@ -642,8 +643,9 @@ def test_relocate_apply_rejects_open_review_gate(tmp_path) -> None:
 
     payload = result.to_dict()
     assert payload["ok"] is False
-    assert payload["phase"] == "blocked"
+    assert payload["phase"] == "plan_ready"
     assert payload["diagnostics"][-1]["code"] == "relocate_apply_review_gate_blocked"
+    assert store.read_run(cfg.run_id).phase == "plan_ready"
 
 
 def test_relocate_apply_rejects_checksum_mismatch(tmp_path) -> None:
@@ -815,3 +817,64 @@ def test_relocate_apply_uses_run_scoped_on_dst_exists_policy(tmp_path) -> None:
     result = service.apply(cfg)
 
     assert result.to_dict()["outcome"] == "relocate_apply_complete"
+
+
+def test_relocate_returned_params_carry_their_resume_action(tmp_path) -> None:
+    # #136: params are passed verbatim, so the action must travel inside them.
+    for scenario in ("unregistered", "metadata_gap", "suspicious", "plan_ready"):
+        harness = RelocateWorkflowHarness(tmp_path / scenario, run_id=f"run_params_{scenario}", scenario=scenario)
+        payload = harness.dry_run().to_dict()
+        for item in payload["nextActions"]:
+            assert item["params"]["resumeAction"], (scenario, item["action"])
+            assert item["params"]["runId"] == harness.cfg.run_id
+
+
+def test_relocate_register_unregistered_runs_from_returned_params(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_register_params", scenario="unregistered")
+    params = harness.dry_run().to_dict()["nextActions"][0]["params"]
+
+    harness.scenario = "metadata_gap"
+    resumed = harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=params["runId"]),
+        action=params["resumeAction"],
+    ).to_dict()
+
+    assert resumed["phase"] == "review_required"
+    assert resumed["outcome"] == "relocate_metadata_preparation_required"
+
+
+def test_relocate_wrong_call_leaves_run_resumable(tmp_path) -> None:
+    # #137: a mistaken call is reported, never turned into a terminal run.
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_wrong_call", scenario="unregistered")
+    harness.dry_run()
+    store = WorkflowStore(Path(harness.cfg.windows_ops_root))
+    before = store.manifest_path(harness.cfg.run_id).read_bytes()
+    cfg = RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id)
+
+    for action, code in (
+        ("apply_relocate_move_plan", "relocate_apply_wrong_phase"),
+        ("no_such_action", "relocate_resume_action_unsupported"),
+        ("apply_relocate_move_plan", "relocate_apply_wrong_phase"),
+    ):
+        rejected = harness.service().resume(cfg, action=action).to_dict()
+        assert rejected["ok"] is False
+        assert rejected["phase"] == "review_required"
+        assert rejected["diagnostics"][-1]["code"] == code
+    assert store.manifest_path(harness.cfg.run_id).read_bytes() == before
+
+    harness.scenario = "metadata_gap"
+    resumed = harness.service().resume(cfg, action="register_unregistered").to_dict()
+    assert resumed["outcome"] == "relocate_metadata_preparation_required"
+
+
+def test_relocate_metadata_actions_reject_wrong_phase_without_writing(tmp_path) -> None:
+    cfg, _plan_path = register_relocate_plan_ready_run(tmp_path, run_id="run_meta_wrong_phase")
+    store = WorkflowStore(Path(cfg.windows_ops_root))
+    before = store.manifest_path(cfg.run_id).read_bytes()
+
+    for action in ("prepare_relocate_metadata", "review_relocate_metadata", "reextract_relocate_metadata"):
+        rejected = RelocateWorkflowService(py_root=tmp_path).resume(cfg, action=action).to_dict()
+        assert rejected["ok"] is False
+        assert rejected["phase"] == "plan_ready"
+
+    assert store.manifest_path(cfg.run_id).read_bytes() == before

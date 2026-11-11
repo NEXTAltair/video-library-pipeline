@@ -37,6 +37,20 @@ PythonRunner = Callable[[Path, list[str], str | None], str]
 PowerShellRunner = Callable[[str, list[str]], dict[str, Any]]
 
 
+# The request was wrong, not the run: report it and leave the run resumable.
+CALL_REJECTION_CODES = frozenset({
+    "source_root_resume_action_unsupported",
+    "source_root_apply_wrong_flow",
+    "source_root_apply_wrong_phase",
+    "source_root_apply_review_gate_blocked",
+    "source_root_apply_plan_not_in_run",
+    "source_root_apply_invalid_artifact_type",
+    "source_root_apply_plan_not_available",
+    "source_root_apply_plan_not_current",
+    "source_root_empty_plan_not_empty",
+})
+
+
 class SourceRootApplyRejected(Exception):
     def __init__(self, diagnostic: Diagnostic) -> None:
         self.diagnostic = diagnostic
@@ -896,6 +910,18 @@ class SourceRootWorkflowService:
                 diagnostics=[diagnostic],
             )
 
+        if diagnostic.code in CALL_REJECTION_CODES:
+            # Not persisted: repeating a bad call must not grow or alter the manifest.
+            return WorkflowResult(
+                ok=False,
+                run_id=run_id,
+                flow=run.flow,
+                phase=run.phase,
+                outcome=outcome,
+                artifacts=[run.artifacts[aid] for aid in run.artifact_ids],
+                gates=[run.review_gates[gid] for gid in run.review_gate_ids],
+                diagnostics=[*run.diagnostics, diagnostic],
+            )
         run.diagnostics.append(diagnostic)
         store.write_run(run)
         if run.flow == WorkflowFlow.SOURCE_ROOT.value and run.phase not in {

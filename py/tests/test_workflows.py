@@ -351,7 +351,7 @@ def test_workflow_result_serializes_for_typescript_consumption(tmp_path) -> None
                 action="review_metadata",
                 label="Review metadata",
                 tool="video_pipeline_resume",
-                params={"runId": "run_result"},
+                params={"runId": "run_result", "resumeAction": "apply_reviewed_metadata"},
                 requires_human_input=True,
             )
         ],
@@ -371,3 +371,10 @@ def test_workflow_result_serializes_for_typescript_consumption(tmp_path) -> None
     assert payload["artifacts"][0]["inputArtifactIds"] == []
     assert payload["gates"][0]["requiresHumanReview"] is True
     assert payload["nextActions"][0]["requiresHumanInput"] is True
+
+
+def test_resume_next_action_requires_resume_action_in_params() -> None:
+    # #136: the label outside params is never sent back by callers.
+    with pytest.raises(ValueError, match="resumeAction"):
+        NextAction(action="register_unregistered", label="x", tool="video_pipeline_resume", params={"runId": "r"})
+    NextAction(action="note", label="x", params={})

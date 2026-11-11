@@ -185,6 +185,11 @@ class NextAction:
     params: dict[str, Any] = field(default_factory=dict)
     requires_human_input: bool = False
 
+    def __post_init__(self) -> None:
+        # Callers pass params verbatim; the action label outside params is not sent.
+        if self.tool == "video_pipeline_resume" and not self.params.get("resumeAction"):
+            raise ValueError(f"resume next action {self.action!r} requires params.resumeAction")
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "action": self.action,
