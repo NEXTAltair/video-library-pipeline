@@ -14,8 +14,7 @@ Folder contamination cleanup is not exposed as a standalone V2 public workflow i
 
 ## Current Rule
 
-- Do not call hidden legacy cleanup or title-repair tools directly.
-- Do not use shell commands to inspect Windows library paths.
+- Do not call hidden legacy cleanup or title-repair tools directly: they bypass run-scoped approval and receipts.
 - If a relocate run returns a review gate or next action related to metadata/title cleanup, follow that run-scoped action.
 - Otherwise, report that folder cleanup needs a future V2 workflow or an explicit maintenance/admin path.
 
