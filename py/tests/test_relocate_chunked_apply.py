@@ -12,7 +12,7 @@ from video_pipeline.workflows import (
     WorkflowPhase,
     WorkflowStore,
 )
-from workflow_cli import _cmd_status
+from workflow_cli import _cmd_status, _with_current_next_actions
 
 
 class Killed(BaseException):
@@ -313,3 +313,57 @@ def test_total_failure_still_fails_the_run(tmp_path):
     env.fail_srcs = {r["src"]: "dst_exists" for r in env.rows}
     payload = resume(env, "apply_relocate_move_plan")
     assert payload["phase"] == "failed" and payload["outcome"] == "relocate_apply_failed"
+
+
+def legacy_interrupted_env(tmp_path: Path, rows: int = 14, done: int = 5) -> Env:
+    """A plan_ready run whose apply died under the old single-call code: internal plan and backup
+    artifacts exist, a receipt log sits in ops/move, the DB has none of it."""
+    env = Env(tmp_path, rows=rows)
+    apply_dir = env.ops / "runs" / env.run_id / "apply"
+    apply_dir.mkdir(exist_ok=True)
+    internal = apply_dir / "relocate_internal_move_plan.jsonl"
+    internal.write_text("\n".join([json.dumps({"_meta": {}}), *(json.dumps({k: r[k] for k in ("path_id", "src", "dst", "precondition")}) for r in env.rows)]) + "\n", encoding="utf-8")
+    backup = env.ops / "db" / "backup.sqlite"
+    backup.write_text("b", encoding="utf-8")
+    env.store.register_artifact(env.run_id, artifact_type="relocate_db_backup", path=backup, producer="t", artifact_id="relocate_db_backup")
+    env.store.register_artifact(env.run_id, artifact_type="relocate_internal_move_plan", path=internal, producer="t", artifact_id="relocate_internal_move_plan")
+    move_dir = env.ops / "move"
+    move_dir.mkdir()
+    lines = [json.dumps({"_meta": {"kind": "move_apply", "plan": str(internal), "dry_run": False, "on_dst_exists": "error"}})]
+    lines += [json.dumps({"op": "move", "path_id": r["path_id"], "src": r["src"], "dst": r["dst"], "ok": True}) for r in env.rows[:done]]
+    (move_dir / "move_apply_20261110_000000_000_1.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # an unrelated log of another plan must not be adopted
+    other = json.dumps({"_meta": {"kind": "move_apply", "plan": str(env.ops / "elsewhere.jsonl"), "dry_run": False}})
+    (move_dir / "move_apply_20261110_000000_000_2.jsonl").write_text(other + "\n", encoding="utf-8")
+    return env
+
+
+def test_legacy_interrupted_apply_is_recovered_through_public_actions(tmp_path):
+    env = legacy_interrupted_env(tmp_path)
+    cand = env.rows[5]["src"]
+    env.probe[cand] = {"source_exists": True, "destination_exists": True,
+                       "source_size": 1005, "destination_size": 1005, "identical": False}
+
+    status = _cmd_status(type("A", (), {"windows_ops_root": str(env.ops), "run_id": env.run_id, "limit": 5,
+                                        "include_artifacts": False, "hints_path": ""})())["run"]
+    assert status["phase"] == "plan_ready"
+    assert [a["params"]["resumeAction"] for a in status["nextActions"]] == ["reconcile_relocate_apply"]
+
+    before = env.store.manifest_path(env.run_id).read_bytes()
+    again = resume(env, "apply_relocate_move_plan")                # re-applying would collide; refused
+    assert not again["ok"] and again["diagnostics"][-1]["code"] == "relocate_apply_already_started"
+    shown = _with_current_next_actions(env.store, dict(again))     # what the CLI returns to the caller
+    assert [a["params"]["resumeAction"] for a in shown["nextActions"]] == ["reconcile_relocate_apply"]
+    assert env.store.manifest_path(env.run_id).read_bytes() == before
+
+    adopted = resume(env, "reconcile_relocate_apply")
+    assert adopted["outcome"] == "relocate_apply_settlement_required" and adopted["phase"] == "applying"
+    assert len(env.db_rows) == 5                                   # the logged moves reach the DB now
+    assert env.settle_calls == [(cand, "inspect")]
+
+    settled = resume(env, "settle_interrupted_move")
+    assert settled["outcome"] == "relocate_apply_settled" and env.settle_calls[-1] == (cand, "discard")
+    done = finish(env)
+    assert done["outcome"] == "relocate_apply_complete"
+    assert env.moved_calls == [r["src"] for r in env.rows[5:]]     # the 5 logged files never move again
+    assert len(env.db_rows) == 14
