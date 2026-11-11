@@ -24,6 +24,7 @@ class WorkflowPhase(str, Enum):
     REVIEW_REQUIRED = "review_required"
     METADATA_ACCEPTED = "metadata_accepted"
     PLAN_READY = "plan_ready"
+    APPLYING = "applying"
     APPLIED = "applied"
     COMPLETE = "complete"
     BLOCKED = "blocked"

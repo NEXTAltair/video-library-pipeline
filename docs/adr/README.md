@@ -18,6 +18,7 @@
 | [ADR-0010](0010-managed-artifact-retention.md) | Accepted | cache/evidence分離、可逆整理、旧データのソース外移設 |
 | [ADR-0011](0011-unified-application-kernel-and-recoverable-operations.md) | Proposed | 共通kernel、durable job、承認と副作用の境界、統合照会、中断復旧 |
 | [ADR-0012](0012-m0-integrity-boundaries.md) | Accepted | M0: run-bound metadata、一括transaction、online snapshot、writer排他、失敗判定 |
+| [ADR-0013](0013-chunked-recoverable-relocate-apply.md) | Accepted | relocate applyの分割実行、`applying` phase、中断の回収(M3の最小部分) |
 
 `ADR-0008` は #108 以降の現行 V2 公開 tool surface の基準である。`ADR-0004` は V1/legacy orchestration の背景として残すが、現行の公開 tool 一覧ではない。
 

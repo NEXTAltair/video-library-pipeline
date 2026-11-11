@@ -30,6 +30,7 @@ from .models import (
     WorkflowFlow,
     WorkflowPhase,
     WorkflowResult,
+    now_iso,
 )
 from .source_root import (
     parse_last_json_object_line,
@@ -38,6 +39,7 @@ from .source_root import (
     string_array,
     write_json,
 )
+from . import chunked_apply
 from .store import WorkflowStore, sha256_file
 from video_pipeline.platform.writer_lock import serialized_workflow
 from video_pipeline.platform.sqlite_snapshot import check_integrity
@@ -58,6 +60,7 @@ CALL_REJECTION_CODES = frozenset({
     "relocate_apply_invalid_artifact_type",
     "relocate_apply_plan_not_available",
     "relocate_apply_plan_not_current",
+    "relocate_apply_already_started",
 })
 
 
@@ -195,9 +198,13 @@ class RelocateWorkflowService:
         python_runner: PythonRunner = run_py_uv,
         powershell_runner: PowerShellRunner | None = None,
         py_root: Path | None = None,
+        chunk_rows: int = chunked_apply.DEFAULT_CHUNK_ROWS,
+        budget_seconds: float = chunked_apply.DEFAULT_BUDGET_SECONDS,
     ) -> None:
         self.python_runner = python_runner
         self.powershell_runner = powershell_runner
+        self.chunk_rows = max(1, int(chunk_rows))
+        self.budget_seconds = float(budget_seconds)
         self.py_root = py_root or Path(__file__).resolve().parents[2]
 
     @serialized_workflow
@@ -258,6 +265,8 @@ class RelocateWorkflowService:
             return self._resume_metadata_action(store, config.run_id, action)
         if action == "reextract_relocate_metadata":
             return self._resume_reextract_metadata(store, config.run_id)
+        if action in {"continue_relocate_apply", "reconcile_relocate_apply", "settle_interrupted_move"}:
+            return self._resume_apply_action(store, config.run_id, action)
         if action == "apply_reviewed_metadata":
             return self._resume_reviewed_metadata(store, config)
         if action != "apply_relocate_move_plan":
@@ -269,6 +278,13 @@ class RelocateWorkflowService:
             )
             return self._block_apply(store, config.run_id, "relocate_resume_action_unsupported", diagnostic)
         return self.apply(config)
+
+    def _powershell(self) -> PowerShellRunner:
+        if self.powershell_runner is not None:
+            return self.powershell_runner
+        from video_pipeline.platform.windows_pwsh_bridge import run_pwsh_json
+
+        return run_pwsh_json
 
     @serialized_workflow
     def apply(self, config: RelocateApplyConfig) -> WorkflowResult:
@@ -293,13 +309,6 @@ class RelocateWorkflowService:
         logs_dir = run_dir / "logs"
         ops_root_win = canonicalize_windows_path(str(local_path_from_any(config.windows_ops_root)))
         scripts_root_win = canonicalize_windows_path(str(local_path_from_any(config.windows_ops_root) / "scripts"))
-
-        if self.powershell_runner is None:
-            from video_pipeline.platform.windows_pwsh_bridge import run_pwsh_json
-
-            powershell_runner = run_pwsh_json
-        else:
-            powershell_runner = self.powershell_runner
 
         try:
             backup_raw = self.python_runner(
@@ -382,99 +391,21 @@ class RelocateWorkflowService:
                 metadata={"plannedRows": len(planned_rows)},
             )
 
-            apply_meta = powershell_runner(
-                scripts_root_win + r"\apply_move_plan.ps1",
-                [
-                    "-PlanJsonl",
-                    path_for_powershell(internal_plan_path),
-                    "-OpsRoot",
-                    ops_root_win,
-                    "-OnDstExists",
-                    str(config.on_dst_exists or run.config_snapshot.get("onDstExists") or "error"),
-                ],
-            )
-            applied_out = str(apply_meta.get("out_jsonl") or "")
-            if not applied_out:
-                raise RuntimeError("apply_move_plan.ps1 did not return out_jsonl")
-            applied_path = local_path_from_any(applied_out)
-            apply_log_artifact = store.register_artifact(
-                config.run_id,
-                artifact_type="relocate_move_apply_log",
-                path=applied_path,
-                producer="apply_move_plan.ps1",
-                artifact_id="relocate_move_apply_log",
-                input_artifact_ids=[internal_plan_artifact.id],
-                metadata={"summary": apply_meta},
-            )
-
-            db_update_raw = self.python_runner(
-                self.py_root / "update_db_paths_from_move_apply.py",
-                [
-                    "--db",
-                    db_path,
-                    "--applied",
-                    str(applied_path),
-                    "--run-kind",
-                    "relocate",
-                    "--event-kind",
-                    "move",
-                    "--detail-source",
-                    "RelocateWorkflowService.apply",
-                ],
-                str(self.py_root),
-            )
-            db_update_summary = parse_last_json_object_line(db_update_raw)
-            db_update_path = logs_dir / "relocate_db_update.json"
-            write_json(db_update_path, db_update_summary or {"raw": db_update_raw})
-            store.register_artifact(
-                config.run_id,
-                artifact_type="relocate_db_update",
-                path=db_update_path,
-                producer="update_db_paths_from_move_apply.py",
-                artifact_id="relocate_db_update",
-                input_artifact_ids=[apply_log_artifact.id],
-                metadata={"summary": db_update_summary},
-            )
-
-            move_stats = aggregate_move_apply(applied_path)
-            stats_path = apply_dir / "relocate_move_apply_stats.json"
-            write_json(stats_path, move_stats)
-            store.register_artifact(
-                config.run_id,
-                artifact_type="relocate_move_apply_stats",
-                path=stats_path,
-                producer="move_apply_stats.py",
-                artifact_id="relocate_move_apply_stats",
-                input_artifact_ids=[apply_log_artifact.id],
-                metadata={"summary": move_stats},
-            )
-
-            if int(move_stats.get("failed") or 0) > 0:
-                diagnostic = Diagnostic(
-                    code="relocate_apply_move_failures",
-                    severity=DiagnosticSeverity.ERROR,
-                    message="one or more move operations failed during relocate apply",
-                    details={"moveApplyStats": move_stats},
-                )
-                self._record_failure(store, config.run_id, diagnostic)
-                final_run = store.read_run(config.run_id)
-                return self._result(
-                    ok=False,
-                    store=store,
-                    run_id=config.run_id,
-                    phase=final_run.phase,
-                    outcome="relocate_apply_failed",
-                )
-
-            store.transition_run(config.run_id, WorkflowPhase.APPLIED)
-            store.transition_run(config.run_id, WorkflowPhase.COMPLETE)
-            return self._result(
-                ok=True,
-                store=store,
-                run_id=config.run_id,
-                phase=WorkflowPhase.COMPLETE,
-                outcome="relocate_apply_complete",
-            )
+            store.transition_run(config.run_id, WorkflowPhase.APPLYING)
+            now = now_iso()
+            chunked_apply.save_state(run_dir, {
+                "version": 1,
+                "startedAt": now,
+                "planArtifactId": plan_artifact.id,
+                "internalPlan": str(internal_plan_path),
+                "onDstExists": str(config.on_dst_exists or run.config_snapshot.get("onDstExists") or "error"),
+                "db": db_path,
+                "chunks": [],
+                "inFlight": None,
+                "settlement": None,
+                "dbSummaries": [],
+            }, now)
+            return self._run_chunks(store, config.run_id)
         except RelocateApplyRejected as exc:
             return self._block_apply(store, config.run_id, "relocate_apply_rejected", exc.diagnostic)
         except Exception as exc:
@@ -493,6 +424,303 @@ class RelocateWorkflowService:
                 phase=final_run.phase,
                 outcome="relocate_apply_failed",
             )
+
+    # ------------------------------------------------------------------
+    # Chunked apply (issue #138). State lives in apply/relocate_apply_state.json.
+    # ------------------------------------------------------------------
+    def _paths(self, store: WorkflowStore, run_id: str) -> tuple[Path, str, str]:
+        run_dir = store.run_dir(run_id)
+        ops = store.windows_ops_root
+        return run_dir, canonicalize_windows_path(str(ops)), canonicalize_windows_path(str(ops / "scripts"))
+
+    def _apply_result(
+        self, store: WorkflowStore, run_id: str, *, ok: bool, outcome: str,
+        diagnostics: list[Diagnostic] | None = None,
+    ) -> WorkflowResult:
+        run = store.read_run(run_id)
+        run_dir = store.run_dir(run_id)
+        info = chunked_apply.progress(run_dir)
+        transient = list(diagnostics or [])
+        if info is not None:
+            transient.append(Diagnostic(
+                code="relocate_apply_progress", severity=DiagnosticSeverity.INFO,
+                message=f"{info['done']}/{info['total']} moved or settled, {info['failed']} failed",
+                details=info,
+            ))
+        return WorkflowResult(
+            ok=ok, run_id=run_id, flow=run.flow, phase=run.phase, outcome=outcome,
+            artifacts=[run.artifacts[aid] for aid in run.artifact_ids],
+            gates=[run.review_gates[gid] for gid in run.review_gate_ids],
+            next_actions=chunked_apply.applying_next_actions(run, run_dir),
+            diagnostics=[*run.diagnostics, *transient],
+        )
+
+    def _db_update(self, state: dict[str, Any], log_path: Path) -> dict[str, Any]:
+        raw = self.python_runner(
+            self.py_root / "update_db_paths_from_move_apply.py",
+            ["--db", state["db"], "--applied", str(log_path), "--run-kind", "relocate",
+             "--event-kind", "move", "--detail-source", "RelocateWorkflowService.apply"],
+            str(self.py_root),
+        )
+        summary = parse_last_json_object_line(raw)
+        if not summary:
+            raise RuntimeError("DB update returned no summary: " + str(raw)[-300:])
+        return summary
+
+    def _flush_db(self, run_dir: Path, state: dict[str, Any]) -> None:
+        """Record every receipt log the DB has not seen. Replays are idempotent."""
+        for chunk in state["chunks"]:
+            if chunk.get("dbUpdated"):
+                continue
+            log = Path(chunk["localLog"])
+            if chunked_apply.read_receipts(log):
+                state["dbSummaries"].append(self._db_update(state, log))
+            chunk["dbUpdated"] = True
+            chunked_apply.save_state(run_dir, state, now_iso())
+
+    def _persist_diagnostic(self, store: WorkflowStore, run_id: str, diagnostic: Diagnostic) -> None:
+        self._append_diagnostic(store, run_id, diagnostic)
+
+    def _run_chunks(self, store: WorkflowStore, run_id: str) -> WorkflowResult:
+        run_dir, ops_win, scripts_win = self._paths(store, run_id)
+        state = chunked_apply.load_state(run_dir)
+        plan_rows = chunked_apply.read_plan_rows(Path(state["internalPlan"]))
+        deadline = chunked_apply.monotonic() + self.budget_seconds
+        longest = 0.0
+        try:
+            self._flush_db(run_dir, state)
+        except Exception as exc:
+            return self._db_update_failed(store, run_id, exc)
+        while True:
+            pending = chunked_apply.pending_rows(state, plan_rows)
+            if not pending:
+                return self._finalize_apply(store, run_id)
+            if longest and chunked_apply.monotonic() + longest * 1.5 > deadline:
+                return self._apply_result(store, run_id, ok=True, outcome="relocate_apply_in_progress")
+            rows = pending[: self.chunk_rows]
+            index = len(state["chunks"]) + 1
+            plan_p = run_dir / "apply" / "chunks" / f"chunk_{index:04d}_plan.jsonl"
+            log_p = run_dir / "apply" / "receipts" / f"chunk_{index:04d}.jsonl"
+            plan_p.parent.mkdir(parents=True, exist_ok=True)
+            log_p.parent.mkdir(parents=True, exist_ok=True)
+            plan_p.write_text(
+                "\n".join([json.dumps({"_meta": {"kind": "relocate_move_plan_chunk", "index": index}}),
+                           *(json.dumps(r, ensure_ascii=False) for r in rows)]) + "\n",
+                encoding="utf-8",
+            )
+            now = now_iso()
+            chunk = {"index": index, "localPlan": str(plan_p), "localLog": str(log_p),
+                     "log": path_for_powershell(log_p), "rows": len(rows), "startedAt": now, "dbUpdated": False}
+            state["chunks"].append(chunk)
+            # Durable before any file moves: a kill from here on is detectable.
+            state["inFlight"] = {"chunk": index, "candidateSrc": rows[0].get("src"), "since": now}
+            chunked_apply.save_state(run_dir, state, now)
+            started = chunked_apply.monotonic()
+            try:
+                self._powershell()(
+                    scripts_win + r"\apply_move_plan.ps1",
+                    ["-PlanJsonl", path_for_powershell(plan_p), "-OutJsonl", path_for_powershell(log_p),
+                     "-OpsRoot", ops_win, "-OnDstExists", state["onDstExists"]],
+                )
+                if not log_p.exists():
+                    raise RuntimeError("apply_move_plan.ps1 produced no receipt log")
+            except Exception as exc:
+                self._persist_diagnostic(store, run_id, Diagnostic(
+                    code="relocate_apply_chunk_interrupted", severity=DiagnosticSeverity.ERROR,
+                    message=str(exc), details={"chunk": index, "exceptionType": type(exc).__name__},
+                ))
+                return self._apply_result(store, run_id, ok=False, outcome="relocate_apply_interrupted")
+            chunk["finishedAt"] = now_iso()
+            state["inFlight"] = None
+            chunked_apply.save_state(run_dir, state, chunk["finishedAt"])
+            try:
+                self._flush_db(run_dir, state)
+            except Exception as exc:
+                return self._db_update_failed(store, run_id, exc)
+            longest = max(longest, chunked_apply.monotonic() - started)
+
+    def _db_update_failed(self, store: WorkflowStore, run_id: str, exc: Exception) -> WorkflowResult:
+        diagnostic = Diagnostic(
+            code="relocate_apply_db_update_failed", severity=DiagnosticSeverity.ERROR,
+            message=str(exc), details={"exceptionType": type(exc).__name__},
+        )
+        self._persist_diagnostic(store, run_id, diagnostic)
+        return self._apply_result(store, run_id, ok=False, outcome="relocate_apply_db_update_failed")
+
+    def _finalize_apply(self, store: WorkflowStore, run_id: str) -> WorkflowResult:
+        run_dir = store.run_dir(run_id)
+        state = chunked_apply.load_state(run_dir)
+        merged = run_dir / "apply" / "relocate_move_apply_merged.jsonl"
+        receipts = []
+        for log in chunked_apply.chunk_logs(state):
+            receipts.extend(chunked_apply.read_receipts(log))
+        merged.write_text(
+            "\n".join([json.dumps({"_meta": {"kind": "move_apply", "merged_chunks": len(state["chunks"])}}),
+                       *(json.dumps(r, ensure_ascii=False) for r in receipts)]) + "\n",
+            encoding="utf-8",
+        )
+        log_artifact = store.register_artifact(
+            run_id, artifact_type="relocate_move_apply_log", path=merged, producer="RelocateWorkflowService.apply",
+            artifact_id="relocate_move_apply_log", input_artifact_ids=["relocate_internal_move_plan"],
+            metadata={"summary": {"chunks": len(state["chunks"]), "logs": [c["log"] for c in state["chunks"]]}},
+        )
+        totals: dict[str, Any] = {}
+        for item in state["dbSummaries"]:
+            for key in ("updated", "events", "already_applied"):
+                totals[key] = int(totals.get(key, 0)) + int(item.get(key) or 0)
+        db_path = run_dir / "logs" / "relocate_db_update.json"
+        write_json(db_path, {**totals, "chunks": len(state["dbSummaries"])})
+        store.register_artifact(
+            run_id, artifact_type="relocate_db_update", path=db_path, producer="update_db_paths_from_move_apply.py",
+            artifact_id="relocate_db_update", input_artifact_ids=[log_artifact.id], metadata={"summary": totals},
+        )
+        stats = aggregate_move_apply(merged)
+        stats_path = run_dir / "apply" / "relocate_move_apply_stats.json"
+        write_json(stats_path, stats)
+        store.register_artifact(
+            run_id, artifact_type="relocate_move_apply_stats", path=stats_path, producer="move_apply_stats.py",
+            artifact_id="relocate_move_apply_stats", input_artifact_ids=[log_artifact.id], metadata={"summary": stats},
+        )
+        if int(stats.get("failed") or 0) > 0:
+            self._record_failure(store, run_id, Diagnostic(
+                code="relocate_apply_move_failures", severity=DiagnosticSeverity.ERROR,
+                message="one or more move operations failed during relocate apply",
+                details={"moveApplyStats": stats},
+            ))
+            final_run = store.read_run(run_id)
+            return self._result(ok=False, store=store, run_id=run_id, phase=final_run.phase,
+                                outcome="relocate_apply_failed")
+        store.transition_run(run_id, WorkflowPhase.APPLIED)
+        store.transition_run(run_id, WorkflowPhase.COMPLETE)
+        return self._result(ok=True, store=store, run_id=run_id, phase=WorkflowPhase.COMPLETE,
+                            outcome="relocate_apply_complete")
+
+    def _resume_apply_action(self, store: WorkflowStore, run_id: str, action: str) -> WorkflowResult:
+        run = store.read_run(run_id)
+        if run.flow != WorkflowFlow.RELOCATE.value or run.phase != WorkflowPhase.APPLYING.value:
+            return self._reject_call(run, "relocate_apply_action_rejected", Diagnostic(
+                code="relocate_apply_not_in_progress", severity=DiagnosticSeverity.ERROR,
+                message=f"{action} requires a relocate run in phase applying, got {run.flow}/{run.phase}",
+                details={"runId": run_id, "flow": run.flow, "phase": run.phase, "action": action},
+            ))
+        run_dir = store.run_dir(run_id)
+        state = chunked_apply.load_state(run_dir)
+        if state is None:
+            return self._reject_call(run, "relocate_apply_action_rejected", Diagnostic(
+                code="relocate_apply_state_missing", severity=DiagnosticSeverity.ERROR,
+                message="applying run has no apply state file", details={"runId": run_id},
+            ))
+        if action == "reconcile_relocate_apply":
+            return self._reconcile(store, run_id, state)
+        if action == "settle_interrupted_move":
+            return self._settle(store, run_id, state)
+        if state.get("inFlight") or state.get("settlement"):
+            code = "relocate_apply_interrupted" if state.get("inFlight") else "relocate_apply_settlement_required"
+            return self._reject_call(run, "relocate_apply_action_rejected", Diagnostic(
+                code=code, severity=DiagnosticSeverity.ERROR,
+                message="an earlier call was interrupted; follow nextActions before continuing",
+                details={"runId": run_id, "inFlight": state.get("inFlight"), "settlement": state.get("settlement")},
+            ))
+        return self._run_chunks(store, run_id)
+
+    def _settle_probe(self, scripts_win: str, row: dict[str, Any], mode: str) -> dict[str, Any]:
+        return self._powershell()(
+            scripts_win + r"\settle_interrupted_move.ps1",
+            ["-Src", str(row["src"]), "-Dst", str(row["dst"]), "-Mode", mode],
+        )
+
+    def _record_receipt(self, run_dir: Path, state: dict[str, Any], row: dict[str, Any], kind: str) -> None:
+        """Receipt for a move we proved happened; DB recording happens on the next flush."""
+        index = len(state["chunks"]) + 1
+        plan_p = run_dir / "apply" / "chunks" / f"chunk_{index:04d}_plan.jsonl"
+        log_p = run_dir / "apply" / "receipts" / f"chunk_{index:04d}.jsonl"
+        plan_p.parent.mkdir(parents=True, exist_ok=True)
+        log_p.parent.mkdir(parents=True, exist_ok=True)
+        plan_p.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+        receipt = {"op": "move", "ts": now_iso(), "path_id": row.get("path_id"), "src": row["src"],
+                   "dst": row["dst"], "file_id": row.get("file_id"), "ok": True, "reconciled": kind}
+        log_p.write_text(json.dumps({"_meta": {"kind": "move_apply", "reconciled": kind}}) + "\n"
+                         + json.dumps(receipt, ensure_ascii=False) + "\n", encoding="utf-8")
+        state["chunks"].append({"index": index, "localPlan": str(plan_p), "localLog": str(log_p),
+                                "log": path_for_powershell(log_p), "rows": 1, "startedAt": now_iso(),
+                                "finishedAt": now_iso(), "dbUpdated": False, "reconciled": kind})
+
+    def _reconcile(self, store: WorkflowStore, run_id: str, state: dict[str, Any]) -> WorkflowResult:
+        run_dir, _ops, scripts_win = self._paths(store, run_id)
+        try:
+            self._flush_db(run_dir, state)
+            in_flight = state.get("inFlight")
+            if state.get("settlement"):
+                return self._apply_result(store, run_id, ok=True, outcome="relocate_apply_settlement_required")
+            resolution: dict[str, Any] = {"state": "no_interrupted_move"}
+            if in_flight:
+                row = chunked_apply.candidate_row(state, int(in_flight["chunk"]))
+                if row is not None:
+                    info = self._settle_probe(scripts_win, row, "inspect")
+                    src_x, dst_x = bool(info.get("source_exists")), bool(info.get("destination_exists"))
+                    expected = (row.get("precondition") or {}).get("size_bytes")
+                    resolution = {"src": row["src"], "dst": row["dst"], "info": info}
+                    if src_x and not dst_x:
+                        resolution["state"] = "not_started"
+                    elif dst_x and not src_x and (expected is None or int(info.get("destination_size") or -1) == int(expected)):
+                        resolution["state"] = "moved_unrecorded"
+                        self._record_receipt(run_dir, state, row, "moved_unrecorded")
+                    elif src_x and dst_x:
+                        resolution["state"] = "copy_complete_source_remaining" if info.get("identical") else "partial_copy"
+                        state["settlement"] = {
+                            "proposal": "finalize" if info.get("identical") else "discard",
+                            "row": row, "info": info, "since": now_iso(),
+                        }
+                    else:
+                        resolution["state"] = "unresolvable"
+                        self._persist_diagnostic(store, run_id, Diagnostic(
+                            code="relocate_apply_reconcile_unresolvable", severity=DiagnosticSeverity.ERROR,
+                            message="interrupted move left neither a usable source nor a verified destination",
+                            details=resolution))
+                        chunked_apply.save_state(run_dir, state, now_iso())
+                        return self._apply_result(store, run_id, ok=False, outcome="relocate_apply_reconcile_blocked")
+                state["inFlight"] = None
+            state["lastReconcile"] = {**resolution, "at": now_iso()}
+            chunked_apply.save_state(run_dir, state, now_iso())
+            self._flush_db(run_dir, state)
+        except Exception as exc:
+            self._persist_diagnostic(store, run_id, Diagnostic(
+                code="relocate_apply_reconcile_failed", severity=DiagnosticSeverity.ERROR,
+                message=str(exc), details={"exceptionType": type(exc).__name__}))
+            return self._apply_result(store, run_id, ok=False, outcome="relocate_apply_reconcile_failed")
+        self._persist_diagnostic(store, run_id, Diagnostic(
+            code="relocate_apply_reconciled", severity=DiagnosticSeverity.INFO,
+            message=f"reconciled interrupted apply: {resolution['state']}",
+            details={k: v for k, v in resolution.items() if k != "info"}))
+        outcome = "relocate_apply_settlement_required" if state.get("settlement") else "relocate_apply_reconciled"
+        return self._apply_result(store, run_id, ok=True, outcome=outcome)
+
+    def _settle(self, store: WorkflowStore, run_id: str, state: dict[str, Any]) -> WorkflowResult:
+        run_dir, _ops, scripts_win = self._paths(store, run_id)
+        settlement = state.get("settlement")
+        if not settlement:
+            return self._reject_call(store.read_run(run_id), "relocate_apply_action_rejected", Diagnostic(
+                code="relocate_apply_nothing_to_settle", severity=DiagnosticSeverity.ERROR,
+                message="no interrupted move awaits settlement", details={"runId": run_id}))
+        try:
+            row, mode = settlement["row"], settlement["proposal"]
+            done = self._settle_probe(scripts_win, row, mode)  # re-verifies before deleting
+            if mode == "finalize":
+                self._record_receipt(run_dir, state, row, "settled_finalize")
+            state["settlement"] = None
+            state["lastReconcile"] = {"state": f"settled_{mode}", "src": row["src"], "dst": row["dst"], "at": now_iso()}
+            chunked_apply.save_state(run_dir, state, now_iso())
+            self._flush_db(run_dir, state)
+        except Exception as exc:
+            self._persist_diagnostic(store, run_id, Diagnostic(
+                code="relocate_apply_settle_failed", severity=DiagnosticSeverity.ERROR,
+                message=str(exc), details={"exceptionType": type(exc).__name__}))
+            return self._apply_result(store, run_id, ok=False, outcome="relocate_apply_settle_failed")
+        self._persist_diagnostic(store, run_id, Diagnostic(
+            code="relocate_apply_settled", severity=DiagnosticSeverity.INFO,
+            message=f"settled interrupted move by {mode}",
+            details={"mode": mode, "src": row["src"], "dst": row["dst"], "action": done.get("action")}))
+        return self._apply_result(store, run_id, ok=True, outcome="relocate_apply_settled")
 
     def _dry_run_existing(
         self,
@@ -831,6 +1059,14 @@ class RelocateWorkflowService:
                 severity=DiagnosticSeverity.ERROR,
                 message=f"run is not a relocate workflow: {run.flow}",
                 details={"runId": run_id, "flow": run.flow},
+            ))
+        if run.phase == WorkflowPhase.APPLYING.value:
+            raise RelocateApplyRejected(Diagnostic(
+                code="relocate_apply_already_started",
+                severity=DiagnosticSeverity.ERROR,
+                message="relocate apply already started for this run; use continue_relocate_apply "
+                        "or reconcile_relocate_apply from nextActions instead of applying again",
+                details={"runId": run_id, "phase": run.phase},
             ))
         if run.phase != WorkflowPhase.PLAN_READY.value:
             raise RelocateApplyRejected(Diagnostic(

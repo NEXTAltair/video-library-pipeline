@@ -698,7 +698,7 @@ def test_relocate_apply_registers_artifacts_after_backup_and_completes(tmp_path)
         assert script.endswith(r"\apply_move_plan.ps1")
         internal_plan = Path(args[args.index("-PlanJsonl") + 1])
         assert internal_plan.read_text(encoding="utf-8").count('"status"') == 0
-        out_path = Path(cfg.windows_ops_root) / "move" / "relocate_apply.jsonl"
+        out_path = Path(args[args.index("-OutJsonl") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
             "\n".join([
@@ -786,7 +786,7 @@ def test_relocate_apply_uses_run_scoped_on_dst_exists_policy(tmp_path) -> None:
 
     def fake_powershell_runner(_script: str, args: list[str]) -> dict:
         assert args[args.index("-OnDstExists") + 1] == "rename_suffix"
-        out_path = Path(cfg.windows_ops_root) / "move" / "relocate_apply_rename_suffix.jsonl"
+        out_path = Path(args[args.index("-OutJsonl") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
             "\n".join([

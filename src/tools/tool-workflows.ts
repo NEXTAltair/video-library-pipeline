@@ -44,9 +44,22 @@ async function runWorkflowCli(command: string, args: string[], okPayload: (parse
         ? "workflow process failed despite a success payload; execution may be incomplete"
         : "workflow_cli.py did not return a valid JSON result",
       exitCode: result.code,
+      ...(command === "resume" ? recoveryHint(args) : {}),
     stdout: result.stdout.slice(-8192),
     stderr: result.stderr.slice(-8192),
   });
+}
+
+// A cut-off or malformed response does not prove that nothing changed. Point at the
+// authoritative state instead of letting the caller repeat the action.
+function recoveryHint(args: string[]): AnyObj {
+  const runId = args[args.indexOf("--run-id") + 1];
+  if (!runId) return {};
+  return {
+    runId,
+    recovery: "Execution may have partly completed. Call video_pipeline_status with this runId and "
+      + "follow its nextActions (an applying run offers reconcile_relocate_apply). Do not repeat the same action.",
+  };
 }
 
 function isWorkflowResultPayload(value: AnyObj): value is WorkflowResultPayload {

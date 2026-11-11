@@ -10,7 +10,7 @@ This skill is the V2 orchestrator for `video-library-pipeline`.
 
 ## V2 Rules
 
-- Use plugin tools for V2 workflow operations. Do not bypass them with Python, PowerShell, shell commands, hidden tools, or manual manifest edits. This boundary does not prohibit user-authorized repository repair, focused tests, or explicit maintenance/admin paths.
+- Change workflow state only through the plugin tools: a run's manifest, receipts and approvals must stay consistent, and hand-edited manifests or hidden tools skip the checks (checksums, gates, writer lock). Read-only inspection of files, user-authorized repository repair, focused tests, and explicit maintenance/admin paths are not restricted.
 - The active public tool surface is limited to:
   - `video_pipeline_start`
   - `video_pipeline_resume`
@@ -22,7 +22,6 @@ This skill is the V2 orchestrator for `video-library-pipeline`.
 - For review-required actions, establish approval using the Continuation and Authorization Contract below. A matching earlier approval remains valid; the review flag does not require another confirmation on every turn or regenerated plan.
 - If `nextActions` returns `complete_empty_plan` with `requiresHumanInput: false`, call the exact `video_pipeline_resume` params directly. It only completes a checksum-verified sourceRoot plan whose recorded count is zero and whose JSONL contains no operations.
 - If `nextActions` returns `register_unregistered` with `requiresHumanInput: false`, call the exact resume params directly. This action only registers missing paths/observations/events; it uses the non-moving registration mode and then reruns dry-run so the new files enter metadata preparation.
-- Execute in the main agent turn; do not delegate to subagents.
 
 ## Continuation and Authorization Contract
 
