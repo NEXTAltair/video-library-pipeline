@@ -12,7 +12,7 @@ from video_pipeline.workflows import (
     WorkflowPhase,
     WorkflowStore,
 )
-from workflow_cli import _cmd_status
+from workflow_cli import _cmd_status, _with_current_next_actions
 
 
 class Killed(BaseException):
@@ -352,7 +352,8 @@ def test_legacy_interrupted_apply_is_recovered_through_public_actions(tmp_path):
     before = env.store.manifest_path(env.run_id).read_bytes()
     again = resume(env, "apply_relocate_move_plan")                # re-applying would collide; refused
     assert not again["ok"] and again["diagnostics"][-1]["code"] == "relocate_apply_already_started"
-    assert [a["params"]["resumeAction"] for a in again["nextActions"]] == ["reconcile_relocate_apply"]
+    shown = _with_current_next_actions(env.store, dict(again))     # what the CLI returns to the caller
+    assert [a["params"]["resumeAction"] for a in shown["nextActions"]] == ["reconcile_relocate_apply"]
     assert env.store.manifest_path(env.run_id).read_bytes() == before
 
     adopted = resume(env, "reconcile_relocate_apply")
