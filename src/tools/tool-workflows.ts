@@ -160,6 +160,7 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
         onDstExists: { type: "string", enum: ["error", "rename_suffix"] },
         supersededByRunId: { type: "string" },
         reason: { type: "string" },
+        idleDays: { type: "integer", minimum: 1, maximum: 3650 },
       },
     },
     async execute(_id: string, params: AnyObj) {
@@ -181,6 +182,8 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
         args.push("--superseded-by-run-id", params.supersededByRunId.trim());
       }
       if (typeof params.reason === "string" && params.reason.trim()) args.push("--reason", params.reason.trim());
+      const resumeIdleDays = finiteInteger(params.idleDays);
+      if (resumeIdleDays !== null) args.push("--idle-days", String(resumeIdleDays));
       // Returned params are passed verbatim, so every key is forwarded for every action.
       if (typeof params.gateId === "string") args.push("--gate-id", params.gateId);
       if (Array.isArray(params.artifactIds)) args.push("--artifact-ids-json", JSON.stringify(stringArray(params.artifactIds)));
@@ -204,6 +207,7 @@ function registerStatus(api: PluginApi, getCfg: GetCfgFn) {
         runId: { type: "string" },
         limit: { type: "integer", minimum: 1, maximum: 100 },
         includeArtifacts: { type: "boolean", default: false },
+        idleDays: { type: "integer", minimum: 1, maximum: 3650, description: "Also list active runs not updated for this many days (read-only)." },
       },
     },
     async execute(_id: string, params: AnyObj) {
@@ -213,6 +217,8 @@ function registerStatus(api: PluginApi, getCfg: GetCfgFn) {
       const limit = finiteInteger(params.limit);
       if (limit !== null) args.push("--limit", String(limit));
       addFlag(args, "--include-artifacts", params.includeArtifacts);
+      const statusIdleDays = finiteInteger(params.idleDays);
+      if (statusIdleDays !== null) args.push("--idle-days", String(statusIdleDays));
       return runWorkflowCli("status", args, (parsed) => parsed);
     },
   });

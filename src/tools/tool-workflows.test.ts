@@ -275,6 +275,25 @@ describe("V2 workflow tools", () => {
     ]), "/ext/py");
   });
 
+  it("forwards idleDays to both status and bulk supersede", async () => {
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({ ok: true, runs: [], openGates: [] }));
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+
+    await getRegisteredTool(api, "video_pipeline_status").execute("call-idle-status", { idleDays: 30 });
+    expect(runCmdAsync).toHaveBeenLastCalledWith("uv", expect.arrayContaining(["status", "--idle-days", "30"]), "/ext/py");
+
+    await getRegisteredTool(api, "video_pipeline_resume").execute("call-idle-resume", {
+      runId: "run_keep",
+      resumeAction: "supersede_idle_runs",
+      idleDays: 30,
+      reason: "abandoned reviews",
+    });
+    expect(runCmdAsync).toHaveBeenLastCalledWith("uv", expect.arrayContaining([
+      "resume", "--run-id", "run_keep", "--action", "supersede_idle_runs", "--idle-days", "30", "--reason", "abandoned reviews",
+    ]), "/ext/py");
+  });
+
   it("delegates reviewed metadata and its run/gate scope to one Python boundary", async () => {
     mocks.applyReviewedExecute.mockResolvedValue({ ok: true, rows: 1, sourceYamlPath: "/ops/review.yaml" });
     vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({

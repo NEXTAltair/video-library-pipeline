@@ -13,7 +13,7 @@ from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
 from video_pipeline.workflows.relocate import metadata_reextract_action
-from video_pipeline.workflows import chunked_apply
+from video_pipeline.workflows import chunked_apply, idle_runs
 from video_pipeline.workflows import (
     NextAction,
     RelocateApplyConfig,
@@ -373,6 +373,20 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                              "message": f"cancelled {len(cancelled)} open gate(s) of a {done.phase} run",
                              "details": {"gateIds": cancelled}}],
         }
+    if action == "supersede_idle_runs":
+        # runId is the successor: the run to keep. Every safe idle run of its flow is superseded.
+        result = idle_runs.supersede_idle_runs(
+            store, args.run_id, idle_days=int(getattr(args, "idle_days", 0) or 0), reason=args.reason)
+        kept = store.read_run(args.run_id)
+        return {
+            "ok": True, "runId": kept.run_id, "flow": kept.flow, "phase": kept.phase,
+            "outcome": "idle_runs_superseded", "artifacts": [], "gates": [], "nextActions": [],
+            "diagnostics": [{
+                "code": "idle_runs_superseded", "severity": "info",
+                "message": f"superseded {len(result['superseded'])} idle run(s); skipped {len(result['skipped'])}",
+                "details": result,
+            }],
+        }
     if action == "supersede_run":
         superseded_run = store.supersede_run(
             args.run_id,
@@ -459,6 +473,7 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
                 runs.append(_run_to_status(run, include_artifacts=args.include_artifacts,
                                            run_dir=store.run_dir(run.run_id)))
     open_gates = []
+    open_gates_total = 0
     stale_open_gates = 0
     latest_artifacts = []
     for run in full_runs:
@@ -466,23 +481,37 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
         for gate in review_gates.values():
             if isinstance(gate, dict) and gate.get("status") == "open":
                 if run.get("status") == "active":
-                    open_gates.append({"runId": run.get("runId"), **gate})
+                    open_gates_total += 1
+                    # Newest runs first; the rest is only counted so the response stays bounded.
+                    if len(open_gates) < args.limit:
+                        open_gates.append({"runId": run.get("runId"), **gate})
                 else:
                     stale_open_gates += 1
         artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
         for artifact in artifacts.values():
             if isinstance(artifact, dict):
                 latest_artifacts.append({"runId": run.get("runId"), **artifact})
-    return {
+    idle_days = int(getattr(args, "idle_days", 0) or 0)
+    result = {
         "ok": True,
         "hints": hints,
         "runs": runs,
         "openGates": open_gates,
+        "openGatesTotal": open_gates_total,
         # Open gates of blocked/failed/complete runs: not actionable, counted so they are not hidden.
         # Close them with resumeAction "cancel_stale_gates" (blocked/failed) or "supersede_run" (active).
         "staleOpenGates": stale_open_gates,
         "latestArtifacts": latest_artifacts[: args.limit] if args.include_artifacts else [],
     }
+    if idle_days:
+        idle = idle_runs.idle_active_runs(store, idle_days)
+        result["idleActiveRuns"] = {
+            "idleDays": idle_days,
+            "total": len(idle),
+            "supersedable": sum(1 for item in idle if not item["protected"]),
+            "runs": idle[: args.limit],
+        }
+    return result
 
 
 def _cmd_inspect_artifact(args: argparse.Namespace) -> dict[str, Any]:
@@ -549,6 +578,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--on-dst-exists", choices=["error", "rename_suffix"], default="")
     resume.add_argument("--superseded-by-run-id", default="")
     resume.add_argument("--reason", default="")
+    resume.add_argument("--idle-days", type=int, default=0)
     resume.add_argument("--gate-id", default="")
     resume.add_argument("--artifact-ids-json", default="")
     resume.add_argument("--review-yaml-paths-json", default="")
@@ -560,6 +590,7 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--run-id", default="")
     status.add_argument("--limit", type=int, default=10)
     status.add_argument("--include-artifacts", action="store_true")
+    status.add_argument("--idle-days", type=int, default=0)
     status.add_argument("--hints-path", default="")
 
     inspect = sub.add_parser("inspect-artifact")
