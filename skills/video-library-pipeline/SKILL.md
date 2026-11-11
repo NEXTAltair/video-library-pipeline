@@ -99,6 +99,16 @@ run alone does not establish task completion.
   }
   ```
 - `supersede_run` is state-only: it performs no file move. It requires an active old run, an existing newer run of the same flow, and a non-empty reason. It marks old artifacts and open gates superseded, completes the old run, and records the successor link in the manifest.
+- Many abandoned active runs (their open gates crowd `status`): list them read-only with `video_pipeline_status {"idleDays": 30}`; `idleActiveRuns` shows each run's `protected` reason. Then supersede the safe ones at once, keeping one current same-flow run as the successor:
+  ```json
+  video_pipeline_resume {
+    "runId": "<run-to-keep>",
+    "resumeAction": "supersede_idle_runs",
+    "idleDays": 30,
+    "reason": "<why these runs are abandoned>"
+  }
+  ```
+  It is state-only, affects only active runs of the successor's flow that are older than `idleDays` and older than the successor, and reports `superseded` and `skipped`. Runs with a started apply are skipped because they need `reconcile_relocate_apply` first. Check the `idleActiveRuns` list before calling; a run the user is still reviewing must not be on it.
 - Keep the fresh run active when it represents current human-review work. Do not supersede the current review gate merely to make the active count zero.
 
 ## Intent Mapping
