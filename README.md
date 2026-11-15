@@ -138,7 +138,15 @@ OpenClaw SDK testing方針の詳細は [docs/adr/0001-plugin-sdk-testing.md](doc
 
 plugin 内に仮想環境を置くと、interpreter の外部リンクが OpenClaw の companion 境界検査に抵触する。OpenClaw からの uv 呼出しは `~/.openclaw/plugin-runtime/video-library-pipeline/.venv` を使用する（`OPENCLAW_STATE_DIR` があればその配下）。環境の場所を変える場合は `OPENCLAW_VIDEO_PIPELINE_VENV` を指定する。ほかのコマンドやプロジェクトの環境変数は変更しない。
 
-開発時も同じ場所を指定し、linked plugin の repo 内に `.venv` や外部環境へのリンクを再作成しない。
+開発 checkout を plugin として直接読み込むと、素の `uv run` が作る `.venv` も companion 検査の対象になる。checkout に依存しない配備には、ビルド済み npm package を別ディレクトリへ固定する:
+
+```sh
+./scripts/stage-runtime
+```
+
+表示された `~/.openclaw/plugin-runtime/video-library-pipeline/releases/sha256-...` は package 内容に対応する immutable な配備先。コマンドは build と `npm pack` を行い、新規 release を用意するだけで、動作中の設定は変更しない。更新時も同じ手順で新しい release を作り、内容と現在の plugin 設定を確認してから OpenClaw の plugin load path を切り替える。以前のパスを保持すれば戻せる。開発 checkout の未コミット変更は package に含まれ得るため、配備前に `git status` と package 内容を必ず確認する。Gateway の再起動・reload は別途安全確認が必要。runtime 側の Python 環境は従来どおり release の外にある。
+
+開発時の素の `uv run` は checkout 内に `.venv` を作るが、独立配備先には影響しない。`./scripts/uv-project run ...` なら開発時も外部環境を選べる。
 
 ```sh
 UV_PROJECT_ENVIRONMENT="$HOME/.openclaw/plugin-runtime/video-library-pipeline/.venv" uv sync --locked
