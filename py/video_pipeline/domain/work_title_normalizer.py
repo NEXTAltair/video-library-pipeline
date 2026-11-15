@@ -14,6 +14,14 @@ def alias_key(value):
     return re.sub(r'[\s_<>:"/\\|?*]+', '', text)
 
 
+def work_title_header(base):
+    """Cut explicit episode/subtitle markers, not distinct work-name words."""
+    text = re.sub(r'^【[^】]*無料の日[^】]*】\s*', '', base)
+    text = strip_broadcast_frame_prefix(text)
+    marker = re.search(r'(?:第\s*\d+\s*話|\s+\d+\s*話|[#＃]\d+(?=[\s_「『-]|$)|[【「『▽▼◇◆])', text)
+    return text[:marker.start()].strip(' _') if marker and marker.start() > 0 else text.strip(' _')
+
+
 def resolve_work_title(base, aliases=None, regex_rules=(), *, parsed_title=None, dictionary_match=None):
     """Curated rules/aliases > known frame/work prefix > DB prefix lookup."""
     for pattern, canonical, field in regex_rules:
@@ -30,16 +38,23 @@ def resolve_work_title(base, aliases=None, regex_rules=(), *, parsed_title=None,
         if key in normalized and normalized[key] != canonical:
             raise ValueError('conflicting canonical aliases after normalization')
         normalized[key] = canonical
-    if parsed_title is not None and alias_key(parsed_title) in normalized:
-        return normalized[alias_key(parsed_title)]
     content_base = re.sub(r'^【[^】]*無料の日[^】]*】\s*', '', base)
     prefix = canonical_from_known_program_prefix(content_base)
     stripped = strip_broadcast_frame_prefix(content_base)
+    headers = [alias_key(work_title_header(content_base))]
+    if prefix:
+        headers.append(alias_key(prefix))
+    if parsed_title is not None and alias_key(parsed_title) in headers:
+        headers.insert(0, alias_key(parsed_title))
+    for header in headers:
+        if header in normalized:
+            return normalized[header]
     candidates = [alias_key(base), alias_key(stripped)]
     if prefix:
         candidates.append(alias_key(prefix))
     for key in sorted(normalized, key=len, reverse=True):
-        if key and any(candidate.startswith(key) for candidate in candidates):
+        if key and any(candidate.startswith(key) and candidate[len(key):len(key) + 1] in ('!', '?', '【', '「', '『', '▽', '▼', '◇', '◆', '#')
+                       for candidate in candidates):
             return normalized[key]
     if prefix:
         return prefix

@@ -109,6 +109,17 @@ def test_dictionary_never_identifies_a_work_mentioned_only_in_description(make_d
     assert mod._match_from_known_programs(base, mod._ProgramDictionary(con), mod.HintSet()) == '仮面ライダー'
 
 
+def test_short_franchise_alias_cannot_swallow_a_distinct_series(make_db):
+    import run_metadata_batches_promptv1 as mod
+    from epg_common import normalize_program_key
+    full = '機動戦士ガンダム 水星の魔女'
+    base = full + ' 第11話「地球の魔女」'
+    hints = mod.HintSet(alias_map={'機動戦士ガンダム': '機動戦士ガンダム'})
+    con = make_db([], programs=['機動戦士ガンダム', full])
+    assert mod._match_from_known_programs(base, mod._ProgramDictionary(con), hints) == full
+    assert extract_series_name(base, _alias_map={normalize_program_key('機動戦士ガンダム'): '機動戦士ガンダム'}) == full
+
+
 def test_dictionary_drops_bracketed_episode_titles_and_recognizes_promotion_label(make_db):
     import run_metadata_batches_promptv1 as mod
     con = make_db([], programs=['Newsモーニングサテライト', 'Newsモーニングサテライト【今日の金融】',
