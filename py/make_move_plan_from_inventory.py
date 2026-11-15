@@ -111,6 +111,10 @@ def main() -> int:
                 )
                 if not result.ok:
                     reason = result.skip_reason or "unknown"
+                    if reason == "series_work_unmapped":
+                        preflight_counts[reason] = preflight_counts.get(reason, 0) + 1
+                        excluded.append({"path_id": pid, "src": src, "dst": None, "reason": reason})
+                        continue
                     if reason == "needs_review":
                         skipped_needs_review += 1
                     elif reason == "invalid_metadata_contract":

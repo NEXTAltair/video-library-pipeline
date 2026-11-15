@@ -77,6 +77,17 @@ Continuation and Authorization Contract throughout this branch.
      the writer lock and a second caller only waits or is rejected).
 8. Verify apply receipts and current state. Inspect failed/truncated responses before any retry; never repeat verified moves. Continue any remaining authorized stage, then report the requested outcome and protected exclusions.
 
+## Storage direction check
+
+A normalized folder name is not proof that the destination is correct. Compare
+**every row's root and work subfolder** with the intended grouping and the existing
+series layout. A member already inside a series root must not be sent outside it
+by an ordinary genre route; outside members should be reviewed toward the existing
+series, keeping distinct works separate. This caught an unapplied plan that would
+have moved existing series members out of their group. A one-character folder is
+not automatically a truncated title: inspect its configured layout first (the
+legacy `by_syllabary` layout deliberately uses category names such as `ア`/`カ`).
+
 ## Completion Criteria
 
 - `phase == "complete"` with `outcome == "workflow_run_superseded"` means the stale snapshot was safely retired without moving files.
