@@ -21,7 +21,7 @@ from plan_validation import detect_swallowed_program_title
 from source_history import make_entry
 from pathscan_common import now_iso
 from title_resolution import load_canonical_title_sources, suggest_canonical_title
-from broadcast_frame_titles import canonical_from_known_program_prefix, is_contaminated_program_title
+from broadcast_frame_titles import canonical_from_known_program_prefix, is_contaminated_program_title, reviewed_title_conflicts_with_filename
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -871,7 +871,12 @@ def main() -> int:
             pid = rec.get("path_id")
             if pid and not args.ignore_human_reviewed:
                 existing = _get_latest_llm_metadata(db_con, str(pid))
-                if isinstance(existing, dict) and existing.get("human_reviewed") is True:
+                # Only review candidates may replace a deterministic frame/work
+                # mismatch. Normal extraction still preserves human decisions.
+                recheck = (args.output_only and isinstance(existing, dict)
+                           and reviewed_title_conflicts_with_filename(
+                               str(existing.get("program_title") or ""), str(rec.get("name") or "")))
+                if isinstance(existing, dict) and existing.get("human_reviewed") is True and not recheck:
                     locked_row = _build_locked_row(existing, rec, args.model, args.extraction_version)
                     enforce_db_contract(locked_row)
                     rows.append(locked_row)

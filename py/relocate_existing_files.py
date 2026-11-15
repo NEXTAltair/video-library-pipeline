@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from db_helpers import latest_path_metadata, metadata_source_flags
+from broadcast_frame_titles import reviewed_title_conflicts_with_filename
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from move_apply_stats import aggregate_move_apply
 from path_placement_rules import (
@@ -366,6 +367,16 @@ def main() -> int:
                 continue
 
             is_human_reviewed, is_llm = metadata_source_flags(md, md_source)
+
+            if reviewed_title_conflicts_with_filename(str(md.get("program_title") or ""), str(sf.name or "")):
+                suspicious_program_title_skipped += 1
+                rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "status": "skipped",
+                                      "reason": "suspicious_program_title", "ts": ts_row,
+                                      "program_title": md.get("program_title")})
+                if queue_missing_metadata:
+                    queue_candidates.append({"path_id": path_id, "path": sf.win_path,
+                                             "name": sf.name, "mtime_utc": sf.mtime_utc})
+                continue
 
             if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
                 unreviewed_metadata_skipped += 1

@@ -104,6 +104,12 @@ def strip_episode_title_suffix(title: str) -> str:
     return t[:match.start()].strip() if match else t
 
 
+def reviewed_title_conflicts_with_filename(title: str, filename: str) -> bool:
+    """A deterministic frame/work disagreement needs a new review, not a move."""
+    work = canonical_from_known_program_prefix(filename)
+    return bool(work and _compact(work) != _compact(title))
+
+
 def is_contaminated_program_title(title: str) -> bool:
     """Return true for titles that must be excluded from DB-backed dictionaries."""
     return (
