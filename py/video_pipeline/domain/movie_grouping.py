@@ -7,6 +7,19 @@ def compact(value):
     return re.sub(r"[\s_]+", "", unicodedata.normalize("NFKC", str(value or ""))).casefold()
 
 
+def has_movie_evidence(metadata):
+    genre = str(metadata.get('genre') or '').casefold()
+    if genre:
+        return genre in ('movie', '映画')
+    epg = metadata.get('epg_genres') or []
+    if isinstance(epg, list):
+        for entry in epg:
+            category = str(entry.get('category') or '') if isinstance(entry, dict) else str(entry)
+            if category == '映画' or category.startswith('映画 - '):
+                return True
+    return str(metadata.get('epg_genre') or '').startswith('映画 - ')
+
+
 class MovieGrouping:
     def __init__(self, data):
         self.default_dest = str(data.get("default_dest_root") or "").rstrip("\\")

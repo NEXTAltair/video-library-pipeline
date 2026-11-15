@@ -211,7 +211,8 @@ def load_drive_routes(yaml_path: str | Path) -> DriveRoutes:
     movie_grouping = None
     if data.get("movie_grouping_path"):
         from .movie_grouping import MovieGrouping
-        grouping_path = Path(str(data["movie_grouping_path"]))
+        from video_pipeline.platform.pathscan_common import windows_to_wsl_path
+        grouping_path = Path(windows_to_wsl_path(str(data["movie_grouping_path"])))
         if not grouping_path.is_absolute():
             grouping_path = p.parent / grouping_path
         movie_grouping = MovieGrouping(_load_yaml_file(grouping_path))
@@ -286,8 +287,9 @@ def build_routed_dest_path(
 
     route, reason = routes.resolve(md)
     if routes.movie_grouping:
+        from .movie_grouping import has_movie_evidence
         group = routes.movie_grouping.resolve(str(md["program_title"]), filename,
-                                             movie_evidence=bool(route and route.genre == "movie"))
+                                             movie_evidence=has_movie_evidence(md) or bool(route and route.genre == "movie"))
         if group:
             root, folder = group
             return str(PureWindowsPath(root.rstrip("\\") + "\\") / safe_dir_name(folder, maxlen=80) / filename), "movie", None

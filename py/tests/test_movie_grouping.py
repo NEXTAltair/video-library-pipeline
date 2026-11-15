@@ -91,3 +91,22 @@ def test_japanese_resolved_genres_remain_authoritative_for_routes():
     md = {'program_title': '機動戦士ガンダムIII めぐりあい宇宙編', 'genre': '映画',
           'air_date': '2026-01-01', 'needs_review': False}
     assert build_routed_dest_path(routes, r'B:\old\Movie.mp4', md)[0] == r'D:\Anime\シリーズ_ガンダム\Movie.mp4'
+
+
+def test_explicit_movie_metadata_does_not_need_a_redundant_movie_route():
+    routes = DriveRoutes(r'B:\VideoLibrary', 'by_title', [], movie_grouping=policy())
+    for genre in ['movie', '映画']:
+        md = {'program_title': '機動戦士ガンダムIII めぐりあい宇宙編', 'genre': genre,
+              'air_date': '2026-01-01', 'needs_review': False}
+        assert build_routed_dest_path(routes, r'B:\old\Movie.mp4', md)[0] == r'D:\Anime\シリーズ_ガンダム\Movie.mp4'
+
+
+def test_windows_absolute_nested_policy_is_normalized_before_join(tmp_path, monkeypatch):
+    import video_pipeline.platform.pathscan_common as common
+    group = tmp_path / 'movies.yaml'
+    group.write_text('frames: []\nseries: []\n')
+    original = common.windows_to_wsl_path
+    monkeypatch.setattr(common, 'windows_to_wsl_path', lambda path: str(group) if path == r'C:\Rules\movies.yaml' else original(path))
+    route = tmp_path / 'routes.yaml'
+    route.write_text('default_dest: "B:\\\\VideoLibrary"\nmovie_grouping_path: \'C:\\Rules\\movies.yaml\'\nroutes: []\n')
+    assert load_drive_routes(route).movie_grouping is not None
