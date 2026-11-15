@@ -50,3 +50,11 @@ def test_existing_reviewed_title_quote_is_repaired_before_exact_match():
  raw='仮面ライダーガッチャード"'
  src=CanonicalTitleSources((raw,),(),frozenset((raw.casefold(),)),())
  assert suggest_canonical_title(raw,src,min_extra_chars=3)==('仮面ライダーガッチャード','edge_delimiters')
+
+def test_edge_cleanup_does_not_skip_canonical_or_subtitle_resolution():
+ from title_resolution import CanonicalTitleSources,suggest_canonical_title
+ src=CanonicalTitleSources(('Example Show',),(),frozenset(('example show',)),())
+ assert suggest_canonical_title('Example Show▽Episode"',src,min_extra_chars=3)==('Example Show','human_reviewed')
+ assert suggest_canonical_title('Example Show"',src,min_extra_chars=3)==('Example Show','edge_delimiters')
+ empty=CanonicalTitleSources((),(),frozenset(),())
+ assert suggest_canonical_title('Example Show▽Episode"',empty,min_extra_chars=3)==('Example Show','separator_split')

@@ -192,8 +192,8 @@ def suggest_canonical_title(
       "no_match"            — no suggestion available
     """
     cleaned_edges = clean_title_edges(program_title)
-    if cleaned_edges and cleaned_edges != program_title:
-        return cleaned_edges, "edge_delimiters"
+    edge_changed = cleaned_edges != program_title
+    program_title = cleaned_edges
     pt_norm = normalize_title_for_comparison(program_title)
     if not pt_norm:
         return None, "no_match"
@@ -212,13 +212,14 @@ def suggest_canonical_title(
 
     # Exact match against human-reviewed → already canonical
     if pt_norm in sources.human_reviewed_norm:
-        return None, "exact_human_reviewed"
+        return (cleaned_edges, "edge_delimiters") if edge_changed else (None, "exact_human_reviewed")
 
     # Sorted longest-first: first match is the best
     def _match_prefix(
         candidates: tuple[str, ...], source_name: str
     ) -> tuple[str | None, str]:
         for candidate in candidates:
+            candidate = clean_title_edges(candidate)
             cand_norm = normalize_title_for_comparison(candidate)
             if not cand_norm:
                 continue
@@ -247,4 +248,6 @@ def suggest_canonical_title(
     if cleaned and normalize_title_for_comparison(cleaned) != pt_norm:
         return cleaned, "separator_split"
 
+    if edge_changed and cleaned_edges:
+        return cleaned_edges, "edge_delimiters"
     return None, "no_match"
