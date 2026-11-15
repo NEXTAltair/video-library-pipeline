@@ -5,7 +5,7 @@ All Windows moves use the bundled PowerShell boundary and immutable identities.
 """
 from __future__ import annotations
 
-from video_pipeline.domain.companion_bundle import parent_move_succeeded, capture_bundle
+from video_pipeline.domain.companion_bundle import parent_move_succeeded, capture_bundle, validate_restore_bundle
 
 from datetime import datetime, timezone
 import hashlib
@@ -284,9 +284,11 @@ def restore_plan(db, ops_root, original_dir, *, apply=False, runner=run_pwsh_jso
             state = con.execute("SELECT s.* FROM path_file_state s JOIN paths p USING(path_id) WHERE p.path=?", (r["dst"],)).fetchone()
             if not state or state["file_id"] != r["file_id"]:
                 raise ValueError("quarantine identity mismatch")
+            bundle = capture_bundle(r["dst"], r["src"])
+            validate_restore_bundle(m, r, bundle)
             moves.append({"op": "move", "src": r["dst"], "dst": r["src"], "path_id": state["path_id"],
                           "file_id": r["file_id"], "precondition": sig,
-                          **capture_bundle(r["dst"], r["src"])})
+                          **bundle})
     result = {"ok": True, "preview": not apply, "restore_operations": len(moves)}
     if not apply or not moves:
         return result

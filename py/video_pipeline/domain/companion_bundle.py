@@ -106,3 +106,40 @@ def capture_bundle(src, dst, *, localize=windows_to_wsl_path, windows_probe=None
         if kinds[0] != 'video' or kinds[1:] != fields['companion_cohort'] or any(k not in KINDS for k in kinds[1:]):
             raise ValueError('invalid_native_companion_cohort')
         return fields
+
+
+def _signature_ticks(signature):
+    import re
+    if signature.get('mtime_ns') is not None:
+        return int(signature['mtime_ns']) // 100
+    value = signature['mtime_utc'].replace('Z', '+00:00')
+    dt = datetime.fromisoformat(value)
+    fraction = re.search(r'\.(\d+)', value)
+    ticks = int(((fraction.group(1) if fraction else '') + '0000000')[:7])
+    return int(dt.replace(microsecond=0).timestamp()) * 10_000_000 + ticks
+
+
+def validate_restore_bundle(plan, receipt, current):
+    """A restore must preserve the quarantined cohort, not bless a new one."""
+    expected = plan.get('members') or [{'kind': 'video', 'src': plan['src'], 'dst': plan['dst'],
+                                        'precondition': plan['precondition']}]
+    kinds = [member['kind'] for member in expected]
+    if len(set(kinds)) != len(kinds) or kinds[0] != 'video':
+        raise ValueError('invalid recorded quarantine bundle')
+    if 'bundle_version' not in receipt:
+        if kinds != ['video'] or current['companion_cohort']:
+            raise ValueError('unversioned quarantine cannot prove companion cohort')
+        return
+    if receipt['bundle_version'] != BUNDLE_VERSION or plan.get('bundle_version', BUNDLE_VERSION) != BUNDLE_VERSION:
+        raise ValueError('unsupported quarantine bundle version')
+    recorded = receipt.get('members') or []
+    observed = current.get('members') or []
+    if ([m['kind'] for m in recorded] != kinds or [m['kind'] for m in observed] != kinds
+            or current['companion_cohort'] != kinds[1:]):
+        raise ValueError('quarantined companion cohort changed')
+    for old, proof, now in zip(expected, recorded, observed):
+        if (proof['src'], proof['dst']) != (old['src'], old['dst']):
+            raise ValueError('quarantine bundle receipt identity mismatch')
+        for actual in (proof['precondition'], now['precondition']):
+            if actual['size_bytes'] != old['precondition']['size_bytes'] or _signature_ticks(actual) != _signature_ticks(old['precondition']):
+                raise ValueError('quarantined companion signature changed')
