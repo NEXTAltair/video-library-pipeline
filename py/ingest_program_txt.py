@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from db_helpers import split_broadcast_data
-from edcb_program_parser import datetime_key_from_epg, match_key_from_epg, parse_program_txt
+from edcb_program_parser import datetime_key_from_epg, match_key_from_epg, parse_program_txt, recording_stem_from_program_info
 from epg_common import broadcast_id_for, normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from pathscan_common import now_iso
@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             # .ts.program.txt → stem twice → base filename shared with .ts/.mp4
-            ts_filename_stem = Path(ptxt.stem).stem
+            ts_filename_stem = recording_stem_from_program_info(str(ptxt))
 
             data = {
                 "match_key": match_key,
