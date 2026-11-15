@@ -153,6 +153,27 @@ def test_cross_drive_preview_preserves_holds_excludes_quarantine_and_selects_wor
     assert planned["precondition"]["size_bytes"] == 9
 
 
+def test_reviewed_frame_title_is_queued_without_moving_or_mutating_db(tmp_path, monkeypatch, capsys):
+    preview = Preview(tmp_path, monkeypatch)
+    preview.add(r'B:\Library\日曜劇場「VIVANT」第23話_2026_11_01_21_00.mp4', title="日曜劇場")
+    summary, rows, _ = preview.run(monkeypatch, capsys, "--program-titles-json", '["日曜劇場"]')
+    assert summary["plannedMoves"] == 0
+    assert summary["suspiciousProgramTitleSkipped"] == 1
+    assert summary["metadataQueuePlannedCount"] == 1
+    assert rows[0]["reason"] == "suspicious_program_title"
+
+
+def test_custom_route_location_does_not_change_extraction_alias_resource(tmp_path, monkeypatch, capsys):
+    preview = Preview(tmp_path, monkeypatch)
+    preview.add(r'B:\Library\ドラマ24 OriginalWork 第5話_2026_11_01_21_00.mp4', title="CanonicalWork")
+    shared = tmp_path / 'shared-extraction-hints.yaml'
+    shared.write_text('rules:\n  - match:\n      regex: "^ドラマ24"\n      field: base\n    set:\n      program_title: CanonicalWork\n')
+    monkeypatch.setattr(relocate, "default_program_aliases", lambda py_root: shared)
+    summary, rows, _ = preview.run(monkeypatch, capsys, "--program-titles-json", '["CanonicalWork"]')
+    assert summary["suspiciousProgramTitleSkipped"] == 0
+    assert summary["plannedMoves"] == 1
+
+
 def test_in_plan_destination_collision_holds_both_sources(tmp_path, monkeypatch, capsys):
     preview = Preview(tmp_path, monkeypatch)
     preview.add(r"B:\Library\Show same.mp4")

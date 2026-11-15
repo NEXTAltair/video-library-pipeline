@@ -120,6 +120,34 @@ def test_program_dictionary_skips_broadcast_frame_titles(make_db):
     assert result == "機動戦士ガンダム 水星の魔女"
 
 
+def test_output_only_rechecks_frame_mismatch_without_mutating_reviewed_db(tmp_path, monkeypatch, capsys):
+    from mediaops_schema import connect_db, create_schema_if_needed
+    from video_pipeline.db.file_identity import ensure_location
+    db = tmp_path / "reviewed.sqlite"
+    con = connect_db(str(db))
+    create_schema_if_needed(con)
+    name = '日曜劇場「VIVANT」第23話_2026_11_01_21_00.mp4'
+    path = 'B:\\VideoLibrary\\日曜劇場\\' + name
+    pid = ensure_location(con, path)
+    data = {"program_title": "日曜劇場", "human_reviewed": True, "air_date": "2026-11-01"}
+    con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,human_reviewed) VALUES(?,'human_reviewed',?,'now','日曜劇場',1)",
+                (pid, json.dumps(data)))
+    con.commit()
+    con.close()
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    queue = tmp_path / "queue.jsonl"
+    queue.write_text(json.dumps({"path_id": pid, "path": path, "name": name}) + "\n")
+    out = tmp_path / "out"
+    monkeypatch.setattr(sys, "argv", ["extract", "--db", str(db), "--queue", str(queue),
+                                    "--outdir", str(out), "--output-only"])
+    assert mod.main() == 0
+    summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    row = json.loads(__import__('pathlib').Path(summary["latestOutputJsonlPath"]).read_text().splitlines()[0])
+    assert row["program_title"] == "VIVANT"
+    assert summary["preservedHumanReviewed"] == 0
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+
+
 @pytest.mark.parametrize("suffix", ["2024-03-10-09:30", "2024-03-10-09：30", "２０２４-０３-１０-０９：３０"])
 def test_hyphen_colon_recording_date_is_used_and_removed_from_title(suffix):
     name = f'爆上戦隊ブンブンジャー「情報屋は認めない」{suffix}.mp4'
