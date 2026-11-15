@@ -21,6 +21,7 @@ def default_relocate_roots(source_root: str, dest_root: str, ts_root: str, drive
     if drive_routes:
         routes = load_drive_routes(drive_routes)
         roots.extend([routes.default_dest, *(r.dest_root for r in routes.routes)])
+        roots.extend(str(r.root) for r in routes.work_routes)
         if routes.movie_grouping:
             roots.extend(routes.movie_grouping.destinations())
     roots.append(ts_root)

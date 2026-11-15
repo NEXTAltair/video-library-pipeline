@@ -139,14 +139,52 @@ class DriveRoute:
         self.title_patterns: list[str] = data.get("title_patterns") or []
 
 
+class WorkRoute(DriveRoute):
+    """Explicit work identities change storage only, never genre or title."""
+
+    def __init__(self, data: dict[str, Any]):
+        if not isinstance(data, dict):
+            raise ValueError("work route must be a mapping")
+        works = data.get("works")
+        root = data.get("dest_root")
+        if not isinstance(works, list) or not works or any(not isinstance(w, str) or not w.strip() for w in works):
+            raise ValueError("work route requires a nonempty list of work titles")
+        if not isinstance(root, str) or not PureWindowsPath(root).is_absolute() or ".." in PureWindowsPath(root).parts:
+            raise ValueError("work route requires an absolute Windows dest_root")
+        if data.get("layout", "by_title") != "by_title":
+            raise ValueError("work route layout must be by_title")
+        super().__init__({**data, "layout": "by_title"})
+        self.works = tuple(w.strip() for w in works)
+        self.root = PureWindowsPath(root)
+
+
 class DriveRoutes:
     """Multi-destination routing configuration."""
 
-    def __init__(self, default_dest: str, default_layout: str, routes: list[DriveRoute], movie_grouping=None):
+    def __init__(self, default_dest: str, default_layout: str, routes: list[DriveRoute], movie_grouping=None, work_routes=None):
         self.default_dest = default_dest.rstrip("\\")
         self.default_layout = default_layout
         self.routes = routes
         self.movie_grouping = movie_grouping
+        if work_routes is None:
+            work_routes = []
+        if not isinstance(work_routes, list):
+            raise ValueError("work_routes must be a list")
+        self.work_routes = [WorkRoute(data) for data in work_routes]
+        self._work_routes_by_title: dict[str, WorkRoute] = {}
+        for route in self.work_routes:
+            for title in route.works:
+                key = normalize_title_for_comparison(title)
+                if key in self._work_routes_by_title:
+                    raise ValueError("duplicate normalized work route title: " + title)
+                self._work_routes_by_title[key] = route
+
+    def resolve_work(self, title: str) -> WorkRoute | None:
+        return self._work_routes_by_title.get(normalize_title_for_comparison(title))
+
+    def contains_grouped_source(self, source: str) -> bool:
+        path = PureWindowsPath(source)
+        return any(path.is_relative_to(route.root) for route in self.work_routes)
 
     def resolve(self, md: dict[str, Any]) -> tuple[DriveRoute | None, str]:
         """Find the matching route for given metadata.
@@ -225,6 +263,9 @@ def load_drive_routes(yaml_path: str | Path) -> DriveRoutes:
     default_dest = str(data.get("default_dest") or "")
     default_layout = normalize_layout_name(str(data.get("default_layout") or "by_program_year_month"))
     routes = [DriveRoute(r) for r in data.get("routes", []) if r.get("genre")]
+    work_routes = data.get("work_routes", [])
+    if not isinstance(work_routes, list):
+        raise ValueError("work_routes must be a list")
 
     movie_grouping = None
     if data.get("movie_grouping_path"):
@@ -234,7 +275,7 @@ def load_drive_routes(yaml_path: str | Path) -> DriveRoutes:
         if not grouping_path.is_absolute():
             grouping_path = p.parent / grouping_path
         movie_grouping = MovieGrouping(_load_yaml_file(grouping_path))
-    return DriveRoutes(default_dest=default_dest, default_layout=default_layout, routes=routes, movie_grouping=movie_grouping)
+    return DriveRoutes(default_dest=default_dest, default_layout=default_layout, routes=routes, movie_grouping=movie_grouping, work_routes=work_routes)
 
 
 # ── Layout builders ──────────────────────────────────────────
@@ -304,6 +345,13 @@ def build_routed_dest_path(
         return None, None, "missing_filename"
 
     route, reason = routes.resolve(md)
+    genre = route.genre if route else "default"
+    work_route = routes.resolve_work(str(md["program_title"]))
+    if work_route:
+        dst = work_route.root / safe_dir_name(str(md["program_title"]), maxlen=80) / filename
+        return str(dst), genre, None
+    if routes.contains_grouped_source(src_path_win):
+        return None, genre, "series_work_unmapped"
     explicit_genre = str(md.get("genre") or "").casefold()
     non_movie = bool(explicit_genre and explicit_genre not in ("movie", "映画"))
     animated_work = explicit_genre in ("anime", "アニメ", "アニメ/特撮")
