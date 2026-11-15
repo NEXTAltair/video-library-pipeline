@@ -18,6 +18,9 @@ class MovieGrouping:
             if not group.get("folder") or not group.get("dest_root") or not group.get("works"):
                 raise ValueError("movie series requires folder, dest_root and explicit works")
 
+    def destinations(self):
+        return [root for root in [self.default_dest, *(g['dest_root'] for g in self.series)] if root]
+
     def resolve(self, title, filename, movie_evidence=False):
         raw = unicodedata.normalize("NFKC", str(filename))
         raw = re.sub(r"^(?:\[[^\]]+\])+", "", raw).strip()
@@ -26,15 +29,36 @@ class MovieGrouping:
         if not frame and not movie_evidence:
             return None
         work_raw = raw[len(frame):].strip() if frame and raw.startswith(frame) else raw
-        work_raw = re.sub(r"^映画\s*", "", work_raw).lstrip('「『')
-        candidates = [compact(title), compact(work_raw)]
+        work_raw = re.sub(r"^映画\s*", "", work_raw)
+        quoted = re.match(r'^[「『](.+?)[」』]', work_raw)
+        quoted_work = compact(quoted.group(1).lstrip('「『')) if quoted else None
+        title_key = compact(title)
+        infer_from_name = title_key in ('', 'unknown') or any(title_key.startswith(compact(f)) for f in self.frames)
+
+        def matches_work(alias):
+            key = compact(alias)
+            if not key:
+                return False
+            if title_key == key:
+                return True
+            if not infer_from_name:
+                return False
+            if quoted_work is not None:
+                return quoted_work == key
+            pattern = r'[\s_]*'.join(re.escape(c) for c in key)
+            match = re.match(pattern + r'(?=\s|_|[「『【\[<(]|$)', work_raw, re.I)
+            if not match:
+                return False
+            # An English next word can be part of a different movie title.
+            rest = work_raw[match.end():]
+            return not (re.search(r'[a-z]', key) and re.match(r'\s+[A-Za-z]', rest))
         matches = []
         for group in self.series:
             for work in group["works"]:
                 aliases = [work] if isinstance(work, str) else [work["title"], *work.get("aliases", [])]
                 for alias in aliases:
                     key = compact(alias)
-                    if key and any(candidate.startswith(key) for candidate in candidates):
+                    if matches_work(alias):
                         matches.append((len(key), group))
         if matches:
             longest = max(length for length, _ in matches)

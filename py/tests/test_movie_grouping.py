@@ -57,3 +57,24 @@ def test_legacy_routes_without_policy_keep_their_layout():
     routes = DriveRoutes(r'B:\VideoLibrary', 'by_title', [])
     md = {'program_title': 'Film', 'air_date': '2026-01-01', 'needs_review': False}
     assert build_routed_dest_path(routes, r'B:\old\Film.mp4', md)[0] == r'B:\VideoLibrary\Film\Film.mp4'
+
+
+def test_arbitrary_title_prefix_cannot_claim_an_unrelated_film():
+    p = MovieGrouping({'default_dest_root': 'L:\\', 'frames': ['金曜ロードショー'],
+                       'series': [{'folder': 'ITシリーズ', 'dest_root': 'L:\\', 'works': ['IT']}]})
+    assert p.resolve('It Follows', '金曜ロードショー「It Follows」_2026_08_28.mp4') == ('L:', '金曜ロードショー')
+    assert p.resolve('Unknown', '金曜ロードショー It Follows 説明.mp4') == ('L:', '金曜ロードショー')
+    assert p.resolve('IT', '金曜ロードショー「IT」.mp4') == ('L:', 'ITシリーズ')
+
+
+def test_grouping_destinations_remain_in_relocate_and_dedup_inventory(tmp_path):
+    from video_pipeline.domain.routing_inventory import default_relocate_roots
+    from dedup_cli import configured_roots
+    group = tmp_path / 'movies.yaml'
+    group.write_text('default_dest_root: "L:\\\\Movies"\nframes: [金曜ロードショー]\nseries:\n  - folder: Known\n    dest_root: "D:\\\\Series"\n    works: [Film]\n')
+    route = tmp_path / 'routes.yaml'
+    route.write_text('default_dest: "B:\\\\VideoLibrary"\nmovie_grouping_path: movies.yaml\nroutes: []\n')
+    roots = default_relocate_roots(r'B:\Source', r'B:\VideoLibrary', r'J:\TVFile', str(route))
+    assert r'L:\Movies' in roots and r'D:\Series' in roots
+    dedup = configured_roots(r'B:\Source', r'B:\VideoLibrary', str(route))
+    assert '/mnt/l/Movies' in dedup and '/mnt/d/Series' in dedup

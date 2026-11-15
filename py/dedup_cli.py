@@ -28,6 +28,10 @@ def configured_roots(source_root, dest_root, drive_routes):
         if routes.get("default_dest"):
             roots.append(routes["default_dest"])
         roots.extend(r["dest_root"] for r in routes.get("routes", []) if r.get("dest_root"))
+        if routes.get('movie_grouping_path'):
+            from video_pipeline.domain.path_placement_rules import load_drive_routes
+            loaded = load_drive_routes(route_file)
+            roots.extend(loaded.movie_grouping.destinations())
     return list(dict.fromkeys(str(Path(windows_to_wsl_path(r)).resolve()) for r in roots if r))
 
 
