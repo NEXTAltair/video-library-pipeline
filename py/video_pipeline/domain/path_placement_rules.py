@@ -124,10 +124,11 @@ class DriveRoute:
 class DriveRoutes:
     """Multi-destination routing configuration."""
 
-    def __init__(self, default_dest: str, default_layout: str, routes: list[DriveRoute]):
+    def __init__(self, default_dest: str, default_layout: str, routes: list[DriveRoute], movie_grouping=None):
         self.default_dest = default_dest.rstrip("\\")
         self.default_layout = default_layout
         self.routes = routes
+        self.movie_grouping = movie_grouping
 
     def resolve(self, md: dict[str, Any]) -> tuple[DriveRoute | None, str]:
         """Find the matching route for given metadata.
@@ -137,6 +138,11 @@ class DriveRoutes:
         # 0. Pre-resolved genre fast-path
         pre = md.get("genre")
         if pre:
+            # Metadata extraction uses Japanese labels; route ids are stable
+            # English keys. Do not discard an explicit, resolved genre.
+            pre = {"アニメ": "anime", "特撮": "tokusatsu", "映画": "movie", "ドラマ": "drama",
+                   "ドキュメンタリー・情報": "documentary", "バラエティ": "variety",
+                   "ニュース・報道": "news", "放送大学": "education"}.get(str(pre), pre)
             for route in self.routes:
                 if route.genre == pre:
                     return route, f"pre_resolved_genre:{pre}"
@@ -202,7 +208,15 @@ def load_drive_routes(yaml_path: str | Path) -> DriveRoutes:
     default_layout = normalize_layout_name(str(data.get("default_layout") or "by_program_year_month"))
     routes = [DriveRoute(r) for r in data.get("routes", []) if r.get("genre")]
 
-    return DriveRoutes(default_dest=default_dest, default_layout=default_layout, routes=routes)
+    movie_grouping = None
+    if data.get("movie_grouping_path"):
+        from .movie_grouping import MovieGrouping
+        from video_pipeline.platform.pathscan_common import windows_to_wsl_path
+        grouping_path = Path(windows_to_wsl_path(str(data["movie_grouping_path"])).replace("\\", "/"))
+        if not grouping_path.is_absolute():
+            grouping_path = p.parent / grouping_path
+        movie_grouping = MovieGrouping(_load_yaml_file(grouping_path))
+    return DriveRoutes(default_dest=default_dest, default_layout=default_layout, routes=routes, movie_grouping=movie_grouping)
 
 
 # ── Layout builders ──────────────────────────────────────────
@@ -272,6 +286,13 @@ def build_routed_dest_path(
         return None, None, "missing_filename"
 
     route, reason = routes.resolve(md)
+    if routes.movie_grouping and (not md.get("genre") or str(md["genre"]).casefold() in ("movie", "映画")):
+        from .movie_grouping import has_movie_evidence
+        group = routes.movie_grouping.resolve(str(md["program_title"]), filename,
+                                             movie_evidence=has_movie_evidence(md) or bool(route and route.genre == "movie"))
+        if group:
+            root, folder = group
+            return str(PureWindowsPath(root.rstrip("\\") + "\\") / safe_dir_name(folder, maxlen=80) / filename), "movie", None
     dest_root = route.dest_root if route else routes.default_dest
     layout = route.layout if route else routes.default_layout
     genre = route.genre if route else "default"

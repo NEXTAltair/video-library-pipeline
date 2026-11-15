@@ -1,0 +1,30 @@
+# Optional policy: movie_grouping_path: movie_grouping.example.yaml in drive routes.
+# Work identity is retained in metadata. This file selects storage groups only.
+# Single films use their broadcast-frame folder. Series use explicit work lists.
+version: 1
+default_dest_root: 'C:\VideoLibrary\Movies'
+frames: [金曜ロードショー, 日曜アニメ劇場, 日曜ゴジラ劇場, 日曜邦画劇場]
+series:
+  - folder: シリーズ_ガンダム
+    dest_root: 'C:\VideoLibrary\Anime'
+    works:
+      - 機動戦士ガンダムIII めぐりあい宇宙編
+      - 機動戦士ガンダム ククルス・ドアンの島
+      - title: 機動戦士Zガンダム A New Translation II 恋人たち
+        aliases: [機動戦士Ζガンダム A New Translation II 恋人たち]
+      - title: 機動戦士Zガンダム A New Translation III 星の鼓動は愛
+        aliases: [機動戦士Ζガンダム A New Translation III 星の鼓動は愛]
+      - 機動戦士ガンダムUC
+  - folder: シリーズ_ゴジラ+モンスターバース
+    dest_root: 'C:\VideoLibrary\Tokusatsu'
+    works:
+      - ゴジラ-1.0
+      - キングコング対ゴジラ
+      - title: ゴジラ2000 ―ミレニアム―
+        aliases: [ゴジラ2000　―ミレニアム―]
+      - ゴジラ(1984年)
+  - folder: シリーズ_インディ・ジョーンズ
+    dest_root: 'C:\VideoLibrary\Movies'
+    works:
+      - インディ・ジョーンズ/最後の聖戦
+      - インディ・ジョーンズ/クリスタル・スカルの王国
