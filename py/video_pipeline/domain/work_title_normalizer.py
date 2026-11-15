@@ -23,6 +23,9 @@ def work_title_header(base):
     """Cut explicit episode/subtitle markers, not distinct work-name words."""
     text = strip_leading_broadcast_labels(base)
     text = strip_broadcast_frame_prefix(text)
+    quoted = re.match(r'^[「『]([^」』]+)[」』]', text)
+    if quoted:
+        return quoted.group(1).strip()
     marker = re.search(r'(?:第\s*\d+\s*話|\s+\d+\s*話|[#＃]\d+(?=[\s_「『-]|$)|[【「『▽▼◇◆])', text)
     return text[:marker.start()].strip(' _') if marker and marker.start() > 0 else text.strip(' _')
 

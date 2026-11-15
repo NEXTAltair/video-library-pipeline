@@ -220,3 +220,13 @@ def test_leading_broadcast_label_preserves_long_dictionary_work(make_db):
     dictionary = mod._ProgramDictionary(con)
     for label in ['【新】', '【再】【字】']:
         assert mod._match_from_known_programs(label + full + ' 第1話「魔女と花嫁」', dictionary, mod.HintSet()) == full
+
+
+def test_quoted_leading_work_uses_curated_alias_in_both_routes(tmp_path):
+    import run_metadata_batches_promptv1 as mod
+    hints_file = tmp_path / 'aliases.yaml'
+    hints_file.write_text('hints:\n  - canonical_title: Test Program\n    aliases: [Test Alias]\n')
+    hints, _ = mod._load_hints_with_status(str(hints_file))
+    for base in ['「Test Alias」第1話「Subtitle」', '『Test Alias』第1話「Subtitle」']:
+        assert mod._match_from_known_programs(base, None, hints) == 'Test Program'
+        assert extract_series_name(base, aliases_path=str(hints_file)) == 'Test Program'
