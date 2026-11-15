@@ -245,6 +245,17 @@ def _extract_date_time_from_filename(filename: str) -> tuple[str | None, str | N
     return None, None
 
 
+def recording_stem_from_program_info(path: str) -> str:
+    """Map name.ts.program.txt and name.mp4.program.txt to recording name."""
+    name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+    if name.endswith(".program.txt"):
+        name = name[:-len(".program.txt")]
+    for ext in (".ts", ".m2ts", ".mp4", ".m4v", ".mkv"):
+        if name.lower().endswith(ext):
+            return name[:-len(ext)]
+    return name
+
+
 def _extract_base_title_from_filename(filename: str) -> str:
     """Extract the program title portion from a filename, stripping date/ext."""
     name = _nfkc(os.path.splitext(filename)[0])
