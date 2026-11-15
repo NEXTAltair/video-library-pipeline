@@ -115,6 +115,52 @@ def test_second_batch_sql_failure_rolls_back_first_batch_and_receipt(tmp_path):
     assert store.read_run(cfg.run_id).phase == "review_required"
 
 
+def test_explicit_row_review_can_correct_date_and_genre_without_editing_extraction(tmp_path):
+    store, db, cfg = fixture(tmp_path)
+    source = store.run_dir(cfg.run_id) / 'metadata/0.jsonl'
+    before = source.read_bytes()
+    draft = Path(cfg.review_yaml_paths[0])
+    body = yaml.safe_load(draft.read_text())
+    body['row_overrides'] = {'p0': {'program_title': 'VIVANT', 'air_date': '2026-09-10', 'genre': 'drama',
+                                  'epg_genres': None, 'broadcaster': None, 'needs_review': False,
+                                  'needs_review_reason': '', 'review_note': 'Recording title/date verified; foreign EPG discarded.'}}
+    draft.write_text(yaml.safe_dump(body))
+    result = apply_reviewed_metadata(store, cfg)
+    assert result['rows'] == 2
+    assert source.read_bytes() == before
+    with closing(sqlite3.connect(db)) as con:
+        title, air, raw = con.execute("SELECT program_title,air_date,data_json FROM path_metadata WHERE path_id='p0'").fetchone()
+        assert (title, air) == ('VIVANT', '2026-09-10')
+        stored = json.loads(raw)
+        assert stored['genre'] == 'drama'
+        assert stored['review_note'].startswith('Recording title/date verified')
+
+
+@pytest.mark.parametrize('case', ['foreign_id', 'path', 'path_id', 'file_id', 'source', 'human_reviewed',
+                                  'dest_root', 'no_note', 'invalid_date', 'invalid_bool', 'invalid_genre', 'invalid_episode'])
+def test_bad_row_override_does_not_change_database_or_acceptance_state(tmp_path, case):
+    store, db, cfg = fixture(tmp_path)
+    draft = Path(cfg.review_yaml_paths[0])
+    body = yaml.safe_load(draft.read_text())
+    fields = {'review_note': 'Reviewed exact source evidence.'}
+    if case in ['path', 'path_id', 'file_id', 'source', 'human_reviewed', 'dest_root']:
+        fields[case] = 'not-permitted'
+    if case == 'no_note': fields = {'needs_review': False}
+    if case == 'invalid_date': fields['air_date'] = '2026-02-30'
+    if case == 'invalid_bool': fields['needs_review'] = 'false'
+    if case == 'invalid_genre': fields['epg_genres'] = [{'category': 123}]
+    if case == 'invalid_episode': fields['episode_no'] = {'episode': 2}
+    body['row_overrides'] = {'foreign' if case == 'foreign_id' else 'p0': fields}
+    draft.write_text(yaml.safe_dump(body))
+    before = db_state(db)
+    manifest = store.manifest_path(cfg.run_id).read_bytes()
+    with pytest.raises(ValueError):
+        apply_reviewed_metadata(store, cfg)
+    assert db_state(db) == before
+    assert store.manifest_path(cfg.run_id).read_bytes() == manifest
+    assert not list(db.parent.glob('*.bak_*'))
+
+
 def test_atomic_apply_freezes_drafts_keeps_references_and_replays_committed_result(tmp_path):
     store, db, cfg = fixture(tmp_path)
     drafts = {p: Path(p).read_bytes() for p in cfg.review_yaml_paths}

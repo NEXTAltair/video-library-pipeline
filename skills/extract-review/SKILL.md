@@ -80,3 +80,30 @@ Out of scope:
 ## Legacy Guardrail
 
 The old standalone extraction/apply tools are hidden in the V2 public surface. Do not instruct the operator to call hidden legacy tools directly. If a required repair action is missing, diagnose it and continue authorized repository repair/tests under the shared contract; do not guess a latest JSONL/YAML path or approve unchanged erroneous candidates. If repair is outside the authorized scope, name that precise blocker after completing available inspection.
+
+## Correct individual metadata rows
+
+When aliases cannot express a verified date, genre, or channel correction, edit
+only the returned review YAML, adding `row_overrides` beside `hints`:
+
+```yaml
+row_overrides:
+  <path_id from this artifact's immutable source>:
+    air_date: '2026-09-10'
+    genre: drama
+    needs_review: false
+    needs_review_reason: ''
+    review_note: 'Explain the recording-specific evidence and correction.'
+```
+
+The key must belong to this exact review cohort. Allowed values are content
+metadata only: `program_title`, `air_date`, `episode_no`, `subtitle`, `genre`,
+`franchise`, `broadcaster`, `channel`, `epg_genres`, `epg_genre`,
+`epg_description`, `needs_review`, `needs_review_reason`, and `review_note`.
+Every override requires a nonempty `review_note`. Explicit row titles take
+precedence over alias hints. Leave uncertain rows unresolved; clearing a flag is
+not evidence. The existing contract and suspicious-title checks still apply.
+Never edit the extraction JSONL, IDs, source paths, cohort, or destinations.
+Acceptance freezes the reviewed rows and updates metadata through the same
+backup/transaction/replay path as alias review. Genre metadata may be corrected;
+changing the destination taxonomy remains outside this gate.
