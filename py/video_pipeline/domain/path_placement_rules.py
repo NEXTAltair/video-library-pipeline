@@ -124,10 +124,11 @@ class DriveRoute:
 class DriveRoutes:
     """Multi-destination routing configuration."""
 
-    def __init__(self, default_dest: str, default_layout: str, routes: list[DriveRoute]):
+    def __init__(self, default_dest: str, default_layout: str, routes: list[DriveRoute], movie_grouping=None):
         self.default_dest = default_dest.rstrip("\\")
         self.default_layout = default_layout
         self.routes = routes
+        self.movie_grouping = movie_grouping
 
     def resolve(self, md: dict[str, Any]) -> tuple[DriveRoute | None, str]:
         """Find the matching route for given metadata.
@@ -202,7 +203,14 @@ def load_drive_routes(yaml_path: str | Path) -> DriveRoutes:
     default_layout = normalize_layout_name(str(data.get("default_layout") or "by_program_year_month"))
     routes = [DriveRoute(r) for r in data.get("routes", []) if r.get("genre")]
 
-    return DriveRoutes(default_dest=default_dest, default_layout=default_layout, routes=routes)
+    movie_grouping = None
+    if data.get("movie_grouping_path"):
+        from .movie_grouping import MovieGrouping
+        grouping_path = Path(str(data["movie_grouping_path"]))
+        if not grouping_path.is_absolute():
+            grouping_path = p.parent / grouping_path
+        movie_grouping = MovieGrouping(_load_yaml_file(grouping_path))
+    return DriveRoutes(default_dest=default_dest, default_layout=default_layout, routes=routes, movie_grouping=movie_grouping)
 
 
 # ── Layout builders ──────────────────────────────────────────
@@ -272,6 +280,12 @@ def build_routed_dest_path(
         return None, None, "missing_filename"
 
     route, reason = routes.resolve(md)
+    if routes.movie_grouping:
+        group = routes.movie_grouping.resolve(str(md["program_title"]), filename,
+                                             movie_evidence=bool(route and route.genre == "movie"))
+        if group:
+            root, folder = group
+            return str(PureWindowsPath(root.rstrip("\\") + "\\") / safe_dir_name(folder, maxlen=80) / filename), "movie", None
     dest_root = route.dest_root if route else routes.default_dest
     layout = route.layout if route else routes.default_layout
     genre = route.genre if route else "default"
