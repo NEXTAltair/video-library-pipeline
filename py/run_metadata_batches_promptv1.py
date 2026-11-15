@@ -12,7 +12,7 @@ import unicodedata
 from pathlib import Path, PurePath
 from typing import Any
 
-from edcb_program_parser import match_key_from_filename, datetime_key_from_filename
+from edcb_program_parser import match_key_from_filename, datetime_key_from_filename, recording_stem_from_program_info
 from db_helpers import latest_path_metadata, reconstruct_broadcast_data
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
@@ -594,6 +594,7 @@ class _EpgCache:
         self._by_title_dt: dict[str, list[dict]] = {}
         self._by_datetime_key: dict[str, list[dict]] = {}
         self._by_filename_stem: dict[str, dict] = {}
+        self._ambiguous_filename_stems: set[str] = set()
         old_factory = con.row_factory
         con.row_factory = sqlite3.Row
         try:
@@ -628,7 +629,10 @@ class _EpgCache:
             # ファイル名ステムによる 1:1 マッチング（最も信頼性が高い）
             stem = data.get("ts_filename_stem")
             if stem:
-                self._by_filename_stem[str(stem)] = data
+                key = recording_stem_from_program_info(str(stem))
+                if key in self._by_filename_stem:
+                    self._ambiguous_filename_stems.add(key)
+                self._by_filename_stem[key] = data
 
     def lookup(self, match_key: str | None, datetime_key: str | None, filename_stem: str | None = None,
                broadcaster: str | None = None) -> dict | None:
@@ -636,7 +640,7 @@ class _EpgCache:
             return not broadcaster or _normalize_title_compare(str(item.get("broadcaster") or "")) == _normalize_title_compare(broadcaster)
 
         # ファイル名ステムが最優先（タイトル+日時のあいまいマッチより確実）
-        if filename_stem and filename_stem in self._by_filename_stem:
+        if filename_stem and filename_stem in self._by_filename_stem and filename_stem not in getattr(self, "_ambiguous_filename_stems", set()):
             item = self._by_filename_stem[filename_stem]
             if channel_matches(item):
                 return item
@@ -996,7 +1000,7 @@ def main() -> int:
             _fs = recording_filename_stem(str(rec.get("name") or rec.get("path") or ""))
             epg = epg_cache.lookup(mk, dk, filename_stem=_fs, broadcaster=rec.get("broadcaster"))
             _enrich_with_epg(row, epg)
-            unresolved_epg = epg is None and len(epg_candidates) > 1
+            unresolved_epg = epg is None and bool(epg_candidates)
             if unresolved_epg:
                 row["needs_review"] = True
                 row["needs_review_reason"] = ",".join(filter(None, [row.get("needs_review_reason"), "epg_identity_unresolved"]))

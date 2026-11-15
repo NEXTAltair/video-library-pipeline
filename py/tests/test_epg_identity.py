@@ -1,4 +1,5 @@
 import run_metadata_batches_promptv1 as mod
+from edcb_program_parser import recording_stem_from_program_info
 
 
 def cache():
@@ -13,6 +14,10 @@ def cache():
 def test_recording_stem_ignores_windows_directories_on_linux():
     assert mod.recording_filename_stem(r'B:\VideoLibrary\Show\Show_2026_11_01_21_00.mp4') == 'Show_2026_11_01_21_00'
     assert mod.recording_filename_stem('/mnt/b/Show_2026_11_01_21_00.mp4') == 'Show_2026_11_01_21_00'
+    assert recording_stem_from_program_info(r'J:\TVFile\Show_2026_11_01_21_00.ts.program.txt') == 'Show_2026_11_01_21_00'
+    assert recording_stem_from_program_info('Show_2026_11_01_21_00.ts') == 'Show_2026_11_01_21_00'
+    assert recording_stem_from_program_info('Movie1.0_2026_11_01_21_00') == 'Movie1.0_2026_11_01_21_00'
+    assert recording_stem_from_program_info('Show_2026_11_01_21_00.mp4.program.txt') == 'Show_2026_11_01_21_00'
 
 
 def test_simultaneous_other_program_never_enriches_metadata():
@@ -71,3 +76,16 @@ def test_channel_disambiguates_same_title_broadcast_simultaneously():
     assert c.lookup('work-slot', 'slot', broadcaster='局B') is b
     assert c.lookup('work-slot', 'slot') is None
     assert c.lookup('work-slot', 'slot', broadcaster='局C') is None
+
+
+def test_duplicate_filename_stem_never_picks_last_channel_arbitrarily():
+    c = cache()
+    title = '日曜劇場「VIVANT」第22話'
+    a = {'official_title': title, 'broadcaster': '局A'}
+    b = dict(a, broadcaster='局B')
+    stem = title + '_2026_11_01_21_00'
+    c._by_filename_stem[stem] = b
+    c._ambiguous_filename_stems = {stem}
+    c._by_datetime_key['slot'] = [a, b]
+    assert c.lookup(None, 'slot', stem) is None
+    assert c.lookup(None, 'slot', stem, broadcaster='局A') is a
