@@ -1,5 +1,7 @@
 import json
 import sqlite3
+
+import pytest
 from pathlib import Path
 from video_pipeline.workflows.relocate import metadata_reextract_action
 from video_pipeline.workflows.store import sha256_file
@@ -285,6 +287,63 @@ def test_relocate_dry_run_metadata_gap_registers_queue_without_already_correct(t
     assert payload["outcome"] != "relocate_already_correct"
     assert payload["diagnostics"][-1]["code"] == "relocate_metadata_preparation_required"
     assert payload["nextActions"][0]["action"] == "prepare_relocate_metadata"
+
+
+def test_relocate_partial_plan_preserves_metadata_prepare_action(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_partial_metadata", scenario="metadata_gap")
+    original_runner = harness.python_runner
+
+    def mixed_runner(script, args, cwd=None):
+        payload = json.loads(original_runner(script, args, cwd))
+        if script.name == "relocate_existing_files.py":
+            payload["plannedMoves"] = 9
+            payload["metadataQueuePlannedCount"] = 2185
+            payload["canProceedToRelocateApply"] = False
+            with Path(payload["planPath"]).open("a", encoding="utf-8") as plan:
+                plan.write(json.dumps({"path_id": "valid", "src": "old.mp4", "dst": "new.mp4", "status": "planned"}) + "\n")
+        return json.dumps(payload)
+
+    harness.python_runner = mixed_runner
+    payload = harness.dry_run().to_dict()
+    assert payload["phase"] == "review_required"
+    action = payload["nextActions"][0]
+    assert action["action"] == "prepare_relocate_metadata"
+    assert action["tool"] == "video_pipeline_resume"
+    assert action["params"]["artifactIds"] == ["relocate_metadata_queue"]
+    cfg = RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id)
+    rejected = harness.service().resume(cfg, action="apply_relocate_move_plan").to_dict()
+    assert rejected["ok"] is False
+    assert not any(name == "apply_move_plan.ps1" for name, _ in harness.calls)
+    reviewed = harness.service().resume(cfg, action=action["params"]["resumeAction"]).to_dict()
+    assert reviewed["outcome"] == "relocate_metadata_review_required"
+    assert reviewed["nextActions"][0]["action"] == "review_metadata"
+
+
+@pytest.mark.parametrize(
+    ("counter", "expected_action"),
+    [
+        ("metadataMissingSkipped", "prepare_relocate_metadata"),
+        ("unreviewedMetadataSkipped", "prepare_relocate_metadata"),
+        ("suspiciousProgramTitleSkipped", "review_relocate_metadata"),
+        ("needsReviewSkipped", "review_relocate_metadata"),
+    ],
+)
+def test_relocate_partial_plan_does_not_approve_metadata_gate(tmp_path, counter, expected_action) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_partial_blocker", scenario="plan_ready")
+    original_runner = harness.python_runner
+
+    def blocked_runner(script, args, cwd=None):
+        payload = json.loads(original_runner(script, args, cwd))
+        if script.name == "relocate_existing_files.py":
+            payload[counter] = 1
+        return json.dumps(payload)
+
+    harness.python_runner = blocked_runner
+    payload = harness.dry_run().to_dict()
+    assert payload["phase"] == "review_required"
+    assert payload["nextActions"][0]["action"] == expected_action
+    if counter != "metadataMissingSkipped":
+        assert payload["gates"][0]["status"] == "open"
 
 
 def test_relocate_dry_run_suspicious_title_creates_review_gate(tmp_path) -> None:

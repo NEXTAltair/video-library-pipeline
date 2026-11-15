@@ -917,7 +917,8 @@ class RelocateWorkflowService:
                 ],
             )
 
-        if planned_moves > 0 and plan_artifact is not None:
+        # A partial plan does not clear metadata blockers for the remaining files.
+        if planned_moves > 0 and plan_artifact is not None and not has_metadata_gap and not has_review_blocker:
             self._approve_blocking_metadata_gates(store, run_id, "relocate_metadata_recheck_plan_ready")
             self._advance_to_phase(store, run_id, WorkflowPhase.PLAN_READY)
             return self._result(
