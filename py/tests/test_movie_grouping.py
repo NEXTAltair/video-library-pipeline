@@ -121,3 +121,11 @@ def test_movie_frame_never_overrides_explicit_non_movie_genre():
     dest, genre, error = build_routed_dest_path(routes, r'B:\old\金曜ロードショー「葬送のフリーレン」_2023_09_29.mp4', md)
     assert error is None and genre == 'anime'
     assert dest.startswith(r'D:\Anime\葬送のフリーレン')
+
+
+def test_windows_relative_policy_subdirectory_is_portable(tmp_path):
+    (tmp_path / 'policies').mkdir()
+    (tmp_path / 'policies' / 'movies.yaml').write_text('frames: []\nseries: []\n')
+    route = tmp_path / 'routes.yaml'
+    route.write_text("default_dest: 'B:\\VideoLibrary'\nmovie_grouping_path: 'policies\\movies.yaml'\nroutes: []\n")
+    assert load_drive_routes(route).movie_grouping is not None

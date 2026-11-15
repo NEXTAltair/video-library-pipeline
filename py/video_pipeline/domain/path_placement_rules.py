@@ -212,7 +212,7 @@ def load_drive_routes(yaml_path: str | Path) -> DriveRoutes:
     if data.get("movie_grouping_path"):
         from .movie_grouping import MovieGrouping
         from video_pipeline.platform.pathscan_common import windows_to_wsl_path
-        grouping_path = Path(windows_to_wsl_path(str(data["movie_grouping_path"])))
+        grouping_path = Path(windows_to_wsl_path(str(data["movie_grouping_path"])).replace("\\", "/"))
         if not grouping_path.is_absolute():
             grouping_path = p.parent / grouping_path
         movie_grouping = MovieGrouping(_load_yaml_file(grouping_path))
