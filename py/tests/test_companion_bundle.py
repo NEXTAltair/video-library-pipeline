@@ -156,3 +156,11 @@ def test_default_native_probe_reuses_shipped_helpers(monkeypatch):
     assert "日本語の録画.mp4" in options["input"]
     assert ". (Join-Path $PSScriptRoot" not in options["input"]
     assert options["timeout"] == 120
+
+
+def test_capture_does_not_enumerate_whole_library(tmp_path, monkeypatch):
+    src, dst, localize = fixture(tmp_path)
+    def no_scan(_):
+        pytest.fail("bundle capture must use bounded exact sibling probes")
+    monkeypatch.setattr(Path, "iterdir", no_scan)
+    assert capture_bundle(str(src), str(dst), localize=localize)["companion_cohort"] == []

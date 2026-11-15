@@ -55,12 +55,13 @@ def capture_bundle(src, dst, *, localize=windows_to_wsl_path, windows_probe=None
         _check_ancestors(dest)
         # Replace-extension companions cannot be assigned to either recording
         # when another video with the same stem exists (even if cohort is empty).
-        for directory, stem, own in ((source.parent, source.stem, source.name),
-                                     (dest.parent, dest.stem, dest.name)):
-            if directory.exists():
-                for p in directory.iterdir():
-                    if p.stem.casefold() == stem.casefold() and p.suffix.casefold() in VIDEO_EXTENSIONS and p.name.casefold() != own.casefold():
-                        raise ValueError('ambiguous_companion_stem')
+        # Probe the bounded known container extensions, not every entry in the
+        # directory for every video (a large flat library would become O(n^2)).
+        for video in (source, dest):
+            for extension in VIDEO_EXTENSIONS:
+                sibling = video.with_suffix(extension)
+                if sibling.name.casefold() != video.name.casefold() and (sibling.exists() or sibling.is_symlink()):
+                    raise ValueError('ambiguous_companion_stem')
         members = [{'kind': 'video', 'src': src, 'dst': dst, 'precondition': _signature(source)}]
         cohort = []
         destinations = companion_paths(dst)
