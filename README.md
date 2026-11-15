@@ -146,7 +146,7 @@ plugin 内に仮想環境を置くと、interpreter の外部リンクが OpenCl
 
 表示された `~/.openclaw/plugin-runtime/video-library-pipeline/releases/sha256-...` は package 内容に対応する immutable な配備先。コマンドは build と `npm pack` を行い、新規 release を用意するだけで、動作中の設定は変更しない。更新時も同じ手順で新しい release を作り、内容と現在の plugin 設定を確認してから OpenClaw の plugin load path を切り替える。以前のパスを保持すれば戻せる。開発 checkout の未コミット変更は package に含まれ得るため、配備前に `git status` と package 内容を必ず確認する。Gateway の再起動・reload は別途安全確認が必要。runtime 側の Python 環境は従来どおり release の外にある。
 
-開発時の素の `uv run` は checkout 内に `.venv` を作るが、独立配備先には影響しない。`./scripts/uv-project run ...` なら開発時も外部環境を選べる。
+checkout 直下の `.venv` は追跡済みの通常ファイルで、素の `uv run` が checkout 内に仮想環境を作るのを止める (uv は「expected directory but found a file」で終了し、plugin のロードは壊れない)。開発時は `./scripts/uv-project run ...` で外部環境を使う。このファイルを消さない。
 
 ```sh
 UV_PROJECT_ENVIRONMENT="$HOME/.openclaw/plugin-runtime/video-library-pipeline/.venv" uv sync --locked
