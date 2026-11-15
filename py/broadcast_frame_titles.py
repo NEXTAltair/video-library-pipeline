@@ -106,9 +106,7 @@ def strip_episode_title_suffix(title: str) -> str:
 
 def reviewed_title_conflicts_with_filename(title: str, base: str, canonical_title: str | None = None) -> bool:
     """Compare the suffix-free recording base using the extraction parser."""
-    work = canonical_from_known_program_prefix(base)
-    if work and canonical_title:
-        work = canonical_title
+    work = canonical_title or canonical_from_known_program_prefix(base)
     return bool(work and _compact(work) != _compact(title))
 
 

@@ -129,3 +129,45 @@ def test_windows_relative_policy_subdirectory_is_portable(tmp_path):
     route = tmp_path / 'routes.yaml'
     route.write_text("default_dest: 'B:\\VideoLibrary'\nmovie_grouping_path: 'policies\\movies.yaml'\nroutes: []\n")
     assert load_drive_routes(route).movie_grouping is not None
+
+
+@pytest.mark.parametrize('title', [
+    '機動戦士ガンダムIII めぐりあい宇宙編',
+    '機動戦士ガンダム ククルス・ドアンの島',
+    '機動戦士Zガンダム A New Translation II 恋人たち',
+    '機動戦士Zガンダム A New Translation III 星の鼓動は愛',
+])
+def test_anime_classified_known_film_keeps_identity_and_genre_in_series_folder(title):
+    import yaml
+    from pathlib import Path
+    data=yaml.safe_load((Path(__file__).parents[2]/'rules/movie_grouping.example.yaml').read_text())
+    data['series'][0]['dest_root']=r'D:\Anime'
+    routes=DriveRoutes(r'B:\VideoLibrary','by_title',[
+        DriveRoute({'genre':'anime','dest_root':r'D:\Anime','layout':'by_title'})
+    ],movie_grouping=MovieGrouping(data))
+    md={'program_title':title,'genre':'アニメ','air_date':'2026-09-20','needs_review':False}
+    before=dict(md)
+    dst,genre,error=build_routed_dest_path(routes,'B:\\old\\日曜アニメ劇場 '+title+'.mp4',md)
+    assert error is None and genre=='anime'
+    assert dst.startswith(r'D:\Anime\シリーズ_ガンダム'+'\\')
+    assert md==before
+
+
+def test_known_anime_title_without_film_frame_cannot_use_movie_series_policy():
+    routes=DriveRoutes(r'B:\VideoLibrary','by_title',[
+        DriveRoute({'genre':'anime','dest_root':r'D:\Anime','layout':'by_title'})
+    ],movie_grouping=policy())
+    md={'program_title':'機動戦士ガンダムIII めぐりあい宇宙編','genre':'anime','air_date':'2026-09-20','needs_review':False}
+    dst,genre,error=build_routed_dest_path(routes,r'B:\old\映画の紹介番組.mp4',md)
+    assert genre=='anime' and error is None
+    assert 'シリーズ_ガンダム' not in dst
+
+
+def test_nonmovie_frame_match_does_not_infer_series_from_dirty_or_unknown_title():
+    routes=DriveRoutes(r'B:\VideoLibrary','by_title',[
+        DriveRoute({'genre':'anime','dest_root':r'D:\Anime','layout':'by_title'})
+    ],movie_grouping=policy())
+    for title in ['Unknown','日曜アニメ劇場']:
+        md={'program_title':title,'genre':'anime','air_date':'2026-09-20','needs_review':False}
+        dst,genre,error=build_routed_dest_path(routes,r'B:\old\日曜アニメ劇場 機動戦士ガンダムIII めぐりあい宇宙編.mp4',md)
+        assert error is None and genre=='anime' and 'シリーズ_ガンダム' not in dst

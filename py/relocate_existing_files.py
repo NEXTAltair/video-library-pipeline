@@ -18,7 +18,7 @@ from typing import Any
 
 from db_helpers import latest_path_metadata, metadata_source_flags
 from broadcast_frame_titles import reviewed_title_conflicts_with_filename
-from run_metadata_batches_promptv1 import strip_suffix, _load_hints_with_status, _ProgramDictionary, _match_from_known_programs
+from run_metadata_batches_promptv1 import strip_suffix, _load_hints_with_status, _match_from_known_programs
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from move_apply_stats import aggregate_move_apply
 from path_placement_rules import (
@@ -246,7 +246,6 @@ def main() -> int:
         "SELECT p.path_id,p.path,m.program_title FROM paths p LEFT JOIN path_metadata m ON m.path_id=p.path_id")}
     hints_path = default_program_aliases(Path(__file__).resolve().parent)
     alias_hints, _ = _load_hints_with_status(str(hints_path))
-    program_dictionary = _ProgramDictionary(con)
     holds = {}
     if con.execute("SELECT 1 FROM sqlite_master WHERE name='recording_holds'").fetchone():
         holds = {str(r["path_id"]): str(r["reason"]) for r in con.execute("SELECT path_id,reason FROM recording_holds WHERE resolved_at IS NULL")}
@@ -375,7 +374,7 @@ def main() -> int:
             is_human_reviewed, is_llm = metadata_source_flags(md, md_source)
 
             recording_base = strip_suffix(str(sf.name or ""))
-            canonical = _match_from_known_programs(recording_base, program_dictionary, alias_hints)
+            canonical = _match_from_known_programs(recording_base, None, alias_hints)
             if reviewed_title_conflicts_with_filename(str(md.get("program_title") or ""), recording_base, canonical):
                 suspicious_program_title_skipped += 1
                 rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "status": "skipped",

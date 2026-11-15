@@ -286,13 +286,18 @@ def build_routed_dest_path(
         return None, None, "missing_filename"
 
     route, reason = routes.resolve(md)
-    if routes.movie_grouping and (not md.get("genre") or str(md["genre"]).casefold() in ("movie", "映画")):
+    explicit_genre = str(md.get("genre") or "").casefold()
+    non_movie = bool(explicit_genre and explicit_genre not in ("movie", "映画"))
+    animated_work = explicit_genre in ("anime", "アニメ", "アニメ/特撮")
+    if routes.movie_grouping and (not non_movie or animated_work):
         from .movie_grouping import has_movie_evidence
         group = routes.movie_grouping.resolve(str(md["program_title"]), filename,
-                                             movie_evidence=has_movie_evidence(md) or bool(route and route.genre == "movie"))
+                                             movie_evidence=has_movie_evidence(md) or bool(route and route.genre == "movie"),
+                                             allow_frame_fallback=not non_movie)
         if group:
             root, folder = group
-            return str(PureWindowsPath(root.rstrip("\\") + "\\") / safe_dir_name(folder, maxlen=80) / filename), "movie", None
+            group_genre = (route.genre if route else "anime") if non_movie else "movie"
+            return str(PureWindowsPath(root.rstrip("\\") + "\\") / safe_dir_name(folder, maxlen=80) / filename), group_genre, None
     dest_root = route.dest_root if route else routes.default_dest
     layout = route.layout if route else routes.default_layout
     genre = route.genre if route else "default"
