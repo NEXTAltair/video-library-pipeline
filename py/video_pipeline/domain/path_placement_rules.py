@@ -171,15 +171,15 @@ class DriveRoutes:
         if not isinstance(work_routes, list):
             raise ValueError("work_routes must be a list")
         self.work_routes = [WorkRoute(data) for data in work_routes]
-        self._work_routes_by_title: dict[str, WorkRoute] = {}
+        self._work_routes_by_title: dict[str, tuple[WorkRoute, str]] = {}
         for route in self.work_routes:
             for title in route.works:
                 key = normalize_title_for_comparison(title)
                 if key in self._work_routes_by_title:
                     raise ValueError("duplicate normalized work route title: " + title)
-                self._work_routes_by_title[key] = route
+                self._work_routes_by_title[key] = (route, title)
 
-    def resolve_work(self, title: str) -> WorkRoute | None:
+    def resolve_work(self, title: str) -> tuple[WorkRoute, str] | None:
         return self._work_routes_by_title.get(normalize_title_for_comparison(title))
 
     def contains_grouped_source(self, source: str) -> bool:
@@ -346,9 +346,10 @@ def build_routed_dest_path(
 
     route, reason = routes.resolve(md)
     genre = route.genre if route else "default"
-    work_route = routes.resolve_work(str(md["program_title"]))
-    if work_route:
-        dst = work_route.root / safe_dir_name(str(md["program_title"]), maxlen=80) / filename
+    work_match = routes.resolve_work(str(md["program_title"]))
+    if work_match:
+        work_route, declared_title = work_match
+        dst = work_route.root / safe_dir_name(declared_title, maxlen=80) / filename
         return str(dst), genre, None
     if routes.contains_grouped_source(src_path_win):
         return None, genre, "series_work_unmapped"

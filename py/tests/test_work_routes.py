@@ -114,3 +114,14 @@ def test_source_root_plan_keeps_unmapped_series_reason(tmp_path,monkeypatch,caps
  result=json.loads(capsys.readouterr().out)
  assert result['planned']==0 and result['preflight_counts']=={'series_work_unmapped':1}
  assert json.loads(out.with_suffix('.conflicts.json').read_text())[0]['reason']=='series_work_unmapped'
+
+
+@pytest.mark.parametrize('spelling',['機動戦士ガンダムIII','機動戦士ガンダムⅢ','機動戦士ガンダムiii'])
+def test_policy_spelling_determines_storage_not_metadata_variant(spelling):
+ r=routes([{'works':['機動戦士ガンダムIII'],'dest_root':r'D:\Series','layout':'by_title'}])
+ md={'program_title':spelling,'genre':'アニメ','air_date':'2026-01-01','needs_review':False}
+ original=dict(md)
+ dst,genre,error=build_routed_dest_path(r,r'D:\Series\機動戦士ガンダムIII\record.mp4',md)
+ assert error is None and genre=='anime'
+ assert dst==r'D:\Series\機動戦士ガンダムIII\record.mp4'
+ assert md==original
