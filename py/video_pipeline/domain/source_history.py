@@ -14,7 +14,7 @@ def make_entry(source: str, fields: list[str], at: str | None = None) -> dict[st
     }
 
 
-def merge_data(existing: dict[str, Any] | None, incoming: dict[str, Any] | None, source: str) -> dict[str, Any]:
+def merge_data(existing: dict[str, Any] | None, incoming: dict[str, Any] | None, source: str, *, explicit_fields=()) -> dict[str, Any]:
     base = dict(existing) if isinstance(existing, dict) else {}
     newv = dict(incoming) if isinstance(incoming, dict) else {}
 
@@ -22,7 +22,7 @@ def merge_data(existing: dict[str, Any] | None, incoming: dict[str, Any] | None,
     for k, v in newv.items():
         if k == "source_history":
             continue
-        if v is None:
+        if v is None and k not in explicit_fields:
             continue
         if base.get(k) != v:
             changed_fields.append(k)

@@ -280,3 +280,25 @@ def test_cli_routes_helper_logs_to_stderr_and_returns_a_failed_payload_exit(tmp_
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"ok": False, "error": "injected failure"}
     assert "diagnostic from helper" in captured.err
+
+
+@pytest.mark.parametrize('franchise', ['Reviewed Franchise', None])
+def test_reviewed_overrides_clear_existing_fields_and_preserve_franchise(tmp_path, franchise):
+    store, db, cfg = fixture(tmp_path)
+    with closing(connect_db(str(db))) as con:
+        con.execute("INSERT INTO path_metadata(path_id,source,data_json,broadcaster,updated_at) VALUES(?,?,?,?,?)",
+                    ('p0', 'rule_based', json.dumps({'epg_genres': [{'category': 'ニュース'}],
+                     'broadcaster': 'Wrong station', 'franchise': 'Wrong franchise'}), 'Wrong station', 'before'))
+        con.commit()
+    draft = Path(cfg.review_yaml_paths[0])
+    body = yaml.safe_load(draft.read_text())
+    body['row_overrides'] = {'p0': {'epg_genres': None, 'broadcaster': None, 'franchise': franchise,
+                                   'review_note': 'Verified individual recording and discarded foreign EPG.'}}
+    draft.write_text(yaml.safe_dump(body))
+    apply_reviewed_metadata(store, cfg)
+    with closing(sqlite3.connect(db)) as con:
+        raw, station = con.execute("SELECT data_json,broadcaster FROM path_metadata WHERE path_id='p0'").fetchone()
+        stored = json.loads(raw)
+        assert station is None and stored.get('epg_genres') is None
+        assert stored.get('franchise') == franchise
+        assert any('epg_genres' in h['fields'] and 'broadcaster' in h['fields'] for h in stored['source_history'])

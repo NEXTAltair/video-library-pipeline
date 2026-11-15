@@ -229,7 +229,8 @@ def preflight(store, config):
                 raise ValueError("metadata review batches overlap")
             path_ids.add(row["path_id"])
         prepared.append({"artifact": artifact, "draft": draft_bytes, "digest": digest,
-                         "source": source_bytes, "sourceDigest": source_digest, "rows": edited})
+                         "source": source_bytes, "sourceDigest": source_digest, "rows": edited,
+                         "reviewedFields": {str(key): list(fields) for key, fields in (body.get("row_overrides") or {}).items()}})
     return run, gates, db, prepared
 
 
@@ -261,7 +262,8 @@ def apply_reviewed_metadata(store, config):
                 raise ValueError(f"metadata backup failed: {error}")
             create_schema_if_needed(con)
             rows = [row for p in prepared for row in p["rows"]]
-            summary = upsert_records(con, rows, source="human_reviewed", strict=True)
+            reviewed_fields = {key: fields for p in prepared for key, fields in p["reviewedFields"].items()}
+            summary = upsert_records(con, rows, source="human_reviewed", strict=True, reviewed_fields=reviewed_fields)
             summary.update(ok=True, backupPath=backup_path, acceptedDigest=fingerprint,
                            acceptedDirectory=str(accepted_dir), artifactIds=[p["artifact"].id for p in prepared])
             con.execute("CREATE TABLE IF NOT EXISTS workflow_metadata_commits (operation_id TEXT PRIMARY KEY, digest TEXT NOT NULL, summary_json TEXT NOT NULL)")

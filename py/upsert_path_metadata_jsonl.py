@@ -41,10 +41,12 @@ def validate_db_contract(rec: dict) -> tuple[bool, str]:
 
 
 
-def upsert_records(con, records, *, source="human_reviewed", franchise_rules="", strict=False):
+def upsert_records(con, records, *, source="human_reviewed", franchise_rules="", strict=False, reviewed_fields=None):
     """Merge and write under the caller's BEGIN IMMEDIATE; never commit here."""
     if not con.in_transaction:
         raise ValueError("metadata upsert requires an active transaction")
+    if reviewed_fields and (source != "human_reviewed" or not strict):
+        raise ValueError("explicit metadata fields require strict human review")
     updated_at = now_iso()
     to_upsert = []
     missing = 0
@@ -86,12 +88,14 @@ def upsert_records(con, records, *, source="human_reviewed", franchise_rules="",
         if prior:
             existing = reconstruct_path_metadata(prior)
 
-        merged = merge_data(existing, rec, source)
+        explicit = (reviewed_fields or {}).get(str(path_id), ())
+        merged = merge_data(existing, rec, source, explicit_fields=explicit)
         # Normalize: needs_review=false must not coexist with non-empty needs_review_reason
         if not merged.get("needs_review"):
             merged["needs_review_reason"] = ""
         merged["genre"] = resolve_genre(merged)
-        merged["franchise"] = resolve_franchise(merged, franchise_rules or None)
+        if "franchise" not in explicit:
+            merged["franchise"] = resolve_franchise(merged, franchise_rules or None)
 
         promoted, data_json = split_path_metadata(merged)
         to_upsert.append((
