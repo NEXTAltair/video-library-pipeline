@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -36,7 +37,54 @@ def suspicious(row):
         tn and fn and fn.startswith(tn) and len(fn) >= len(tn) + 3)
 
 
-def review_rows(rows, hints):
+REVIEW_FIELDS = {'program_title', 'air_date', 'episode_no', 'subtitle', 'genre', 'franchise',
+                 'broadcaster', 'channel', 'epg_genres', 'epg_genre', 'epg_description',
+                 'needs_review', 'needs_review_reason', 'review_note'}
+
+
+def _review_overrides(rows, overrides):
+    if overrides is None:
+        return {}
+    if not isinstance(overrides, dict):
+        raise ValueError('row_overrides must be a path_id mapping')
+    cohort = {str(row.get('path_id') or '') for row in rows}
+    result = {}
+    for path_id, fields in overrides.items():
+        if not isinstance(path_id, str) or path_id not in cohort:
+            raise ValueError('row override path_id is outside the immutable cohort')
+        if not isinstance(fields, dict) or set(fields) - REVIEW_FIELDS:
+            raise ValueError('row override contains unsupported metadata fields')
+        if not isinstance(fields.get('review_note'), str) or not fields['review_note'].strip():
+            raise ValueError('row override requires a nonempty review_note')
+        edited = dict(fields)
+        if 'air_date' in edited:
+            value = edited['air_date']
+            if type(value) is date:
+                value = value.isoformat()
+            if not isinstance(value, str) or date.fromisoformat(value).isoformat() != value:
+                raise ValueError('reviewed air_date must be an ISO calendar date')
+            edited['air_date'] = value
+        for key in REVIEW_FIELDS - {'air_date', 'episode_no', 'epg_genres', 'needs_review'}:
+            if key in edited and edited[key] is not None and not isinstance(edited[key], str):
+                raise ValueError(f'reviewed {key} must be a string or null')
+        if 'needs_review' in edited and type(edited['needs_review']) is not bool:
+            raise ValueError('reviewed needs_review must be boolean')
+        if 'episode_no' in edited and edited['episode_no'] is not None and not (type(edited['episode_no']) is int or isinstance(edited['episode_no'], str)):
+            raise ValueError('reviewed episode_no must be an integer, string or null')
+        if 'epg_genres' in edited and edited['epg_genres'] is not None and not isinstance(edited['epg_genres'], list):
+            raise ValueError('reviewed epg_genres must be a list or null')
+        for entry in edited.get('epg_genres') or []:
+            if isinstance(entry, str):
+                continue
+            if not isinstance(entry, dict) or set(entry) - {'category', 'subcategory'} or any(value is not None and not isinstance(value, str) for value in entry.values()):
+                raise ValueError('reviewed EPG genre entries require string categories')
+        json.dumps(edited)
+        result[path_id] = edited
+    return result
+
+
+def review_rows(rows, hints, row_overrides=None):
+    overrides = _review_overrides(rows, row_overrides)
     aliases = {}
     for hint in hints:
         if not isinstance(hint, dict) or not isinstance(hint.get("canonical_title"), str):
@@ -55,12 +103,14 @@ def review_rows(rows, hints):
     result = []
     for row in rows:
         edited = dict(row)
-        title = str(row.get("program_title") or "").strip()
+        row_edit = overrides.get(str(row.get('path_id') or ''), {})
+        edited.update(row_edit)
+        title = str(edited.get("program_title") or "").strip()
         canonical = aliases.get(lower_compact(title))
         if not canonical:
             canonical = next((c for c in canonicals if lower_compact(title).startswith(lower_compact(c))
                               and len(lower_compact(title)) >= len(lower_compact(c)) + 8), None)
-        if canonical:
+        if canonical and 'program_title' not in row_edit:
             edited["program_title"] = canonical
             reasons = {part.strip() for part in str(edited.get("needs_review_reason") or "").split(",") if part.strip()}
             if edited.get("needs_review") is True and reasons <= TITLE_RELATED_REASONS and not suspicious(edited):
@@ -173,13 +223,14 @@ def preflight(store, config):
                        or cohort.get("path_id_count") != len(current_ids)
                        or cohort.get("path_id_set_hash") != cohort_hash):
             raise ValueError("review cohort differs from extraction input")
-        edited = review_rows(rows, body["hints"])
+        edited = review_rows(rows, body["hints"], body.get('row_overrides'))
         for row in edited:
             if row["path_id"] in path_ids:
                 raise ValueError("metadata review batches overlap")
             path_ids.add(row["path_id"])
         prepared.append({"artifact": artifact, "draft": draft_bytes, "digest": digest,
-                         "source": source_bytes, "sourceDigest": source_digest, "rows": edited})
+                         "source": source_bytes, "sourceDigest": source_digest, "rows": edited,
+                         "reviewedFields": {str(key): list(fields) for key, fields in (body.get("row_overrides") or {}).items()}})
     return run, gates, db, prepared
 
 
@@ -211,7 +262,8 @@ def apply_reviewed_metadata(store, config):
                 raise ValueError(f"metadata backup failed: {error}")
             create_schema_if_needed(con)
             rows = [row for p in prepared for row in p["rows"]]
-            summary = upsert_records(con, rows, source="human_reviewed", strict=True)
+            reviewed_fields = {key: fields for p in prepared for key, fields in p["reviewedFields"].items()}
+            summary = upsert_records(con, rows, source="human_reviewed", strict=True, reviewed_fields=reviewed_fields)
             summary.update(ok=True, backupPath=backup_path, acceptedDigest=fingerprint,
                            acceptedDirectory=str(accepted_dir), artifactIds=[p["artifact"].id for p in prepared])
             con.execute("CREATE TABLE IF NOT EXISTS workflow_metadata_commits (operation_id TEXT PRIMARY KEY, digest TEXT NOT NULL, summary_json TEXT NOT NULL)")
