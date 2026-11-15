@@ -286,7 +286,7 @@ def build_routed_dest_path(
         return None, None, "missing_filename"
 
     route, reason = routes.resolve(md)
-    if routes.movie_grouping:
+    if routes.movie_grouping and (not md.get("genre") or str(md["genre"]).casefold() in ("movie", "映画")):
         from .movie_grouping import has_movie_evidence
         group = routes.movie_grouping.resolve(str(md["program_title"]), filename,
                                              movie_evidence=has_movie_evidence(md) or bool(route and route.genre == "movie"))

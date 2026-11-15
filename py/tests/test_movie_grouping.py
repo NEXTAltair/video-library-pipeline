@@ -110,3 +110,14 @@ def test_windows_absolute_nested_policy_is_normalized_before_join(tmp_path, monk
     route = tmp_path / 'routes.yaml'
     route.write_text('default_dest: "B:\\\\VideoLibrary"\nmovie_grouping_path: \'C:\\Rules\\movies.yaml\'\nroutes: []\n')
     assert load_drive_routes(route).movie_grouping is not None
+
+
+def test_movie_frame_never_overrides_explicit_non_movie_genre():
+    routes = DriveRoutes(r'B:\VideoLibrary', 'by_title', [
+        DriveRoute({'genre': 'anime', 'dest_root': r'D:\Anime', 'layout': 'by_title'})
+    ], movie_grouping=policy())
+    md = {'program_title': '葬送のフリーレン', 'genre': 'アニメ',
+          'air_date': '2023-09-29', 'needs_review': False}
+    dest, genre, error = build_routed_dest_path(routes, r'B:\old\金曜ロードショー「葬送のフリーレン」_2023_09_29.mp4', md)
+    assert error is None and genre == 'anime'
+    assert dest.startswith(r'D:\Anime\葬送のフリーレン')
