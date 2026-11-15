@@ -61,3 +61,13 @@ def test_verified_drama_slot_supplies_genre_without_borrowing_another_channel():
     assert resolve_genre({'program_title': '孤独のグルメSeason11', 'evidence': {'raw': 'ドラマ24孤独のグルメSeason11 5話'}}) == 'ドラマ'
     assert resolve_genre({'program_title': '地球ドラマチック'}) == 'ドキュメンタリー・情報'
     assert resolve_genre({'program_title': 'VIVANT'}) is None
+
+
+def test_channel_disambiguates_same_title_broadcast_simultaneously():
+    c = cache()
+    a = {'official_title': '日曜劇場「VIVANT」第22話', 'broadcaster': '局A'}
+    b = dict(a, broadcaster='局B')
+    c._by_title_dt['work-slot'] = [a, b]
+    assert c.lookup('work-slot', 'slot', broadcaster='局B') is b
+    assert c.lookup('work-slot', 'slot') is None
+    assert c.lookup('work-slot', 'slot', broadcaster='局C') is None

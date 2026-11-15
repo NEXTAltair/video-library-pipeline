@@ -630,15 +630,25 @@ class _EpgCache:
             if stem:
                 self._by_filename_stem[str(stem)] = data
 
-    def lookup(self, match_key: str | None, datetime_key: str | None, filename_stem: str | None = None) -> dict | None:
+    def lookup(self, match_key: str | None, datetime_key: str | None, filename_stem: str | None = None,
+               broadcaster: str | None = None) -> dict | None:
+        def channel_matches(item):
+            return not broadcaster or _normalize_title_compare(str(item.get("broadcaster") or "")) == _normalize_title_compare(broadcaster)
+
         # ファイル名ステムが最優先（タイトル+日時のあいまいマッチより確実）
         if filename_stem and filename_stem in self._by_filename_stem:
-            return self._by_filename_stem[filename_stem]
+            item = self._by_filename_stem[filename_stem]
+            if channel_matches(item):
+                return item
         if match_key:
             if match_key in self._by_match_key:
-                return self._by_match_key[match_key]
+                item = self._by_match_key[match_key]
+                if channel_matches(item):
+                    return item
             if match_key in self._by_title_dt:
-                return self._by_title_dt[match_key][0]
+                matches = [item for item in self._by_title_dt[match_key] if channel_matches(item)]
+                if len(matches) == 1:
+                    return matches[0]
         # A timestamp identifies a slot, not a work/broadcaster. Simultaneous
         # broadcasts must never donate genre/channel fields to one another.
         if datetime_key and filename_stem:
@@ -646,7 +656,7 @@ class _EpgCache:
             candidates = []
             for item in self._by_datetime_key.get(datetime_key, []):
                 official = _normalize_title_compare(str(item.get("official_title") or "")).replace("_", "")
-                if len(official) >= 8 and base.startswith(official):
+                if len(official) >= 8 and base.startswith(official) and channel_matches(item):
                     candidates.append(item)
             if len(candidates) == 1:
                 return candidates[0]
@@ -984,8 +994,13 @@ def main() -> int:
             # EPG enrichment: look up ingested program.txt data
             # ファイル名ステムで 1:1 照合（タイトル+日時によるあいまいマッチより優先）
             _fs = recording_filename_stem(str(rec.get("name") or rec.get("path") or ""))
-            epg = epg_cache.lookup(mk, dk, filename_stem=_fs)
+            epg = epg_cache.lookup(mk, dk, filename_stem=_fs, broadcaster=rec.get("broadcaster"))
             _enrich_with_epg(row, epg)
+            unresolved_epg = epg is None and len(epg_candidates) > 1
+            if unresolved_epg:
+                row["needs_review"] = True
+                row["needs_review_reason"] = ",".join(filter(None, [row.get("needs_review_reason"), "epg_identity_unresolved"]))
+                row["confidence"] = min(row["confidence"], 0.65)
             if epg and rec.get("path_id") and epg.get("program_id"):
                 path_program_links.append((
                     str(rec["path_id"]),
@@ -995,7 +1010,7 @@ def main() -> int:
                     now_iso(),
                 ))
 
-            row["genre"] = resolve_genre(row)
+            row["genre"] = None if unresolved_epg else resolve_genre(row)
             row["franchise"] = resolve_franchise(row, args.franchise_rules or None)
             row["source_history"] = [make_entry("rule_based", [k for k, v in row.items() if v is not None and k not in {"path_id", "path"}])]
 
