@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 
 from path_placement_rules import SUBTITLE_SEPARATORS, clean_program_title, normalize_title_for_comparison
-from broadcast_frame_titles import is_contaminated_program_title
+from broadcast_frame_titles import is_contaminated_program_title, strip_episode_title_suffix
 
 
 MIN_PREFIX_FAMILY_BASE_LEN = 4
@@ -239,7 +239,7 @@ def suggest_canonical_title(
         return pf_match, pf_source
 
     # Fallback: separator split
-    cleaned = clean_program_title(program_title)
+    cleaned = clean_program_title(strip_episode_title_suffix(program_title))
     if cleaned and normalize_title_for_comparison(cleaned) != pt_norm:
         return cleaned, "separator_split"
 

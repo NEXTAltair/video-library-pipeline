@@ -7,6 +7,10 @@ import unicodedata
 
 FRAME_TITLE_PREFIXES = (
     "BS11ガンダムアワー",
+    "ドラマ",
+    "ドラマ24",
+    "日曜劇場",
+    "日曜アニメ劇場",
 )
 
 _WS = re.compile(r"[\s\u3000_]+")
@@ -22,6 +26,9 @@ _NEWSOON_RE = re.compile(
 _TOKI_TV_RE = re.compile(r"^\s*時をかけるテレビ(?:[\s\u3000_]+|$)")
 _OVERMAN_KING_RE = re.compile(r"^\s*OVERMAN\s+キングゲイナー(?:[\s\u3000_]+|$)", re.IGNORECASE)
 _EPISODE_SUFFIX_TITLE_RE = re.compile(r"[#＃][0-9０-９]+(?:[.-][0-9０-９]+)?\s*$")
+_EPISODE_TITLE_RE = re.compile(r"(?:第\s*\d+\s*話|\s+\d+\s*話)(?:\b|\s|[「『])")
+_DRAMA_QUOTED_RE = re.compile(r"^(?:日曜劇場|ドラマ24)\s*[「『]([^」』]+)[」』]")
+_DRAMA24_RE = re.compile(r"^ドラマ\s*24\s*(.+?)(?=\s*(?:第\s*)?\d+\s*話|$)")
 _KNOWN_PROGRAM_PREFIX_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (_NEWSOON_RE, "午後LIVEニュースーン"),
     (_TOKI_TV_RE, "時をかけるテレビ"),
@@ -61,6 +68,16 @@ def strip_broadcast_frame_prefix(title: str) -> str:
 def canonical_from_known_program_prefix(title: str) -> str | None:
     """Return canonical program title when a known program prefix is found."""
     t = unicodedata.normalize("NFKC", str(title or ""))
+    quoted = _DRAMA_QUOTED_RE.match(t)
+    if quoted:
+        return quoted.group(1).strip()
+    drama = _DRAMA24_RE.match(t)
+    if drama:
+        work = drama.group(1).strip(" _!！「」『』")
+        # Season is part of the work identity, not an episode/subtitle.
+        work = re.sub(r"\s+Season\s*(\d+)", r"Season\1", work, flags=re.IGNORECASE)
+        if work:
+            return work
     for pattern, canonical in _KNOWN_PROGRAM_PREFIX_RULES:
         if pattern.match(t):
             return canonical
@@ -80,10 +97,18 @@ def is_episode_suffix_contaminated_title(title: str) -> bool:
     return bool(_EPISODE_SUFFIX_TITLE_RE.search(str(title or "")))
 
 
+def strip_episode_title_suffix(title: str) -> str:
+    """Drop an explicit episode marker and its subtitle, retaining seasons."""
+    t = unicodedata.normalize("NFKC", str(title or ""))
+    match = _EPISODE_TITLE_RE.search(t)
+    return t[:match.start()].strip() if match else t
+
+
 def is_contaminated_program_title(title: str) -> bool:
     """Return true for titles that must be excluded from DB-backed dictionaries."""
     return (
         is_broadcast_frame_contaminated_title(title)
         or is_known_program_prefix_contaminated_title(title)
         or is_episode_suffix_contaminated_title(title)
+        or bool(_EPISODE_TITLE_RE.search(unicodedata.normalize("NFKC", str(title or ""))))
     )
