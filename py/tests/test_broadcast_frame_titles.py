@@ -211,3 +211,12 @@ def test_episode_suffix_title_is_treated_as_contaminated():
     from broadcast_frame_titles import is_contaminated_program_title
 
     assert is_contaminated_program_title("牙狼~語りし者~#23") is True
+
+
+def test_leading_broadcast_label_preserves_long_dictionary_work(make_db):
+    import run_metadata_batches_promptv1 as mod
+    full = '機動戦士ガンダム 水星の魔女'
+    con = make_db([], programs=['機動戦士ガンダム', full])
+    dictionary = mod._ProgramDictionary(con)
+    for label in ['【新】', '【再】【字】']:
+        assert mod._match_from_known_programs(label + full + ' 第1話「魔女と花嫁」', dictionary, mod.HintSet()) == full

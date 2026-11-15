@@ -14,9 +14,14 @@ def alias_key(value):
     return re.sub(r'[\s_<>:"/\\|?*]+', '', text)
 
 
+def strip_leading_broadcast_labels(base):
+    """Only known presentation labels, not arbitrary bracketed work names."""
+    return re.sub(r'^(?:【(?:新|再|終|字|字幕|二|二か国語|吹替|無料|[^】]*無料の日[^】]*)】\s*)+', '', base)
+
+
 def work_title_header(base):
     """Cut explicit episode/subtitle markers, not distinct work-name words."""
-    text = re.sub(r'^【[^】]*無料の日[^】]*】\s*', '', base)
+    text = strip_leading_broadcast_labels(base)
     text = strip_broadcast_frame_prefix(text)
     marker = re.search(r'(?:第\s*\d+\s*話|\s+\d+\s*話|[#＃]\d+(?=[\s_「『-]|$)|[【「『▽▼◇◆])', text)
     return text[:marker.start()].strip(' _') if marker and marker.start() > 0 else text.strip(' _')
@@ -38,7 +43,7 @@ def resolve_work_title(base, aliases=None, regex_rules=(), *, parsed_title=None,
         if key in normalized and normalized[key] != canonical:
             raise ValueError('conflicting canonical aliases after normalization')
         normalized[key] = canonical
-    content_base = re.sub(r'^【[^】]*無料の日[^】]*】\s*', '', base)
+    content_base = strip_leading_broadcast_labels(base)
     prefix = canonical_from_known_program_prefix(content_base)
     stripped = strip_broadcast_frame_prefix(content_base)
     headers = [alias_key(work_title_header(content_base))]
