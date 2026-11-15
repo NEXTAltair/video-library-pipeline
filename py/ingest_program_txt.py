@@ -23,6 +23,7 @@ from epg_common import broadcast_id_for, normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from pathscan_common import now_iso
 from series_name_extractor import extract_series_name
+from video_pipeline.platform.resources import default_program_aliases
 
 
 def find_program_txt_files(ts_root: Path) -> list[Path]:
@@ -109,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"TS root not found: {ts_root}")
 
     # Auto-detect aliases path
-    aliases_path = args.aliases or str(Path(__file__).resolve().parent.parent / "rules" / "program_aliases.yaml")
+    aliases_path = args.aliases or str(default_program_aliases(Path(__file__).resolve().parent))
 
     con = connect_db(args.db)
     create_schema_if_needed(con)

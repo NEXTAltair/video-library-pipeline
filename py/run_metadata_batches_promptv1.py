@@ -21,7 +21,8 @@ from plan_validation import detect_swallowed_program_title
 from source_history import make_entry
 from pathscan_common import now_iso
 from title_resolution import load_canonical_title_sources, suggest_canonical_title
-from broadcast_frame_titles import canonical_from_known_program_prefix, is_contaminated_program_title
+from broadcast_frame_titles import canonical_from_known_program_prefix, is_contaminated_program_title, reviewed_title_conflicts_with_filename
+from video_pipeline.domain.work_title_normalizer import resolve_work_title, regex_rules_from_data
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -203,39 +204,7 @@ def _iter_hint_items(obj: Any) -> list[dict[str, Any]]:
 
 
 def _iter_regex_rules(obj: Any) -> list[tuple[re.Pattern, str, str]]:
-    """rules: 形式 (program_aliases.yaml) から (compiled_pattern, canonical_title, field) を返す。
-    field: "base" = ファイル名baseに適用, "program_title" = LLM出力のprogram_titleに適用。
-    未指定時のデフォルトは "base"。
-    """
-    if not isinstance(obj, dict):
-        return []
-    rules = obj.get("rules")
-    if not isinstance(rules, list):
-        return []
-    result: list[tuple[re.Pattern, str, str]] = []
-    for rule in rules:
-        if not isinstance(rule, dict):
-            continue
-        if not rule.get("enabled", True):
-            continue
-        match = rule.get("match")
-        set_ = rule.get("set")
-        if not isinstance(match, dict) or not isinstance(set_, dict):
-            continue
-        pattern = match.get("regex")
-        canonical = set_.get("program_title")
-        field = match.get("field", "base")
-        if field not in ("base", "program_title"):
-            field = "base"
-        if not isinstance(pattern, str) or not isinstance(canonical, str):
-            continue
-        if not pattern or not canonical:
-            continue
-        try:
-            result.append((re.compile(pattern), canonical.strip(), field))
-        except re.error as e:
-            print(f"W invalid regex in rules: pattern={pattern!r} error={e}")
-    return result
+    return regex_rules_from_data(obj)
 
 
 class HintLoadFailure(RuntimeError):
@@ -346,28 +315,8 @@ def _load_hints(path: str | None) -> tuple[HintSet, bool]:
 
 
 def _canonicalize_title_from_hints(base: str, parsed_program_title: str, alias_map: HintSet) -> str:
-    # 1. regex_rules を先に評価 (program_aliases.yaml の rules: 形式)
-    for pattern, canonical, field in alias_map.regex_rules:
-        target = parsed_program_title if field == "program_title" else base
-        m = pattern.search(target)
-        if m:
-            try:
-                return m.expand(canonical)  # \1 等のバックリファレンスを展開
-            except re.error:
-                return canonical
-
-    # 2. alias_map で完全一致 (exact key lookup)
-    key = _normalize_alias_key(parsed_program_title)
-    if key in alias_map.alias_map:
-        return alias_map.alias_map[key]
-
-    # 3. alias_map でサブストリング一致 (substring fallback)
-    base_norm = _normalize_alias_key(base)
-    for alias_key, canonical in alias_map.alias_map.items():
-        if alias_key and alias_key in base_norm:
-            return canonical
-
-    return parsed_program_title
+    return resolve_work_title(base, alias_map.alias_map, alias_map.regex_rules,
+                              parsed_title=parsed_program_title) or parsed_program_title
 
 
 def parse_program_and_subtitle(base: str) -> tuple[str, str | None]:
@@ -451,11 +400,14 @@ class _ProgramDictionary:
         return len(self._entries)
 
     def match(self, base_norm: str) -> str | None:
-        """Find the longest known program title contained in base_norm."""
+        """Find a work prefix, never a title mentioned in the description."""
         if not base_norm:
             return None
+        frame = _normalize_title_compare("BS11ガンダムアワー")
+        if base_norm.startswith(frame):
+            base_norm = base_norm[len(frame):]
         for norm, canonical in self._entries:
-            if norm in base_norm:
+            if base_norm.lstrip('「『【').startswith(norm):
                 return canonical
         return None
 
@@ -470,37 +422,9 @@ def _match_from_known_programs(
     Returns canonical_title if found, None otherwise.
     Priority: regex rules > programs table (longest match) > alias map (substring).
     """
-    # 1. Alias regex rules (highest specificity — human-curated patterns)
-    for pattern, canonical, field in alias_hints.regex_rules:
-        target = base
-        m = pattern.search(target)
-        if m:
-            try:
-                return m.expand(canonical)
-            except re.error:
-                return canonical
-
-    base_norm = _normalize_title_compare(base)
-    if not base_norm:
-        return None
-
-    prefix_canonical = canonical_from_known_program_prefix(base)
-    if prefix_canonical:
-        return prefix_canonical
-
-    # 2. Programs table (longest match first)
-    if program_dict:
-        result = program_dict.match(base_norm)
-        if result:
-            return result
-
-    # 3. Alias YAML substring match
-    alias_norm = _normalize_alias_key(base)
-    for alias_key, canonical in alias_hints.alias_map.items():
-        if alias_key and alias_key in alias_norm:
-            return canonical
-
-    return None
+    matcher = (lambda value: program_dict.match(_normalize_title_compare(value))) if program_dict else None
+    return resolve_work_title(base, alias_hints.alias_map, alias_hints.regex_rules,
+                              dictionary_match=matcher)
 
 
 def _choose_epg_title_candidate(base: str, epg_candidates: list[dict]) -> str | None:
@@ -899,7 +823,13 @@ def main() -> int:
             pid = rec.get("path_id")
             if pid and not args.ignore_human_reviewed:
                 existing = _get_latest_llm_metadata(db_con, str(pid))
-                if isinstance(existing, dict) and existing.get("human_reviewed") is True:
+                # Only review candidates may replace a deterministic frame/work
+                # mismatch. Normal extraction still preserves human decisions.
+                recheck = (args.output_only and isinstance(existing, dict)
+                           and reviewed_title_conflicts_with_filename(
+                               str(existing.get("program_title") or ""), strip_suffix(str(rec.get("name") or "")),
+                               _match_from_known_programs(strip_suffix(str(rec.get("name") or "")), program_dict, alias_hints)))
+                if isinstance(existing, dict) and existing.get("human_reviewed") is True and not recheck:
                     locked_row = _build_locked_row(existing, rec, args.model, args.extraction_version)
                     enforce_db_contract(locked_row)
                     rows.append(locked_row)
