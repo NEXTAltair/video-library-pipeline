@@ -138,6 +138,11 @@ class DriveRoutes:
         # 0. Pre-resolved genre fast-path
         pre = md.get("genre")
         if pre:
+            # Metadata extraction uses Japanese labels; route ids are stable
+            # English keys. Do not discard an explicit, resolved genre.
+            pre = {"アニメ": "anime", "特撮": "tokusatsu", "映画": "movie", "ドラマ": "drama",
+                   "ドキュメンタリー・情報": "documentary", "バラエティ": "variety",
+                   "ニュース・報道": "news", "放送大学": "education"}.get(str(pre), pre)
             for route in self.routes:
                 if route.genre == pre:
                     return route, f"pre_resolved_genre:{pre}"

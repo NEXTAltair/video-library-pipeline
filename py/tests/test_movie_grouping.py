@@ -1,7 +1,7 @@
 from pathlib import PureWindowsPath
 import pytest
 from video_pipeline.domain.movie_grouping import MovieGrouping
-from video_pipeline.domain.path_placement_rules import DriveRoutes, build_routed_dest_path, load_drive_routes
+from video_pipeline.domain.path_placement_rules import DriveRoute, DriveRoutes, build_routed_dest_path, load_drive_routes
 
 
 def policy():
@@ -78,3 +78,16 @@ def test_grouping_destinations_remain_in_relocate_and_dedup_inventory(tmp_path):
     assert r'L:\Movies' in roots and r'D:\Series' in roots
     dedup = configured_roots(r'B:\Source', r'B:\VideoLibrary', str(route))
     assert '/mnt/l/Movies' in dedup and '/mnt/d/Series' in dedup
+
+
+def test_japanese_resolved_genres_remain_authoritative_for_routes():
+    routes = DriveRoutes(r'B:\VideoLibrary', 'by_title', [
+        DriveRoute({'genre': 'movie', 'dest_root': 'L:\\', 'layout': 'by_title'}),
+        DriveRoute({'genre': 'drama', 'dest_root': r'E:\Dドラマ', 'layout': 'by_title'}),
+        DriveRoute({'genre': 'documentary', 'dest_root': r'E:\Documentary', 'layout': 'by_title'}),
+    ], movie_grouping=policy())
+    for label, expected in [('映画', 'movie'), ('ドラマ', 'drama'), ('ドキュメンタリー・情報', 'documentary')]:
+        assert routes.resolve({'genre': label})[0].genre == expected
+    md = {'program_title': '機動戦士ガンダムIII めぐりあい宇宙編', 'genre': '映画',
+          'air_date': '2026-01-01', 'needs_review': False}
+    assert build_routed_dest_path(routes, r'B:\old\Movie.mp4', md)[0] == r'D:\Anime\シリーズ_ガンダム\Movie.mp4'
