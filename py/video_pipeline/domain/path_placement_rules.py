@@ -7,6 +7,8 @@ import unicodedata
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
+from .title_text import clean_title_edges
+
 FORB = re.compile(r'[<>:"/\\|?*]')
 CTRL = re.compile(r"[\x00-\x1f]")
 TRAIL = re.compile(r"[\. ]+$")
@@ -44,7 +46,8 @@ def normalize_title_for_comparison(s: str) -> str:
     return unicodedata.normalize("NFKC", str(s or "")).casefold().strip()
 
 
-def safe_dir_name(name: str, maxlen: int = 60) -> str:
+def legacy_safe_dir_name(name: str, maxlen: int = 60) -> str:
+    """Old escaping, only for discovering pre-existing library roots."""
     s = (name or "").strip()
     s = CTRL.sub("", s)
     s = FORB.sub("＿", s)
@@ -55,6 +58,21 @@ def safe_dir_name(name: str, maxlen: int = 60) -> str:
     if len(s) > maxlen:
         h = hashlib.sha1(s.encode("utf-8")).hexdigest()[:8]
         s = s[: maxlen - 9].rstrip() + "_" + h
+    return s
+
+
+def safe_dir_name(name: str, maxlen: int = 60) -> str:
+    """Readable Windows-safe folder component, never a change to recording names."""
+    s = CTRL.sub("", clean_title_edges(name))
+    s = s.translate(str.maketrans({'?': '？', '<': '＜', '>': '＞', ':': '：',
+                                 '"': '', '*': '＊', '/': '／', '\\': '＼', '|': '｜'}))
+    s = WS.sub(" ", s)
+    s = re.sub(r"^[\s_＿.]+|[\s_＿.]+$", "", s)
+    if not s:
+        s = "UNKNOWN"
+    if len(s) > maxlen:
+        h = hashlib.sha1(s.encode("utf-8")).hexdigest()[:8]
+        s = s[:maxlen - 9].rstrip() + "_" + h
     return s
 
 

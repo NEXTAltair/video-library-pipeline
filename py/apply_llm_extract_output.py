@@ -159,8 +159,11 @@ def main() -> int:
         )
         if suggested and suggested != original_title:
             rec["program_title"] = suggested
-            rec["needs_review"] = False
-            rec["needs_review_reason"] = ""
+            # Trimming punctuation is not a validation decision: dates,
+            # confidence and other independent review flags remain unresolved.
+            if match_source != "edge_delimiters":
+                rec["needs_review"] = False
+                rec["needs_review_reason"] = ""
             _append_reason(rec, f"auto_corrected_from_{match_source}")
             title_auto_corrected += 1
 

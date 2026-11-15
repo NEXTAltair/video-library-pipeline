@@ -27,7 +27,7 @@ from pathlib import PureWindowsPath
 
 from epg_common import normalize_program_key, program_id_for
 from mediaops_schema import begin_immediate, connect_db
-from path_placement_rules import safe_dir_name
+from path_placement_rules import safe_dir_name, legacy_safe_dir_name
 from pathscan_common import now_iso
 
 
@@ -53,7 +53,7 @@ def _infer_root_by_old_title(path: str, old_title: str) -> str | None:
         return None
     p = PureWindowsPath(str(path or "").replace("/", "\\"))
     parts = p.parts
-    candidates = {title, safe_dir_name(title)}
+    candidates = {title, safe_dir_name(title), legacy_safe_dir_name(title)}
     for i in range(1, len(parts)):  # アンカー (drive) はスキップ
         if parts[i] in candidates:
             return str(PureWindowsPath(*parts[:i]))

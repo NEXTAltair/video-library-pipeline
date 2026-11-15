@@ -22,6 +22,7 @@ from source_history import make_entry
 from pathscan_common import now_iso
 from title_resolution import load_canonical_title_sources, suggest_canonical_title
 from broadcast_frame_titles import canonical_from_known_program_prefix, is_contaminated_program_title, reviewed_title_conflicts_with_filename
+from video_pipeline.domain.title_text import clean_title_edges
 from video_pipeline.domain.work_title_normalizer import resolve_work_title, regex_rules_from_data
 
 WS = re.compile(r"[\s\u3000]+")
@@ -498,7 +499,7 @@ def extract_title_ai_primary(
             source = "rule_based_fallback+epg_hint"
 
     return {
-        "program_title": prog,
+        "program_title": clean_title_edges(prog),
         "subtitle": sub,
         "episode_no": parse_episode(base),
         "air_date": extract_air_date(name),
@@ -906,7 +907,7 @@ def main() -> int:
             row = {
                 "path_id": rec["path_id"],
                 "path": rec["path"],
-                "program_title": prog,
+                "program_title": clean_title_edges(prog),
                 "episode_no": ep,
                 "subtitle": sub,
                 "air_date": air,

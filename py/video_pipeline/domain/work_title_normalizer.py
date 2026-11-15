@@ -6,6 +6,7 @@ never a programme mentioned inside its description, may identify a work.
 import re
 import sys
 import unicodedata
+from .title_text import clean_title_edges
 from broadcast_frame_titles import canonical_from_known_program_prefix, strip_broadcast_frame_prefix
 
 
@@ -30,7 +31,7 @@ def work_title_header(base):
     return text[:marker.start()].strip(' _') if marker and marker.start() > 0 else text.strip(' _')
 
 
-def resolve_work_title(base, aliases=None, regex_rules=(), *, parsed_title=None, dictionary_match=None):
+def _resolve_work_title(base, aliases=None, regex_rules=(), *, parsed_title=None, dictionary_match=None):
     """Curated rules/aliases > known frame/work prefix > DB prefix lookup."""
     for pattern, canonical, field in regex_rules:
         target = parsed_title if field == 'program_title' and parsed_title is not None else base
@@ -67,6 +68,12 @@ def resolve_work_title(base, aliases=None, regex_rules=(), *, parsed_title=None,
     if prefix:
         return prefix
     return dictionary_match(stripped) if dictionary_match else None
+
+
+def resolve_work_title(base, aliases=None, regex_rules=(), *, parsed_title=None, dictionary_match=None):
+    result = _resolve_work_title(base, aliases, regex_rules, parsed_title=parsed_title,
+                                 dictionary_match=dictionary_match)
+    return clean_title_edges(result) if result is not None else None
 
 
 def regex_rules_from_data(data):
