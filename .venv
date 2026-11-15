@@ -1,0 +1,3 @@
+This regular file reserves .venv so a plain `uv run` cannot create a virtualenv inside the plugin checkout.
+A checkout .venv adds interpreter symlinks outside the package, and OpenClaw then refuses to load the plugin
+("Native plugin companion leaves its package"). Use ./scripts/uv-project run ... instead.
