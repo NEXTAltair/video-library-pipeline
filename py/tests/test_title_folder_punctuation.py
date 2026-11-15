@@ -58,3 +58,25 @@ def test_edge_cleanup_does_not_skip_canonical_or_subtitle_resolution():
  assert suggest_canonical_title('Example Show"',src,min_extra_chars=3)==('Example Show','edge_delimiters')
  empty=CanonicalTitleSources((),(),frozenset(),())
  assert suggest_canonical_title('Example Show▽Episode"',empty,min_extra_chars=3)==('Example Show','separator_split')
+
+@pytest.mark.parametrize('extra,reason',[
+ ({'air_date':'not-a-date'},'invalid_air_date_format'),
+ ({'confidence':'not-a-number'},'invalid_confidence'),
+ ({'needs_review':True,'needs_review_reason':'epg_identity_unresolved'},'epg_identity_unresolved'),
+])
+def test_edge_only_fix_preserves_unrelated_review_in_apply(tmp_path,monkeypatch,extra,reason):
+ import json,sys
+ import apply_llm_extract_output as apply
+ from mediaops_schema import connect_db,create_schema_if_needed
+ db=tmp_path/'db.sqlite';con=connect_db(str(db));create_schema_if_needed(con)
+ con.execute("insert into paths(path_id,path,created_at,updated_at) values('pid','record.mp4','now','now')")
+ con.commit();con.close()
+ rec={'path_id':'pid','program_title':'Example Show"','air_date':'2026-11-15','needs_review':False,'confidence':0.9}
+ rec.update(extra);inp=tmp_path/'input.jsonl';inp.write_text(json.dumps(rec)+'\n')
+ monkeypatch.setattr(sys,'argv',['apply','--db',str(db),'--in',str(inp)])
+ assert apply.main()==0
+ con=connect_db(str(db));row=con.execute("select * from path_metadata where path_id='pid'").fetchone()
+ assert row['program_title']=='Example Show'
+ assert row['needs_review']==1
+ assert reason in json.loads(row['data_json'])['needs_review_reason']
+ con.close()
