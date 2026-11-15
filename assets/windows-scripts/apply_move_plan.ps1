@@ -88,7 +88,7 @@ try {
         foreach ($member in $bundle) { $member.dst = Get-BundlePath $dstFinal $member.kind }
         $candidatePaths = @('video', 'program_txt', 'recording_json', 'psc', 'vtt') | ForEach-Object { Get-BundlePath $dstFinal $_ }
         # A shared stem must not attach Konomi metadata to another container.
-        foreach ($extension in @('.mp4', '.mkv', '.ts', '.m2ts', '.m2t', '.mts', '.avi', '.mov', '.webm', '.mpg', '.mpeg')) {
+        foreach ($extension in @('.mp4', '.mkv', '.m4v', '.ts', '.m2ts', '.m2t', '.mts', '.avi', '.mov', '.webm', '.mpg', '.mpeg')) {
           $sibling = [System.IO.Path]::ChangeExtension($dstFinal, $extension)
           if ($sibling -ine $dstFinal) { $candidatePaths += $sibling }
         }

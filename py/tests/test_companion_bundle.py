@@ -46,11 +46,12 @@ def test_recognized_companions_only_and_renaming(tmp_path):
 
 
 @pytest.mark.parametrize('side', ['source', 'destination'])
-def test_shared_stem_fails_closed(tmp_path, side):
+@pytest.mark.parametrize('extension', ['.mkv', '.m4v'])
+def test_shared_stem_fails_closed(tmp_path, side, extension):
     src, dst, localize = fixture(tmp_path)
     video = src if side == 'source' else dst
     video.parent.mkdir(exist_ok=True)
-    video.with_suffix('.mkv').write_bytes(b'other video')
+    video.with_suffix(extension).write_bytes(b'other video')
     with pytest.raises(ValueError, match='ambiguous_companion_stem'):
         capture_bundle(str(src), str(dst), localize=localize)
 

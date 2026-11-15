@@ -241,3 +241,30 @@ def test_late_companion_during_final_video_move_prevents_parent_success(tmp_path
     assert (tmp_path / "src" / (stem + ".mp4")).exists()
     assert not (tmp_path / "dst" / (stem + ".mp4")).exists()
     assert any(e["kind"] == "program_txt" and (e["source_exists"] or e["destination_exists"]) for e in row["partial_effects"])
+
+
+def test_m4v_stem_owner_is_not_stolen(tmp_path):
+    scripts, op, stem = fixture(tmp_path)
+    (tmp_path / "src" / (stem + ".m4v")).write_text("another recording")
+    row, _ = run(tmp_path, scripts, op)
+    assert not row["ok"] and row["error"] == "ambiguous_companion_owner"
+
+
+@pytest.mark.parametrize("suffix", [".mp4", ".psc"])
+def test_native_collision_remains_nonfatal_preflight_result(tmp_path, monkeypatch, suffix):
+    import errno
+    import os
+    from video_pipeline.domain.move_preflight import inspect_move
+    scripts, op, stem = fixture(tmp_path)
+    shutil.copy(ROOT / "templates/windows-scripts/inspect_move.ps1", scripts / "inspect_move.ps1")
+    (tmp_path / "dst").mkdir()
+    (tmp_path / "dst" / (stem + suffix)).write_text("occupied")
+    cp = subprocess.run(["pwsh", "-NoProfile", "-File", str(scripts / "inspect_move.ps1"), "-Src", op["src"], "-Dst", op["dst"]], capture_output=True, text=True, env={**os.environ, "BUNDLE_ROOT": str(tmp_path)})
+    assert cp.returncode == 0, cp.stderr
+    observed = json.loads(cp.stdout)
+    assert observed["ok"] and observed["destination_exists"] and not observed["bundle_verified"]
+    assert observed["bundle_error"] == "destination_exists"
+    def too_long(_self, **_kwargs):
+        raise OSError(errno.ENAMETOOLONG, "native long name")
+    monkeypatch.setattr(Path, "stat", too_long)
+    assert inspect_move(op["src"], op["dst"], {}, windows_probe=lambda *_: observed) == (None, "destination_exists")

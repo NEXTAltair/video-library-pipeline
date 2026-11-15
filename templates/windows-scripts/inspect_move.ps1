@@ -30,6 +30,9 @@ try {
     $mtime = $info.LastWriteTimeUtc.ToString('o')
   }
   $destAttrs = Get-LiteralAttributesOrMissing $Dst
+  $destinationExists = $null -ne $destAttrs
+  $bundleVerified = $true
+  $bundleError = $null
   $cohort = @(Get-CurrentCompanionKinds $Src)
   $members = @()
   if ($exists) {
@@ -44,19 +47,20 @@ try {
     foreach ($kind in @('video', 'program_txt', 'recording_json', 'psc', 'vtt')) {
       $target = Get-BundlePath $Dst $kind
       Assert-NoReparseAncestors $target
-      if ($null -ne (Get-LiteralAttributesOrMissing $target)) { throw 'destination_exists' }
+      if ($null -ne (Get-LiteralAttributesOrMissing $target)) { $destinationExists = $true; $bundleVerified = $false; $bundleError = 'destination_exists' }
     }
   }
   [ordered]@{
     ok = $true
-    bundle_verified = $true
+    bundle_verified = $bundleVerified
+    bundle_error = $bundleError
     bundle_version = 1
     members = @($members)
     companion_cohort = @($cohort)
     source_exists = [bool]$exists
     size_bytes = $size
     mtime_utc = $mtime
-    destination_exists = ($null -ne $destAttrs)
+    destination_exists = $destinationExists
   } | ConvertTo-Json -Compress -Depth 6
 } catch {
   @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress -Depth 6

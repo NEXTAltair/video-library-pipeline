@@ -8,7 +8,7 @@ from video_pipeline.platform.pathscan_common import windows_to_wsl_path
 
 BUNDLE_VERSION = 1
 KINDS = ('psc', 'vtt', 'program_txt', 'recording_json')
-VIDEO_EXTENSIONS = {'.ts', '.m2ts', '.mts', '.mp4', '.mkv', '.avi', '.mov', '.mpeg', '.mpg', '.m2t', '.webm'}
+VIDEO_EXTENSIONS = {'.ts', '.m2ts', '.mts', '.mp4', '.mkv', '.m4v', '.avi', '.mov', '.mpeg', '.mpg', '.m2t', '.webm'}
 
 
 def companion_paths(video):
@@ -88,7 +88,7 @@ def capture_bundle(src, dst, *, localize=windows_to_wsl_path, windows_probe=None
             windows_probe = read_native_bundle
         result = windows_probe(src, dst)
         if result.get('ok') is not True or result.get('bundle_verified') is not True:
-            raise ValueError('native_companion_capture_unavailable') from exc
+            raise ValueError(result.get('bundle_error') or 'native_companion_capture_unavailable') from exc
         fields = {k: result[k] for k in ('bundle_version', 'members', 'companion_cohort')}
         if fields['bundle_version'] != BUNDLE_VERSION or not isinstance(fields['members'], list) or not fields['members']:
             raise ValueError('invalid_native_companion_capture')

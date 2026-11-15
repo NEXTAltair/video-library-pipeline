@@ -48,7 +48,7 @@ function Get-CurrentCompanionKinds([string]$Video) {
   }
   # Stem companions must not be silently stolen from another video container.
   # Reject ambiguous ownership even for an explicitly empty cohort.
-  foreach ($extension in @('.mp4', '.mkv', '.ts', '.m2ts', '.m2t', '.mts', '.avi', '.mov', '.webm', '.mpg', '.mpeg')) {
+  foreach ($extension in @('.mp4', '.mkv', '.m4v', '.ts', '.m2ts', '.m2t', '.mts', '.avi', '.mov', '.webm', '.mpg', '.mpeg')) {
     $sibling = [System.IO.Path]::ChangeExtension($Video, $extension)
     if ($sibling -ine $Video -and (Test-PathAnyLong $sibling)) { throw 'ambiguous_companion_owner' }
   }
