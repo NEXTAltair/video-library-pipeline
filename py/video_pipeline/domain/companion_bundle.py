@@ -43,7 +43,7 @@ def _signature(path):
             'mtime_ns': s.st_mtime_ns}
 
 
-def capture_bundle(src, dst, *, localize=windows_to_wsl_path, windows_probe=None):
+def capture_bundle(src, dst, *, localize=windows_to_wsl_path, windows_probe=None, allow_destination_exists=False):
     """Return fields to merge into a move. Empty cohort is explicit evidence.
 
     Native fallback MUST return these same fields and affirm bundle_verified;
@@ -57,7 +57,7 @@ def capture_bundle(src, dst, *, localize=windows_to_wsl_path, windows_probe=None
         # when another video with the same stem exists (even if cohort is empty).
         # Probe the bounded known container extensions, not every entry in the
         # directory for every video (a large flat library would become O(n^2)).
-        for video in (source, dest):
+        for video in ((source,) if allow_destination_exists else (source, dest)):
             for extension in VIDEO_EXTENSIONS:
                 sibling = video.with_suffix(extension)
                 if sibling.name.casefold() != video.name.casefold() and (sibling.exists() or sibling.is_symlink()):
@@ -71,13 +71,13 @@ def capture_bundle(src, dst, *, localize=windows_to_wsl_path, windows_probe=None
             _check_ancestors(p)
             _check_ancestors(target)
             # Detect occupied sidecar destinations, including absent source members.
-            if target.exists() or target.is_symlink():
+            if not allow_destination_exists and (target.exists() or target.is_symlink()):
                 raise ValueError('destination_exists')
             if p.exists() or p.is_symlink():
                 members.append({'kind': kind, 'src': path, 'dst': destinations[kind],
                                 'precondition': _signature(p)})
                 cohort.append(kind)
-        if dest.exists() or dest.is_symlink():
+        if not allow_destination_exists and (dest.exists() or dest.is_symlink()):
             raise ValueError('destination_exists')
         return {'bundle_version': BUNDLE_VERSION, 'members': members, 'companion_cohort': cohort}
     except OSError as exc:
@@ -87,7 +87,8 @@ def capture_bundle(src, dst, *, localize=windows_to_wsl_path, windows_probe=None
             from video_pipeline.platform.native_companion_probe import read_native_bundle
             windows_probe = read_native_bundle
         result = windows_probe(src, dst)
-        if result.get('ok') is not True or result.get('bundle_verified') is not True:
+        collision_allowed = allow_destination_exists and result.get('bundle_error') == 'destination_exists'
+        if result.get('ok') is not True or (result.get('bundle_verified') is not True and not collision_allowed):
             raise ValueError(result.get('bundle_error') or 'native_companion_capture_unavailable') from exc
         fields = {k: result[k] for k in ('bundle_version', 'members', 'companion_cohort')}
         if fields['bundle_version'] != BUNDLE_VERSION or not isinstance(fields['members'], list) or not fields['members']:

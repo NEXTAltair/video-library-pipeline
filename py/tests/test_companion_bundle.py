@@ -203,3 +203,15 @@ def test_source_root_inventory_plan_preserves_closed_bundle(tmp_path, monkeypatc
     row = json.loads(out.read_text().splitlines()[1])
     assert row["bundle_version"] == 1 and len(row["members"]) == (5 if with_companions else 1)
     assert len(row["companion_cohort"]) == (4 if with_companions else 0)
+
+
+@pytest.mark.parametrize("suffix", [".mp4", ".psc", ".m4v", ".mp4.program.txt"])
+def test_rename_suffix_callers_capture_cohort_despite_occupied_destination(tmp_path, suffix):
+    src, dst, localize = fixture(tmp_path)
+    src.with_suffix(".psc").write_bytes(b"evidence")
+    dst.parent.mkdir()
+    Path(str(dst.with_suffix("")) + suffix).write_bytes(b"occupied")
+    fields = capture_bundle(str(src), str(dst), localize=localize, allow_destination_exists=True)
+    assert fields["companion_cohort"] == ["psc"]
+    assert fields["members"][0]["dst"] == str(dst)
+    assert len(fields["members"]) == 2

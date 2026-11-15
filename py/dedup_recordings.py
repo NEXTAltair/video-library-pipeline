@@ -528,7 +528,7 @@ def main() -> int:
                         w.write(
                             safe_json(
                                 {
-                                    **capture_bundle(src_win, dst_win),
+                                    **capture_bundle(src_win, dst_win, allow_destination_exists=True),
                                     "op": "move",
                                     "path_id": row["path_id"],
                                     "src": src_win,

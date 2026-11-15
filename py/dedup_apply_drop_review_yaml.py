@@ -104,7 +104,7 @@ def apply_yaml(yaml_path: str, db_path: str, windows_ops_root: str) -> dict:
             )
             base_name = PureWindowsPath(src_win).name
             dst_win = canonicalize_windows_path(group_dir_win + "\\" + base_name)
-            w.write(safe_json({**capture_bundle(src_win, dst_win), "op": "move", "path_id": row["path_id"], "src": src_win, "dst": dst_win}) + "\n")
+            w.write(safe_json({**capture_bundle(src_win, dst_win, allow_destination_exists=True), "op": "move", "path_id": row["path_id"], "src": src_win, "dst": dst_win}) + "\n")
 
     # run PowerShell move
     move_apply_file = None
