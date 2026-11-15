@@ -22,6 +22,7 @@ from broadcast_frame_titles import (
     has_broadcast_frame_prefix,
     strip_broadcast_frame_prefix,
 )
+from .work_title_normalizer import resolve_work_title, regex_rules_from_data
 
 try:
     import yaml  # type: ignore
@@ -125,9 +126,14 @@ def extract_series_name(
     t = str(title or "").strip()
     if not t:
         return "UNKNOWN"
-    prefix_canonical = canonical_from_known_program_prefix(t)
-    if prefix_canonical:
-        return prefix_canonical
+    alias_map = _alias_map if _alias_map is not None else _load_aliases(aliases_path)
+    regex_rules = []
+    if aliases_path and yaml is not None and Path(aliases_path).is_file():
+        with Path(aliases_path).open(encoding='utf-8-sig') as stream:
+            regex_rules = regex_rules_from_data(yaml.safe_load(stream))
+    canonical = resolve_work_title(t, alias_map, regex_rules)
+    if canonical:
+        return canonical
     if has_broadcast_frame_prefix(t):
         t = strip_broadcast_frame_prefix(t)
         if not t:
@@ -139,7 +145,6 @@ def extract_series_name(
     # For series name, we still want the title prefix, not the franchise name.
 
     # 2. Alias map lookup
-    alias_map = _alias_map if _alias_map is not None else _load_aliases(aliases_path)
     if alias_map:
         key = normalize_program_key(t)
         if key in alias_map:

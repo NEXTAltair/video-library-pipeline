@@ -119,4 +119,6 @@ def is_contaminated_program_title(title: str) -> bool:
         or is_known_program_prefix_contaminated_title(title)
         or is_episode_suffix_contaminated_title(title)
         or bool(_EPISODE_TITLE_RE.search(unicodedata.normalize("NFKC", str(title or ""))))
+        or (not str(title or "").lstrip().startswith(('「', '『', '【'))
+            and bool(re.search(r'.+[【「『]', str(title or ""))))
     )

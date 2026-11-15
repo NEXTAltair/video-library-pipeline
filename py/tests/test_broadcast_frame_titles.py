@@ -54,6 +54,8 @@ def test_reviewed_work_without_episode_is_not_requeued_by_recording_suffix():
     from broadcast_frame_titles import reviewed_title_conflicts_with_filename
     name = "ドラマ24 孤独のグルメSeason11_2026_05_02_00_12.mp4"
     assert not reviewed_title_conflicts_with_filename("孤独のグルメSeason11", mod.strip_suffix(name))
+    name = "ドラマ24 孤独のグルメSeason11「横浜の料理」_2026_05_02_00_12.mp4"
+    assert not reviewed_title_conflicts_with_filename("孤独のグルメSeason11", mod.strip_suffix(name))
 
 
 def test_curated_alias_precedence_is_shared_by_conflict_check():
@@ -65,8 +67,44 @@ def test_curated_alias_precedence_is_shared_by_conflict_check():
     canonical = mod._match_from_known_programs(base, None, hints)
     assert canonical == '孤独のグルメ シーズン11'
     assert not reviewed_title_conflicts_with_filename(canonical, base, canonical)
-    name = "ドラマ24 孤独のグルメSeason11「横浜の料理」_2026_05_02_00_12.mp4"
-    assert not reviewed_title_conflicts_with_filename("孤独のグルメSeason11", mod.strip_suffix(name))
+
+
+def test_ingest_extract_and_move_share_curated_alias_identity(tmp_path):
+    import run_metadata_batches_promptv1 as mod
+    from broadcast_frame_titles import reviewed_title_conflicts_with_filename
+    hints_file = tmp_path / 'aliases.yaml'
+    hints_file.write_text('hints:\n  - canonical_title: 孤独のグルメ シーズン11\n    aliases: [ドラマ24 孤独のグルメSeason11]\n')
+    base = 'ドラマ24 孤独のグルメSeason11 第5話「横浜の料理」'
+    hints, _ = mod._load_hints_with_status(str(hints_file))
+    extracted = mod._match_from_known_programs(base, None, hints)
+    ingested = extract_series_name(base, aliases_path=str(hints_file))
+    assert extracted == ingested == '孤独のグルメ シーズン11'
+    assert not reviewed_title_conflicts_with_filename(ingested, base, extracted)
+
+
+def test_ingest_and_extract_share_regex_alias_priority(tmp_path):
+    import run_metadata_batches_promptv1 as mod
+    hints_file = tmp_path / 'aliases.yaml'
+    hints_file.write_text('rules:\n  - match: {regex: "^日曜劇場", field: base}\n    set: {program_title: VIVANTシリーズ}\n')
+    base = '日曜劇場「VIVANT」第23話'
+    hints, _ = mod._load_hints_with_status(str(hints_file))
+    assert mod._match_from_known_programs(base, None, hints) == extract_series_name(base, aliases_path=str(hints_file)) == 'VIVANTシリーズ'
+
+
+def test_dictionary_never_identifies_a_work_mentioned_only_in_description(make_db):
+    import run_metadata_batches_promptv1 as mod
+    con = make_db([], programs=['シン・仮面ライダー', '仮面ライダー'])
+    base = '仮面ライダー 第1話「怪奇蜘蛛男」 ドキュメント「シン・仮面ライダー」放送'
+    assert mod._match_from_known_programs(base, mod._ProgramDictionary(con), mod.HintSet()) == '仮面ライダー'
+
+
+def test_dictionary_drops_bracketed_episode_titles_and_recognizes_promotion_label(make_db):
+    import run_metadata_batches_promptv1 as mod
+    con = make_db([], programs=['Newsモーニングサテライト', 'Newsモーニングサテライト【今日の金融】',
+                               'なつかしのアニメ・特撮の旅'])
+    dictionary = mod._ProgramDictionary(con)
+    assert mod._match_from_known_programs('Newsモーニングサテライト【今日の金融】説明', dictionary, mod.HintSet()) == 'Newsモーニングサテライト'
+    assert mod._match_from_known_programs('【銀河無料の日!】なつかしのアニメ・特撮の旅#1 説明', dictionary, mod.HintSet()) == 'なつかしのアニメ・特撮の旅'
 
 
 def test_extract_series_name_strips_bs11_gundam_hour_prefix():
