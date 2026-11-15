@@ -164,3 +164,41 @@ def test_capture_does_not_enumerate_whole_library(tmp_path, monkeypatch):
         pytest.fail("bundle capture must use bounded exact sibling probes")
     monkeypatch.setattr(Path, "iterdir", no_scan)
     assert capture_bundle(str(src), str(dst), localize=localize)["companion_cohort"] == []
+
+
+@pytest.mark.parametrize("with_companions", [False, True])
+def test_source_root_inventory_plan_preserves_closed_bundle(tmp_path, monkeypatch, with_companions):
+    import json
+    import sqlite3
+    import sys
+    from pathlib import PureWindowsPath
+    from types import SimpleNamespace
+    import make_move_plan_from_inventory as producer
+    from video_pipeline.domain.move_preflight import inspect_move
+    src, dst = r"X:\incoming\録画.mp4", r"Y:\library\録画.mp4"
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "録画.mp4").write_bytes(b"video")
+    if with_companions:
+        for name in ("録画.psc", "録画.vtt", "録画.mp4.program.txt", "録画.mp4.recording.json"):
+            (source / name).write_bytes(b"evidence")
+    def localize(path):
+        return str(tmp_path / ("src" if path.startswith("X:") else "dst") / PureWindowsPath(path).name)
+    db = tmp_path / "db.sqlite"
+    with sqlite3.connect(db) as con:
+        con.execute("CREATE TABLE paths(path_id TEXT,path TEXT)")
+        con.execute("INSERT INTO paths VALUES('p',?)", (src,))
+        con.execute("CREATE TABLE recording_holds(path_id TEXT,reason TEXT,detail_json TEXT,resolved_at TEXT)")
+        con.execute("CREATE TABLE path_file_state(path_id TEXT,file_id TEXT)")
+    monkeypatch.setattr(producer, "latest_path_metadata", lambda *_: ({"program_title": "番組", "air_date": "2026-11-16"}, "fixture"))
+    monkeypatch.setattr(producer, "validate_move_candidate", lambda *_a, **_kw: SimpleNamespace(ok=True, dst=dst, genre_route=None))
+    monkeypatch.setattr(producer, "inspect_move", lambda s, d, inv: inspect_move(s, d, inv, localize=localize))
+    monkeypatch.setattr(producer, "capture_bundle", lambda s, d: capture_bundle(s, d, localize=localize))
+    inv = tmp_path / "inventory.jsonl"
+    inv.write_text(json.dumps({"path": src}) + "\n")
+    out = tmp_path / "plan.jsonl"
+    monkeypatch.setattr(sys, "argv", ["plan", "--db", str(db), "--inventory", str(inv), "--source-root", r"X:\incoming", "--dest-root", r"Y:\library", "--out", str(out)])
+    assert producer.main() == 0
+    row = json.loads(out.read_text().splitlines()[1])
+    assert row["bundle_version"] == 1 and len(row["members"]) == (5 if with_companions else 1)
+    assert len(row["companion_cohort"]) == (4 if with_companions else 0)
