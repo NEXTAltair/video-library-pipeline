@@ -91,6 +91,17 @@ def test_ingest_and_extract_share_regex_alias_priority(tmp_path):
     assert mod._match_from_known_programs(base, None, hints) == extract_series_name(base, aliases_path=str(hints_file)) == 'VIVANTシリーズ'
 
 
+@pytest.mark.parametrize('unused_rules', [None, {}, ''])
+def test_unused_rules_section_is_optional_for_both_alias_readers(tmp_path, unused_rules):
+    import run_metadata_batches_promptv1 as mod
+    import yaml
+    path = tmp_path / 'aliases.yaml'
+    path.write_text(yaml.safe_dump({'rules': unused_rules, 'hints': [{'canonical_title': 'Canonical', 'aliases': ['Alias']}]}, allow_unicode=True))
+    hints, _ = mod._load_hints_with_status(str(path))
+    assert mod._match_from_known_programs('Alias 第2話', None, hints) == 'Canonical'
+    assert extract_series_name('Alias 第2話', aliases_path=str(path)) == 'Canonical'
+
+
 def test_dictionary_never_identifies_a_work_mentioned_only_in_description(make_db):
     import run_metadata_batches_promptv1 as mod
     con = make_db([], programs=['シン・仮面ライダー', '仮面ライダー'])

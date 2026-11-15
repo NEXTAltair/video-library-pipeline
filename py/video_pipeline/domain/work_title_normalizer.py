@@ -49,7 +49,10 @@ def resolve_work_title(base, aliases=None, regex_rules=(), *, parsed_title=None,
 def regex_rules_from_data(data):
     """The same explicit regex resource format is accepted by both readers."""
     result = []
-    for rule in data.get('rules', []) if isinstance(data, dict) else []:
+    rules = data.get('rules') if isinstance(data, dict) else None
+    if not isinstance(rules, list):
+        return result
+    for rule in rules:
         if not isinstance(rule, dict) or not rule.get('enabled', True):
             continue
         match, values = rule.get('match'), rule.get('set')
