@@ -639,8 +639,17 @@ class _EpgCache:
                 return self._by_match_key[match_key]
             if match_key in self._by_title_dt:
                 return self._by_title_dt[match_key][0]
-        if datetime_key and datetime_key in self._by_datetime_key:
-            return self._by_datetime_key[datetime_key][0]
+        # A timestamp identifies a slot, not a work/broadcaster. Simultaneous
+        # broadcasts must never donate genre/channel fields to one another.
+        if datetime_key and filename_stem:
+            base = _normalize_title_compare(filename_stem).replace("_", "")
+            candidates = []
+            for item in self._by_datetime_key.get(datetime_key, []):
+                official = _normalize_title_compare(str(item.get("official_title") or "")).replace("_", "")
+                if len(official) >= 8 and base.startswith(official):
+                    candidates.append(item)
+            if len(candidates) == 1:
+                return candidates[0]
         return None
 
     def candidates(self, match_key: str | None, datetime_key: str | None) -> list[dict]:
@@ -693,6 +702,11 @@ def _to_epg_hint_payload(epg_candidates: list[dict]) -> dict:
         "epg_hint_titles": titles[:5],
         "epg_hint_start_at": start_at[:5],
     }
+
+
+def recording_filename_stem(path_or_name: str) -> str | None:
+    """Resolve Windows and POSIX basenames identically on either host."""
+    return PurePath(str(path_or_name).replace("\\", "/")).stem or None
 
 
 def _enrich_with_epg(row: dict, epg: dict | None) -> None:
@@ -969,7 +983,7 @@ def main() -> int:
 
             # EPG enrichment: look up ingested program.txt data
             # ファイル名ステムで 1:1 照合（タイトル+日時によるあいまいマッチより優先）
-            _fs = PurePath(str(rec.get("path") or "")).stem or None
+            _fs = recording_filename_stem(str(rec.get("name") or rec.get("path") or ""))
             epg = epg_cache.lookup(mk, dk, filename_stem=_fs)
             _enrich_with_epg(row, epg)
             if epg and rec.get("path_id") and epg.get("program_id"):
