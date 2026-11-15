@@ -875,7 +875,8 @@ def main() -> int:
                 # mismatch. Normal extraction still preserves human decisions.
                 recheck = (args.output_only and isinstance(existing, dict)
                            and reviewed_title_conflicts_with_filename(
-                               str(existing.get("program_title") or ""), strip_suffix(str(rec.get("name") or ""))))
+                               str(existing.get("program_title") or ""), strip_suffix(str(rec.get("name") or "")),
+                               _match_from_known_programs(strip_suffix(str(rec.get("name") or "")), program_dict, alias_hints)))
                 if isinstance(existing, dict) and existing.get("human_reviewed") is True and not recheck:
                     locked_row = _build_locked_row(existing, rec, args.model, args.extraction_version)
                     enforce_db_contract(locked_row)

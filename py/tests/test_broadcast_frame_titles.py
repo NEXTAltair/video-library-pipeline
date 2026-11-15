@@ -54,6 +54,17 @@ def test_reviewed_work_without_episode_is_not_requeued_by_recording_suffix():
     from broadcast_frame_titles import reviewed_title_conflicts_with_filename
     name = "ドラマ24 孤独のグルメSeason11_2026_05_02_00_12.mp4"
     assert not reviewed_title_conflicts_with_filename("孤独のグルメSeason11", mod.strip_suffix(name))
+
+
+def test_curated_alias_precedence_is_shared_by_conflict_check():
+    import re
+    import run_metadata_batches_promptv1 as mod
+    from broadcast_frame_titles import reviewed_title_conflicts_with_filename
+    base = "ドラマ24 孤独のグルメSeason11 第5話 横浜の料理"
+    hints = mod.HintSet(regex_rules=[(re.compile('^ドラマ24'), '孤独のグルメ シーズン11', 'base')])
+    canonical = mod._match_from_known_programs(base, None, hints)
+    assert canonical == '孤独のグルメ シーズン11'
+    assert not reviewed_title_conflicts_with_filename(canonical, base, canonical)
     name = "ドラマ24 孤独のグルメSeason11「横浜の料理」_2026_05_02_00_12.mp4"
     assert not reviewed_title_conflicts_with_filename("孤独のグルメSeason11", mod.strip_suffix(name))
 
