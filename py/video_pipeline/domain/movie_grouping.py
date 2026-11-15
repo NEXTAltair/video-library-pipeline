@@ -34,7 +34,7 @@ class MovieGrouping:
     def destinations(self):
         return [root for root in [self.default_dest, *(g['dest_root'] for g in self.series)] if root]
 
-    def resolve(self, title, filename, movie_evidence=False):
+    def resolve(self, title, filename, movie_evidence=False, *, allow_frame_fallback=True):
         raw = unicodedata.normalize("NFKC", str(filename))
         raw = re.sub(r"^(?:\[[^\]]+\])+", "", raw).strip()
         raw = re.sub(r"^CM-アリ\s*", "", raw)
@@ -46,7 +46,7 @@ class MovieGrouping:
         quoted = re.match(r'^[「『](.+?)[」』]', work_raw)
         quoted_work = compact(quoted.group(1).lstrip('「『')) if quoted else None
         title_key = compact(title)
-        infer_from_name = title_key in ('', 'unknown') or any(title_key.startswith(compact(f)) for f in self.frames)
+        infer_from_name = allow_frame_fallback and (title_key in ('', 'unknown') or any(title_key.startswith(compact(f)) for f in self.frames))
 
         def matches_work(alias):
             key = compact(alias)
@@ -80,6 +80,6 @@ class MovieGrouping:
                 raise ValueError("ambiguous movie series membership")
             group = next(iter(groups.values()))
             return str(group["dest_root"]).rstrip("\\"), str(group["folder"])
-        if frame and self.default_dest:
+        if allow_frame_fallback and frame and self.default_dest:
             return self.default_dest, frame
         return None
