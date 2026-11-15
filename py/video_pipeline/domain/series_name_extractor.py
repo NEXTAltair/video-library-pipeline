@@ -22,6 +22,7 @@ from broadcast_frame_titles import (
     has_broadcast_frame_prefix,
     strip_broadcast_frame_prefix,
 )
+from .title_text import clean_title_edges
 from .work_title_normalizer import resolve_work_title, regex_rules_from_data
 
 try:
@@ -123,7 +124,7 @@ def extract_series_name(
     2. program_aliases.yaml canonical_title match -> that title
     3. Fallback: split on subtitle separators and take the prefix
     """
-    t = str(title or "").strip()
+    t = clean_title_edges(title)
     if not t:
         return "UNKNOWN"
     alias_map = _alias_map if _alias_map is not None else _load_aliases(aliases_path)
@@ -148,13 +149,13 @@ def extract_series_name(
     if alias_map:
         key = normalize_program_key(t)
         if key in alias_map:
-            return alias_map[key]
+            return clean_title_edges(alias_map[key])
         # 2b. Strip episode suffix (第N話, #N) and retry alias lookup
         stripped = EPISODE_SUFFIX_RE.sub("", t).strip()
         if stripped and stripped != t:
             stripped_key = normalize_program_key(stripped)
             if stripped_key in alias_map:
-                return alias_map[stripped_key]
+                return clean_title_edges(alias_map[stripped_key])
 
     stripped = EPISODE_SUFFIX_RE.sub("", t).strip()
     if stripped:
@@ -169,8 +170,8 @@ def extract_series_name(
     if alias_map:
         prefix_key = normalize_program_key(prefix)
         if prefix_key in alias_map:
-            return alias_map[prefix_key]
-    return prefix
+            return clean_title_edges(alias_map[prefix_key])
+    return clean_title_edges(prefix)
 
 
 def series_program_key(

@@ -16,6 +16,7 @@ import sqlite3
 import re
 from dataclasses import dataclass
 
+from .title_text import clean_title_edges
 from path_placement_rules import SUBTITLE_SEPARATORS, clean_program_title, normalize_title_for_comparison
 from broadcast_frame_titles import is_contaminated_program_title, strip_episode_title_suffix
 
@@ -190,6 +191,9 @@ def suggest_canonical_title(
       "separator_split"     — fallback: split at first subtitle separator
       "no_match"            — no suggestion available
     """
+    cleaned_edges = clean_title_edges(program_title)
+    if cleaned_edges and cleaned_edges != program_title:
+        return cleaned_edges, "edge_delimiters"
     pt_norm = normalize_title_for_comparison(program_title)
     if not pt_norm:
         return None, "no_match"
