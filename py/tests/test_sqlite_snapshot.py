@@ -98,3 +98,40 @@ def test_restore_uses_sqlite_not_file_copy_with_live_wal(tmp_path):
     preserved = next(p["path"] for p in snapshots if "pre_restore" in p["descriptor"])
     with closing(sqlite3.connect(preserved)) as con:
         assert con.execute("SELECT * FROM records").fetchall() == [(1,), (2,)]
+
+
+def _simulate_snapshot_elapsed(monkeypatch, elapsed):
+    import video_pipeline.platform.sqlite_snapshot as snapshot
+    calls=iter([0,elapsed])
+    monkeypatch.setattr(snapshot.time,'monotonic',lambda: next(calls,elapsed))
+
+
+def test_live_backup_allows_slow_snapshot_beyond_common_30s(tmp_path,monkeypatch):
+    db=tmp_path/'source.sqlite'
+    with closing(sqlite3.connect(db)) as con:
+        con.execute('CREATE TABLE records(value)');con.execute('INSERT INTO records VALUES(7)');con.commit()
+    _simulate_snapshot_elapsed(monkeypatch,31)
+    ok,path,error=backup_db(str(db),'slow_live')
+    assert ok,error
+    with closing(sqlite3.connect(path)) as con:
+        assert con.execute('SELECT value FROM records').fetchall()==[(7,)]
+        assert con.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+
+
+def test_common_snapshot_keeps_30s_deadline_and_failed_evidence(tmp_path,monkeypatch):
+    db=tmp_path/'source.sqlite';target=tmp_path/'snapshot.sqlite'
+    with closing(sqlite3.connect(db)) as con:con.execute('CREATE TABLE records(value)')
+    _simulate_snapshot_elapsed(monkeypatch,31)
+    with pytest.raises(TimeoutError,match='deadline'):
+        online_snapshot(db,target)
+    assert not target.exists() and len(list(tmp_path.glob('snapshot.sqlite.failed_*')))==1
+
+
+def test_live_backup_remains_bounded_and_does_not_advertise_failure(tmp_path,monkeypatch):
+    db=tmp_path/'source.sqlite'
+    with closing(sqlite3.connect(db)) as con:con.execute('CREATE TABLE records(value)')
+    before=db.read_bytes();_simulate_snapshot_elapsed(monkeypatch,121)
+    ok,path,error=backup_db(str(db),'over_limit')
+    assert not ok and path=='' and 'deadline' in error
+    assert db.read_bytes()==before and list_backups(str(db))==[]
+    assert len(list(tmp_path.glob('*.failed_*')))==1
