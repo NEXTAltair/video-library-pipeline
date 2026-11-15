@@ -52,6 +52,7 @@ from pathscan_common import (
 from windows_pwsh_bridge import run_pwsh_json
 from video_pipeline.domain.routing_inventory import is_excluded_media_path, title_in_scope, summarize_routing
 from video_pipeline.domain.move_preflight import inspect_move
+from video_pipeline.platform.resources import default_program_aliases
 
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
 
@@ -242,7 +243,7 @@ def main() -> int:
     # One lookup pass avoids a full paths-table scan per media file.
     path_rows = {normalize_win_for_id(r["path"]): r for r in con.execute(
         "SELECT p.path_id,p.path,m.program_title FROM paths p LEFT JOIN path_metadata m ON m.path_id=p.path_id")}
-    hints_path = (Path(windows_to_wsl_path(args.drive_routes)).parent if args.drive_routes else Path(__file__).resolve().parent.parent / "rules") / "program_aliases.yaml"
+    hints_path = default_program_aliases(Path(__file__).resolve().parent)
     alias_hints, _ = _load_hints_with_status(str(hints_path))
     program_dictionary = _ProgramDictionary(con)
     holds = {}
