@@ -1,0 +1,23 @@
+#!/bin/sh
+# Build an immutable npm package copy without changing the running plugin.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+state=${OPENCLAW_STATE_DIR:-$HOME/.openclaw}
+releases=${OPENCLAW_VIDEO_PIPELINE_RELEASES:-$state/plugin-runtime/video-library-pipeline/releases}
+mkdir -p "$releases"
+staging=$(mktemp -d "$releases/.stage.XXXXXXXX")
+trap 'rm -rf "$staging"' EXIT HUP INT TERM
+(cd "$root" && npm run build >&2 && npm pack --ignore-scripts --pack-destination "$staging" --json > "$staging/pack.json")
+archive=$(find "$staging" -maxdepth 1 -type f -name '*.tgz' -print)
+[ -n "$archive" ] || { echo 'npm pack produced no archive' >&2; exit 1; }
+sha=$(sha256sum "$archive" | cut -d ' ' -f 1)
+mkdir "$staging/unpack"
+tar -xzf "$archive" -C "$staging/unpack"
+[ -f "$staging/unpack/package/openclaw.plugin.json" ] && [ -f "$staging/unpack/package/dist/index.js" ] && [ -f "$staging/unpack/package/uv.lock" ] || { echo 'incomplete package' >&2; exit 1; }
+target="$releases/sha256-$sha"
+if [ -e "$target" ]; then
+  echo "release already exists: $target" >&2
+else
+  mv -T "$staging/unpack/package" "$target"
+fi
+printf '%s\n' "$target"

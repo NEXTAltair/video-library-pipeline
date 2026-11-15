@@ -1,0 +1,8 @@
+#!/bin/sh
+# Keep uv's project environment out of the linked plugin checkout.
+set -eu
+if [ -z "${UV_PROJECT_ENVIRONMENT:-}" ]; then
+  UV_PROJECT_ENVIRONMENT="${OPENCLAW_VIDEO_PIPELINE_VENV:-${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/plugin-runtime/video-library-pipeline/.venv}"
+  export UV_PROJECT_ENVIRONMENT
+fi
+exec uv "$@"
