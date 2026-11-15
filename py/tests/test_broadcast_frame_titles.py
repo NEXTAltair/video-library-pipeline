@@ -10,6 +10,9 @@ from series_name_extractor import extract_series_name
     ("ドラマ24「別の作品」第2話", "別の作品"),
     ("ドラマ24 孤独のグルメSeason11 #5 横浜の料理", "孤独のグルメSeason11"),
     ("ドラマ24 孤独のグルメSeason11 ＃5 横浜の料理", "孤独のグルメSeason11"),
+    ("ドラマ24 孤独のグルメSeason11「横浜の料理」", "孤独のグルメSeason11"),
+    ("ドラマ24 孤独のグルメSeason11【横浜の料理】", "孤独のグルメSeason11"),
+    ("ドラマ24 孤独のグルメSeason11▽横浜の料理", "孤独のグルメSeason11"),
 ])
 def test_dramatic_frame_is_not_work_identity(title, expected):
     assert extract_series_name(title) == expected
@@ -50,6 +53,8 @@ def test_reviewed_work_without_episode_is_not_requeued_by_recording_suffix():
     import run_metadata_batches_promptv1 as mod
     from broadcast_frame_titles import reviewed_title_conflicts_with_filename
     name = "ドラマ24 孤独のグルメSeason11_2026_05_02_00_12.mp4"
+    assert not reviewed_title_conflicts_with_filename("孤独のグルメSeason11", mod.strip_suffix(name))
+    name = "ドラマ24 孤独のグルメSeason11「横浜の料理」_2026_05_02_00_12.mp4"
     assert not reviewed_title_conflicts_with_filename("孤独のグルメSeason11", mod.strip_suffix(name))
 
 

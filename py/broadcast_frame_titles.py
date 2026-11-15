@@ -28,7 +28,7 @@ _OVERMAN_KING_RE = re.compile(r"^\s*OVERMAN\s+キングゲイナー(?:[\s\u3000_
 _EPISODE_SUFFIX_TITLE_RE = re.compile(r"[#＃][0-9０-９]+(?:[.-][0-9０-９]+)?\s*$")
 _EPISODE_TITLE_RE = re.compile(r"(?:第\s*\d+\s*話|\s+\d+\s*話)(?:\b|\s|[「『])")
 _DRAMA_QUOTED_RE = re.compile(r"^(?:日曜劇場|ドラマ24)\s*[「『]([^」』]+)[」』]")
-_DRAMA24_RE = re.compile(r"^ドラマ\s*24\s*(.+?)(?=\s*(?:(?:第\s*)?\d+\s*話|[#＃]\s*\d+)|$)")
+_DRAMA24_RE = re.compile(r"^ドラマ\s*24\s*(.+?)(?=\s*(?:(?:第\s*)?\d+\s*話|[#＃]\s*\d+|[「『【▽▼◇])|$)")
 _KNOWN_PROGRAM_PREFIX_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (_NEWSOON_RE, "午後LIVEニュースーン"),
     (_TOKI_TV_RE, "時をかけるテレビ"),
