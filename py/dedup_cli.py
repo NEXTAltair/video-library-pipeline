@@ -37,7 +37,7 @@ def configured_roots(source_root, dest_root, drive_routes):
 
 def provision_scripts(ops):
     templates = Path(__file__).resolve().parent.parent / "templates" / "windows-scripts"
-    for name in ("apply_move_plan.ps1", "_long_path_utils.ps1"):
+    for name in ("apply_move_plan.ps1", "_long_path_utils.ps1", "_move_bundle.ps1"):
         target = ops / "scripts" / name
         bundled = templates / name
         if not target.exists() or target.read_bytes() != bundled.read_bytes():

@@ -5,6 +5,8 @@ All Windows moves use the bundled PowerShell boundary and immutable identities.
 """
 from __future__ import annotations
 
+from video_pipeline.domain.companion_bundle import parent_move_succeeded, capture_bundle
+
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -79,7 +81,7 @@ def commit_receipts(db, receipt_path, run_id):
         con.execute("BEGIN IMMEDIATE")
         con.execute("INSERT OR IGNORE INTO runs(run_id,kind,started_at) VALUES(?,'recording_dedup',?)", (run_id, now_iso()))
         for row in rows:
-            if row.get("ok") is True and not row.get("dry_run"):
+            if parent_move_succeeded(row) and not row.get("dry_run"):
                 receipt_id = hashlib.sha256(json.dumps(row, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
                 record_move(con, row, receipt_id, run_id)
         con.execute("UPDATE runs SET finished_at=? WHERE run_id=?", (now_iso(), run_id))
@@ -203,7 +205,7 @@ def apply_plan(db, ops_root, run_dir, *, runner=run_pwsh_json):
     if len(rows) != len(moves):
         raise RuntimeError("partial quarantine receipts; manual reconciliation needed")
     write_json(directory / "db_committed.json", {"rows": len(rows)})
-    moved = sum(r.get("ok") is True for r in rows)
+    moved = sum(parent_move_succeeded(r) for r in rows)
     result = {"ok": moved == len(moves) and not engine_error, "moved": moved,
               "failed": len(moves) - moved, "engine_error": engine_error, "receipt_path": str(receipt_path)}
     manifest["phase"] = "complete" if result["ok"] else "failed"
@@ -247,7 +249,7 @@ def restore_plan(db, ops_root, original_dir, *, apply=False, runner=run_pwsh_jso
     records = [json.loads(line) for line in receipt_path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     native_paths = {}
     for r in records:
-        if r.get('op') == 'move' and r.get('ok') is True and not r.get('dry_run'):
+        if r.get('op') == 'move' and parent_move_succeeded(r) and not r.get('dry_run'):
             for name in ('src','dst'):
                 local = Path(windows_to_wsl_path(r[name]))
                 win = wsl_to_windows_path(str(local))
@@ -258,7 +260,7 @@ def restore_plan(db, ops_root, original_dir, *, apply=False, runner=run_pwsh_jso
     moves = []
     with readonly_db(db) as con:
         for r in records:
-            if r.get("op") != "move" or r.get("ok") is not True or r.get("dry_run"):
+            if r.get("op") != "move" or not parent_move_succeeded(r) or r.get("dry_run"):
                 continue
             m = intended.get((r["src"], r["dst"]))
             if not m or not r.get("file_id"):
@@ -283,7 +285,8 @@ def restore_plan(db, ops_root, original_dir, *, apply=False, runner=run_pwsh_jso
             if not state or state["file_id"] != r["file_id"]:
                 raise ValueError("quarantine identity mismatch")
             moves.append({"op": "move", "src": r["dst"], "dst": r["src"], "path_id": state["path_id"],
-                          "file_id": r["file_id"], "precondition": sig})
+                          "file_id": r["file_id"], "precondition": sig,
+                          **capture_bundle(r["dst"], r["src"])})
     result = {"ok": True, "preview": not apply, "restore_operations": len(moves)}
     if not apply or not moves:
         return result
@@ -301,5 +304,5 @@ def restore_plan(db, ops_root, original_dir, *, apply=False, runner=run_pwsh_jso
     if len(rows) != len(moves):
         raise RuntimeError("partial restore receipts")
     write_json(directory / "db_committed.json", {"rows": len(rows)})
-    result.update(ok=all(r.get("ok") is True for r in rows), receipt_path=str(receipt))
+    result.update(ok=all(parent_move_succeeded(r) for r in rows), receipt_path=str(receipt))
     return result

@@ -90,6 +90,8 @@ class Preview:
         create_schema_if_needed(self.con)
         self.con.execute("CREATE TABLE recording_holds(path_id TEXT, reason TEXT, resolved_at TEXT)")
         monkeypatch.setattr(relocate, "scan_files", lambda **_kw: (self.files, [], [], {}))
+        from video_pipeline.domain.companion_bundle import capture_bundle
+        monkeypatch.setattr(relocate, "capture_bundle", lambda src, dst, **kw: capture_bundle(src, dst, localize=self.localize, **kw))
         monkeypatch.setattr(relocate, "inspect_move", lambda src, dst, inv, **kw: inspect_move(src, dst, inv, localize=self.localize, **kw))
 
     def localize(self, path):

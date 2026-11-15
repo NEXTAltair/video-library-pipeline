@@ -5,6 +5,8 @@ remain protected; cached media measurements are usable only with fresh signature
 """
 from __future__ import annotations
 
+from video_pipeline.domain.companion_bundle import capture_bundle
+
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 import csv
@@ -421,6 +423,8 @@ def plan_by_date(con, roots, evidence_dir, *, now=None):
                       "precondition":drop["signature"],"keep":{"path":ks[0]["path"],**ks[0]["signature"]},
                       "keeps":[{"path":k["path"],**k["signature"]} for k in ks],"group_id":group_id,
                       "broadcast_kind":"repeat_by_sourced_date","reason":reason,"discovery_id":drop["discovery_id"]})
+    for move in moves:
+        move.update(capture_bundle(move["src"], move["dst"]))
     drop_paths = {m["src"] for m in moves}
     if len(drop_paths) != len(moves) or drop_paths & {k["path"] for k in keepers}:
         raise ValueError("global keep/drop overlap")

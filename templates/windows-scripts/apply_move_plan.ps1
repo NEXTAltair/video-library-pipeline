@@ -9,10 +9,11 @@ param(
 )
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
-$ErrorActionPreference = 'Continue'
+$ErrorActionPreference = 'Stop'
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here '_long_path_utils.ps1')
+. (Join-Path $here '_move_bundle.ps1')
 
 if ([string]::IsNullOrWhiteSpace($PlanJsonl)) {
   throw "PlanJsonl is required"
@@ -30,23 +31,10 @@ Ensure-DirectoryLong $moveDir
 
 function J([hashtable]$h) { ([pscustomobject]$h | ConvertTo-Json -Compress -Depth 6) }
 
-function Assert-NoReparseAncestors([string]$Path) {
-  $current = $Path
-  while ($current) {
-    if (Test-PathAnyLong $current) {
-      $attributes = [System.IO.File]::GetAttributes((Convert-ToLongPathLiteral $current))
-      if ($attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'path_reparse_point' }
-    }
-    $parent = [System.IO.Path]::GetDirectoryName($current.TrimEnd('\'))
-    if ($parent -eq $current) { break }
-    $current = $parent
-  }
-}
-
 $sw = New-Object System.IO.StreamWriter($out, $false, (New-Object System.Text.UTF8Encoding($false)))
 try {
   $sw.WriteLine((J @{ _meta = @{ kind='move_apply'; run_id=$runId; plan=$PlanJsonl; dry_run=[bool]$DryRun; on_dst_exists=$OnDstExists; generated_at=(Get-Date).ToString('o') } }))
-  $sw.Flush()
+  $sw.Flush(); $sw.BaseStream.Flush($true)
 
   Get-Content -LiteralPath $PlanJsonl -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
@@ -87,29 +75,38 @@ try {
       return
     }
 
-    if ($o.precondition) {
-      $info = [System.IO.FileInfo]::new((Convert-ToLongPathLiteral $src))
-      $expected = if ($o.precondition.mtime_utc -is [DateTime]) { [DateTimeOffset]$o.precondition.mtime_utc } else { [DateTimeOffset]::Parse([string]$o.precondition.mtime_utc) }
-      if ($info.Length -ne [long]$o.precondition.size_bytes -or [Math]::Abs(($info.LastWriteTimeUtc - $expected.UtcDateTime).TotalMilliseconds) -gt 5) {
-        $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dst; ok=$false; error='source_changed' }))
-        $sw.Flush()
-        return
-      }
-    }
-
+    $bundle = @()
+    $completed = [System.Collections.Generic.List[object]]::new()
     $dstFinal = $dst
-    if (Test-PathAnyLong $dstFinal) {
-      if ($OnDstExists -eq 'rename_suffix') {
-        try {
-          $dstFinal = Resolve-UniquePathSuffixLong -Path $dstFinal -SuffixBase '__dup'
-        } catch {
-          $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dst; ok=$false; error=("dst_suffix_resolve_failed: " + $_.Exception.Message) }))
-          return
+    try {
+      $bundle = @(Get-MoveBundle -Operation $o)
+      for ($attempt = 0; $attempt -le 10000; $attempt++) {
+        $dstFinal = if ($attempt -eq 0) { $dst } else {
+          $ext = [System.IO.Path]::GetExtension($dst)
+          $dst.Substring(0, $dst.Length - $ext.Length) + "__dup$attempt" + $ext
         }
-      } else {
-        $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dst; ok=$false; error='dst_exists' }))
-        return
+        foreach ($member in $bundle) { $member.dst = Get-BundlePath $dstFinal $member.kind }
+        $candidatePaths = @('video', 'program_txt', 'recording_json', 'psc', 'vtt') | ForEach-Object { Get-BundlePath $dstFinal $_ }
+        # A shared stem must not attach Konomi metadata to another container.
+        foreach ($extension in @('.mp4', '.mkv', '.ts', '.m2ts', '.m2t', '.mts', '.avi', '.mov', '.webm', '.mpg', '.mpeg')) {
+          $sibling = [System.IO.Path]::ChangeExtension($dstFinal, $extension)
+          if ($sibling -ine $dstFinal) { $candidatePaths += $sibling }
+        }
+        foreach ($candidatePath in $candidatePaths) { Assert-NoReparseAncestors $candidatePath }
+        $collision = @($candidatePaths | Where-Object { Test-PathAnyLong $_ }).Count -gt 0
+        if (!$collision) { break }
+        if ($OnDstExists -ne 'rename_suffix') { throw 'dst_exists' }
+        if ($attempt -eq 10000) { throw 'dst_suffix_resolve_failed' }
       }
+      foreach ($member in $bundle) {
+        Assert-NoReparseAncestors $member.src
+        Assert-NoReparseAncestors $member.dst
+        Assert-BundleSignature $member.src $member.precondition
+      }
+    } catch {
+      $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$false; error=$_.Exception.Message; bundle_version=1; bundle_complete=$false; members=$bundle }))
+      $sw.Flush(); $sw.BaseStream.Flush($true)
+      return
     }
 
     $dstDir = Split-Path -Parent $dstFinal
@@ -149,21 +146,73 @@ try {
         if ($keepInfo.Length -ne [long]$keeper.size_bytes -or [Math]::Abs(($keepInfo.LastWriteTimeUtc - $keepTime.UtcDateTime).TotalMilliseconds) -gt 5) { throw 'keeper_changed' }
       }
       if ($DryRun) {
-        $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$true; dry_run=$true }))
+        $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$true; dry_run=$true; bundle_version=1; bundle_complete=$true; members=$bundle }))
         return
       }
-      Move-FileLong -Src $src -Dst $dstFinal -Overwrite $false
-      $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; file_id=$o.file_id; ok=$true }))
-      $sw.Flush()
+      # Durable intent precedes every filesystem effect. Members move before video.
+      $sw.WriteLine((J @{ op='move_bundle_intent'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; members=$bundle }))
+      $sw.Flush(); $sw.BaseStream.Flush($true)
+      Assert-BundleCohort $o
+      foreach ($member in $bundle) {
+        $remaining = @($bundle | Where-Object { $_.kind -ne 'video' -and $_ -notin $completed } | ForEach-Object { $_.kind } | Sort-Object)
+        $current = @(Get-CurrentCompanionKinds $src | Sort-Object)
+        if (($remaining -join ',') -cne ($current -join ',')) { throw 'companion_cohort_changed_during_move' }
+        $arrived = @($completed | Where-Object { $_.kind -ne 'video' } | ForEach-Object { $_.kind } | Sort-Object)
+        $atDestination = @(Get-CurrentCompanionKinds $dstFinal | Sort-Object)
+        if (($arrived -join ',') -cne ($atDestination -join ',')) { throw 'destination_cohort_changed_during_move' }
+        Assert-NoReparseAncestors $member.src
+        Assert-NoReparseAncestors $member.dst
+        Assert-BundleSignature $member.src $member.precondition
+        if (Test-PathAnyLong $member.dst) { throw 'dst_exists' }
+        Move-FileLong -Src $member.src -Dst $member.dst -Overwrite $false
+        $completed.Add($member)
+        Assert-BundleSignature $member.dst $member.precondition
+        if (Test-PathAnyLong $member.src) { throw 'source_still_exists_after_move' }
+        $sw.WriteLine((J @{ op='move_member'; path_id=$pathId; kind=$member.kind; src=$member.src; dst=$member.dst; ok=$true }))
+        $sw.Flush(); $sw.BaseStream.Flush($true)
+      }
+      $sourceAfter = @(Get-CurrentCompanionKinds $src)
+      $destinationAfter = @(Get-CurrentCompanionKinds $dstFinal | Sort-Object)
+      $expectedAfter = @($bundle | Where-Object { $_.kind -ne 'video' } | ForEach-Object { $_.kind } | Sort-Object)
+      if ($sourceAfter.Count -ne 0 -or ($destinationAfter -join ',') -cne ($expectedAfter -join ',')) { throw 'companion_cohort_changed_after_move' }
+      foreach ($member in $bundle) {
+        Assert-BundleSignature $member.dst $member.precondition
+        if (Test-PathAnyLong $member.src) { throw 'source_reappeared_after_move' }
+      }
+      $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; file_id=$o.file_id; ok=$true; bundle_version=1; bundle_complete=$true; members=$bundle }))
+      $sw.Flush(); $sw.BaseStream.Flush($true)
     } catch {
-      $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$false; error=$_.Exception.Message }))
+      $moveError = $_.Exception.Message
+      $rollbackErrors = @()
+      for ($i = $completed.Count - 1; $i -ge 0; $i--) {
+        $member = $completed[$i]
+        try {
+          Assert-NoReparseAncestors $member.src
+          Assert-NoReparseAncestors $member.dst
+          Assert-BundleSignature $member.dst $member.precondition
+          if (Test-PathAnyLong $member.src) { throw 'rollback_source_exists' }
+          Move-FileLong -Src $member.dst -Dst $member.src -Overwrite $false
+          $sw.WriteLine((J @{ op='rollback_member'; path_id=$pathId; kind=$member.kind; src=$member.dst; dst=$member.src; ok=$true }))
+        } catch {
+          $rollbackErrors += $_.Exception.Message
+          $sw.WriteLine((J @{ op='rollback_member'; path_id=$pathId; kind=$member.kind; src=$member.dst; dst=$member.src; ok=$false; error=$_.Exception.Message }))
+        }
+        $sw.Flush(); $sw.BaseStream.Flush($true)
+      }
+      $effects = @(@('video', 'program_txt', 'recording_json', 'psc', 'vtt') | ForEach-Object {
+        $effectSrc = Get-BundlePath $src $_
+        $effectDst = Get-BundlePath $dstFinal $_
+        @{ kind=$_; src=$effectSrc; dst=$effectDst; source_exists=(Test-PathFileLong $effectSrc); destination_exists=(Test-PathFileLong $effectDst) }
+      })
+      $sw.WriteLine((J @{ op='move'; ts=$ts; path_id=$pathId; src=$src; dst=$dstFinal; ok=$false; error=$moveError; bundle_version=1; bundle_complete=$false; rollback_errors=$rollbackErrors; partial_effects=$effects }))
+      $sw.Flush(); $sw.BaseStream.Flush($true)
     } finally {
       foreach ($handle in $keepHandles) { $handle.Dispose() }
     }
   }
 }
 finally {
-  $sw.Flush(); $sw.Close()
+  $sw.Flush(); $sw.BaseStream.Flush($true); $sw.Close()
 }
 
 Write-Output (J @{ run_id=$runId; out_jsonl=$out })

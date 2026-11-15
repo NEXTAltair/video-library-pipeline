@@ -367,3 +367,29 @@ def test_legacy_interrupted_apply_is_recovered_through_public_actions(tmp_path):
     assert done["outcome"] == "relocate_apply_complete"
     assert env.moved_calls == [r["src"] for r in env.rows[5:]]     # the 5 logged files never move again
     assert len(env.db_rows) == 14
+
+
+def test_bundle_fields_survive_internal_plan(tmp_path):
+    env = Env(tmp_path, 1)
+    plan = env.ops / "runs" / env.run_id / "plan" / "relocate_plan.jsonl"
+    row = env.rows[0]
+    row.update(bundle_version=1, companion_cohort=["psc"], members=[{"kind": "video"}, {"kind": "psc"}])
+    plan.write_text(json.dumps(row) + "\n")
+    from video_pipeline.workflows.store import sha256_file
+    run = env.store.read_run(env.run_id)
+    run.artifacts["relocate_plan"].sha256 = sha256_file(plan)
+    env.store.write_run(run)
+    captured = []
+    env.on_chunk = lambda _, rows: captured.extend(rows)
+    env.service().apply(env.cfg)
+    assert captured[0]["bundle_version"] == 1
+    assert captured[0]["members"] == row["members"]
+    assert captured[0]["companion_cohort"] == ["psc"]
+
+
+def test_video_only_reconciliation_cannot_forge_bundle_success(tmp_path):
+    env = Env(tmp_path, 1)
+    row = {**env.rows[0], "bundle_version": 1, "companion_cohort": ["psc"], "members": []}
+    with pytest.raises(ValueError, match="interrupted_bundle_requires_member_reconciliation"):
+        env.service()._record_receipt(env.ops / "runs" / env.run_id, {"chunks": []}, row, "moved_unrecorded")
+    assert not env.db_rows

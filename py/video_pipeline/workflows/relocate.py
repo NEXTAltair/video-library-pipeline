@@ -376,7 +376,8 @@ class RelocateWorkflowService:
                     f.write(
                         json.dumps(
                             {"path_id": row.get("path_id"), "src": row.get("src"), "dst": row.get("dst"),
-                             "precondition": row.get("precondition"), "file_id": row.get("file_id")},
+                             "precondition": row.get("precondition"), "file_id": row.get("file_id"),
+                             **{key: row[key] for key in ("bundle_version", "members", "companion_cohort") if key in row}},
                             ensure_ascii=False,
                         )
                         + "\n"
@@ -674,6 +675,8 @@ class RelocateWorkflowService:
 
     def _record_receipt(self, run_dir: Path, state: dict[str, Any], row: dict[str, Any], kind: str) -> None:
         """Receipt for a move we proved happened; DB recording happens on the next flush."""
+        if "bundle_version" in row:
+            raise ValueError("interrupted_bundle_requires_member_reconciliation")
         index = len(state["chunks"]) + 1
         plan_p = run_dir / "apply" / "chunks" / f"chunk_{index:04d}_plan.jsonl"
         log_p = run_dir / "apply" / "receipts" / f"chunk_{index:04d}.jsonl"
@@ -699,6 +702,8 @@ class RelocateWorkflowService:
             if in_flight:
                 row = chunked_apply.candidate_row(state, int(in_flight["chunk"]))
                 if row is not None:
+                    if "bundle_version" in row:
+                        raise ValueError("interrupted_bundle_requires_member_reconciliation: inspect durable member intent and actual member locations before recovery")
                     info = self._settle_probe(scripts_win, row, "inspect")
                     src_x, dst_x = bool(info.get("source_exists")), bool(info.get("destination_exists"))
                     expected = (row.get("precondition") or {}).get("size_bytes")

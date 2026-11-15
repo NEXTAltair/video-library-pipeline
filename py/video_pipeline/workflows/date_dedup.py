@@ -1,4 +1,5 @@
 """Exact-plan application for explicitly authorized date-first quarantine."""
+from video_pipeline.domain.companion_bundle import parent_move_succeeded
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -85,7 +86,7 @@ def preview_date_plan(db, ops_root, directory, *, runner=run_pwsh_json):
     runner(str(Path(ops_root)/"scripts"/"apply_move_plan.ps1"),["-PlanJsonl",wsl_to_windows_path(str(preview)),"-OutJsonl",wsl_to_windows_path(str(receipt)),"-OpsRoot",wsl_to_windows_path(str(ops_root)),"-OnDstExists","error","-DryRun"])
     records = [json.loads(line) for line in receipt.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     rows = [r for r in records if r.get("op")=="move"]
-    result = {"ok":len(rows)==len(plan["moves"]) and all(r.get("ok") and r.get("dry_run") for r in rows),"checked":len(rows),"moved":0,"failed":[r for r in rows if not r.get("ok")]}
+    result = {"ok":len(rows)==len(plan["moves"]) and all(parent_move_succeeded(r) and r.get("dry_run") for r in rows),"checked":len(rows),"moved":0,"failed":[r for r in rows if not parent_move_succeeded(r)]}
     write_json(directory/"native_preview_result.json",result)
     if not result["ok"]:
         raise ValueError("native date plan preflight failed; inspect receipts")
@@ -135,7 +136,7 @@ def apply_date_plan(db, ops_root, directory, *, runner=run_pwsh_json):
     if len(rows) != len(moves):
         raise RuntimeError("partial date quarantine receipts; known DB effects committed, reconcile before retry")
     write_json(directory/"db_committed.json",{"rows":len(rows)})
-    moved = sum(r.get("ok") is True for r in rows)
+    moved = sum(parent_move_succeeded(r) for r in rows)
     result = {"ok":moved==len(moves) and not engine_error,"moved":moved,"failed":len(moves)-moved,"engine_error":engine_error,"receipt_path":str(receipt)}
     manifest["phase"]="complete" if result["ok"] else "failed"
     write_json(directory/"manifest.json",manifest);write_json(directory/"apply_result.json",result)

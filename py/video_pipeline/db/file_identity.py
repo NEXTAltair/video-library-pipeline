@@ -4,6 +4,8 @@ Size/mtime is only an observation signature, never a content hash or dedup proof
 """
 from __future__ import annotations
 
+from video_pipeline.domain.companion_bundle import parent_move_succeeded
+
 import json
 import uuid
 from video_pipeline.platform.pathscan_common import now_iso, path_id_for, split_win
@@ -60,6 +62,8 @@ def observe_file(con, pid, size, mtime, run_id):
 
 
 def record_move(con, row, receipt_id, run_id):
+    if "bundle_version" in row and not parent_move_succeeded(row):
+        raise ValueError("incomplete or unsuccessful recording bundle receipt")
     if con.execute("SELECT 1 FROM move_receipts WHERE receipt_id=?", (receipt_id,)).fetchone():
         return False
     src = ensure_location(con, row["src"])

@@ -13,6 +13,8 @@ temp-name copies in apply_move_plan.ps1 (shared with dedup).
 
 from __future__ import annotations
 
+from video_pipeline.domain.companion_bundle import parent_move_succeeded
+
 import json
 import os
 import tempfile
@@ -120,7 +122,7 @@ def progress(run_dir: Path) -> dict[str, Any] | None:
         return None
     plan_rows = read_plan_rows(Path(state["internalPlan"]))
     receipts = receipts_by_src(state)
-    failed = sum(1 for rec in receipts.values() if not rec.get("ok"))
+    failed = sum(1 for rec in receipts.values() if not parent_move_succeeded(rec))
     in_flight = state.get("inFlight")
     settlement = state.get("settlement")
     return {

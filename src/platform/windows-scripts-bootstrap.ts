@@ -9,6 +9,7 @@ export const REQUIRED_WINDOWS_SCRIPTS = [
 
 export const INTERNAL_WINDOWS_SCRIPTS = [
   "_long_path_utils.ps1",
+  "_move_bundle.ps1",
   "enumerate_files_jsonl.ps1",
   "normalize_case_dirs.ps1",
   "inspect_move.ps1",

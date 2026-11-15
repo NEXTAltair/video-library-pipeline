@@ -14,7 +14,7 @@ def main():
     ops = Path(cfg["windowsOpsRoot"])
     scratch = ops / ("verify_mover_" + uuid.uuid4().hex); scratch.mkdir()
     import shutil
-    for name in ("apply_move_plan.ps1","_long_path_utils.ps1"):
+    for name in ("apply_move_plan.ps1","_long_path_utils.ps1", "_move_bundle.ps1"):
         shutil.copy2(Path(__file__).resolve().parent.parent/"assets"/"windows-scripts"/name,scratch/name)
     plan = scratch / "plan.jsonl"; receipts = scratch / "receipts.jsonl"
     rows = []

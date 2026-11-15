@@ -99,7 +99,7 @@ def _execute(args, *, preview_workspace=None):
         import shutil
         from datetime import datetime,timezone
         templates = PY_ROOT.parent / "assets" / "windows-scripts"
-        for name in ("unwatched_inventory.ps1","apply_move_plan.ps1","_long_path_utils.ps1"):
+        for name in ("unwatched_inventory.ps1","apply_move_plan.ps1","_long_path_utils.ps1", "_move_bundle.ps1"):
             target = ops / "scripts" / name; bundled = templates / name
             if not target.exists() or target.read_bytes() != bundled.read_bytes():
                 target.parent.mkdir(parents=True,exist_ok=True)
