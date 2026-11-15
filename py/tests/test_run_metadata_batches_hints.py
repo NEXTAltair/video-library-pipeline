@@ -188,3 +188,27 @@ def test_output_only_extracts_dates_flags_mtime_and_never_changes_database(tmp_p
     assert rows[1]["needs_review"] is True
     assert "air_date_from_mtime" in rows[1]["needs_review_reason"]
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize('explicit', [True, False])
+def test_output_only_nonframe_rechecks_curated_alias_not_dictionary_guess(tmp_path, monkeypatch, capsys, explicit):
+    from mediaops_schema import connect_db, create_schema_if_needed
+    from video_pipeline.db.file_identity import ensure_location
+    db = tmp_path / 'reviewed.sqlite'
+    con = connect_db(str(db));create_schema_if_needed(con)
+    name = 'もぎたて_2026_11_01_18_15.mp4';path = 'B:\\VideoLibrary\\もぎたて\\' + name
+    pid = ensure_location(con, path)
+    data = {'program_title': 'もぎたて', 'human_reviewed': True, 'air_date': '2026-11-01'}
+    con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,human_reviewed) VALUES(?,'human_reviewed',?,'now','もぎたて',1)", (pid,json.dumps(data)))
+    con.commit();con.close();before = hashlib.sha256(db.read_bytes()).hexdigest()
+    queue=tmp_path/'queue.jsonl';queue.write_text(json.dumps({'path_id':pid,'path':path,'name':name})+'\n')
+    hints=tmp_path/'aliases.yaml';hints.write_text('hints:\n  - canonical_title: "もぎたて!"\n    aliases: [もぎたて]\n' if explicit else 'hints: []\n')
+    if not explicit:
+        monkeypatch.setattr(mod._ProgramDictionary, 'match', lambda self, base: 'Dictionary Guess')
+    monkeypatch.setattr(sys,'argv',['extract','--db',str(db),'--queue',str(queue),'--outdir',str(tmp_path/'out'),'--output-only','--hints',str(hints)])
+    assert mod.main() == 0
+    summary=json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    row=json.loads(__import__('pathlib').Path(summary['latestOutputJsonlPath']).read_text().splitlines()[0])
+    assert row['program_title'] == ('もぎたて!' if explicit else 'もぎたて')
+    assert summary['preservedHumanReviewed'] == int(not explicit)
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before

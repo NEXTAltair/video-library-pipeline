@@ -226,3 +226,29 @@ def test_python_scan_skips_reserved_directories_and_reparse_equivalents(tmp_path
     files, warnings, errors, _stats = scan_files([str(tmp_path)], {".mp4"}, False, 4096, 0)
     assert [sf.name for sf in files] == ["Show.mp4"]
     assert not warnings and not errors
+
+
+@pytest.mark.parametrize('resource', [
+    'rules:\n  - match: {regex: "^もぎたて", field: base}\n    set: {program_title: "もぎたて!"}\n',
+    'hints:\n  - canonical_title: "もぎたて!"\n    aliases: [もぎたて]\n',
+])
+def test_reviewed_non_frame_curated_alias_is_queued_readonly(tmp_path, monkeypatch, capsys, resource):
+    preview = Preview(tmp_path, monkeypatch)
+    preview.add(r'B:\Library\もぎたて_2026_11_01_18_15.mp4', title='もぎたて')
+    path = tmp_path / 'aliases.yaml'
+    path.write_text(resource)
+    monkeypatch.setattr(relocate, 'default_program_aliases', lambda root: path)
+    summary, rows, _ = preview.run(monkeypatch, capsys, '--program-titles-json', '["もぎたて", "もぎたて!"]')
+    assert summary['plannedMoves'] == 0
+    assert summary['metadataQueuePlannedCount'] == 1
+    assert rows[0]['reason'] == 'suspicious_program_title'
+
+
+def test_reviewed_matching_curated_identity_is_not_requeued(tmp_path, monkeypatch, capsys):
+    preview = Preview(tmp_path, monkeypatch)
+    preview.add(r'B:\Library\もぎたて_2026_11_01_18_15.mp4', title='もぎたて!')
+    path = tmp_path / 'aliases.yaml'
+    path.write_text('rules:\n  - match: {regex: "^もぎたて", field: base}\n    set: {program_title: "もぎたて!"}\n')
+    monkeypatch.setattr(relocate, 'default_program_aliases', lambda root: path)
+    summary, rows, _ = preview.run(monkeypatch, capsys, '--program-titles-json', '["もぎたて", "もぎたて!"]')
+    assert summary['metadataQueuePlannedCount'] == 0 and summary['plannedMoves'] == 1
