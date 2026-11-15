@@ -8,6 +8,8 @@ from series_name_extractor import extract_series_name
     ("ドラマ24 孤独のグルメSeason11! 第12話 高砂のかつ煮", "孤独のグルメSeason11"),
     ("日曜劇場「VIVANT」第23話 最終決戦", "VIVANT"),
     ("ドラマ24「別の作品」第2話", "別の作品"),
+    ("ドラマ24 孤独のグルメSeason11 #5 横浜の料理", "孤独のグルメSeason11"),
+    ("ドラマ24 孤独のグルメSeason11 ＃5 横浜の料理", "孤独のグルメSeason11"),
 ])
 def test_dramatic_frame_is_not_work_identity(title, expected):
     assert extract_series_name(title) == expected
@@ -42,6 +44,13 @@ def test_frame_resolution_precedes_polluted_dictionary(make_db):
         result = mod.extract_title_ai_primary(name, mod.strip_suffix(name), mod.HintSet(),
                                             program_dict=mod._ProgramDictionary(con))
         assert result["program_title"] == expected
+
+
+def test_reviewed_work_without_episode_is_not_requeued_by_recording_suffix():
+    import run_metadata_batches_promptv1 as mod
+    from broadcast_frame_titles import reviewed_title_conflicts_with_filename
+    name = "ドラマ24 孤独のグルメSeason11_2026_05_02_00_12.mp4"
+    assert not reviewed_title_conflicts_with_filename("孤独のグルメSeason11", mod.strip_suffix(name))
 
 
 def test_extract_series_name_strips_bs11_gundam_hour_prefix():

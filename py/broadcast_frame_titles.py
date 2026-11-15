@@ -28,7 +28,7 @@ _OVERMAN_KING_RE = re.compile(r"^\s*OVERMAN\s+キングゲイナー(?:[\s\u3000_
 _EPISODE_SUFFIX_TITLE_RE = re.compile(r"[#＃][0-9０-９]+(?:[.-][0-9０-９]+)?\s*$")
 _EPISODE_TITLE_RE = re.compile(r"(?:第\s*\d+\s*話|\s+\d+\s*話)(?:\b|\s|[「『])")
 _DRAMA_QUOTED_RE = re.compile(r"^(?:日曜劇場|ドラマ24)\s*[「『]([^」』]+)[」』]")
-_DRAMA24_RE = re.compile(r"^ドラマ\s*24\s*(.+?)(?=\s*(?:第\s*)?\d+\s*話|$)")
+_DRAMA24_RE = re.compile(r"^ドラマ\s*24\s*(.+?)(?=\s*(?:(?:第\s*)?\d+\s*話|[#＃]\s*\d+)|$)")
 _KNOWN_PROGRAM_PREFIX_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (_NEWSOON_RE, "午後LIVEニュースーン"),
     (_TOKI_TV_RE, "時をかけるテレビ"),
@@ -104,9 +104,9 @@ def strip_episode_title_suffix(title: str) -> str:
     return t[:match.start()].strip() if match else t
 
 
-def reviewed_title_conflicts_with_filename(title: str, filename: str) -> bool:
-    """A deterministic frame/work disagreement needs a new review, not a move."""
-    work = canonical_from_known_program_prefix(filename)
+def reviewed_title_conflicts_with_filename(title: str, base: str) -> bool:
+    """Compare the suffix-free recording base using the extraction parser."""
+    work = canonical_from_known_program_prefix(base)
     return bool(work and _compact(work) != _compact(title))
 
 
