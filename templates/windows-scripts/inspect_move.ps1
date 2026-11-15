@@ -33,9 +33,19 @@ try {
   $destinationExists = $null -ne $destAttrs
   $bundleVerified = $true
   $bundleError = $null
-  $cohort = @(Get-CurrentCompanionKinds $Src)
+  $cohort = @()
   $members = @()
   if ($exists) {
+    try { $cohort = @(Get-CurrentCompanionKinds $Src) }
+    catch {
+      # Ownership refusal is a bundle result, not failure to observe the video.
+      # Do not mask filesystem/permission/other unexpected failures.
+      if ($_.Exception.Message -ne 'ambiguous_companion_owner') { throw }
+      $bundleVerified = $false
+      $bundleError = 'ambiguous_companion_owner'
+    }
+  }
+  if ($exists -and $bundleVerified) {
     foreach ($kind in @('video') + $cohort) {
       $memberSrc = Get-BundlePath $Src $kind
       $memberDst = Get-BundlePath $Dst $kind

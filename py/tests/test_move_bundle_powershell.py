@@ -268,3 +268,36 @@ def test_native_collision_remains_nonfatal_preflight_result(tmp_path, monkeypatc
         raise OSError(errno.ENAMETOOLONG, "native long name")
     monkeypatch.setattr(Path, "stat", too_long)
     assert inspect_move(op["src"], op["dst"], {}, windows_probe=lambda *_: observed) == (None, "destination_exists")
+
+
+def test_native_owner_refusal_preserves_basic_video_facts_and_reason(tmp_path, monkeypatch):
+    import os, errno
+    from video_pipeline.domain.move_preflight import inspect_move
+    from video_pipeline.domain.companion_bundle import capture_bundle
+    scripts, op, stem = fixture(tmp_path, companions=False)
+    (tmp_path/'src'/(stem+'.m4v')).write_bytes(b'other recording')
+    shutil.copy(ROOT/'templates/windows-scripts/inspect_move.ps1',scripts/'inspect_move.ps1')
+    cp=subprocess.run(['pwsh','-NoProfile','-File',str(scripts/'inspect_move.ps1'),'-Src',op['src'],'-Dst',op['dst']],capture_output=True,text=True,env={**os.environ,'BUNDLE_ROOT':str(tmp_path)})
+    assert cp.returncode==0,cp.stderr
+    observed=json.loads(cp.stdout)
+    assert observed['ok'] and observed['source_exists'] and observed['size_bytes']==5
+    assert observed['mtime_utc'] and observed['destination_exists'] is False
+    assert observed['bundle_verified'] is False and observed['bundle_error']=='ambiguous_companion_owner'
+    def too_long(_self, **kwargs): raise OSError(errno.ENAMETOOLONG,'native long name')
+    monkeypatch.setattr(Path,'stat',too_long)
+    pre, reason=inspect_move(op['src'],op['dst'],{},windows_probe=lambda *_:observed)
+    assert reason is None and pre['size_bytes']==5
+    with pytest.raises(ValueError,match='ambiguous_companion_owner'):
+        capture_bundle(op['src'],op['dst'],windows_probe=lambda *_:observed)
+
+
+def test_native_unexpected_bundle_probe_failure_still_fails_closed(tmp_path):
+    import os
+    scripts, op, _ = fixture(tmp_path, companions=False)
+    shutil.copy(ROOT/'templates/windows-scripts/inspect_move.ps1',scripts/'inspect_move.ps1')
+    with (scripts/'_move_bundle.ps1').open('a') as stream:
+        stream.write("\nfunction Get-CurrentCompanionKinds([string]$Video) { throw 'unexpected_probe_failure' }\n")
+    cp=subprocess.run(['pwsh','-NoProfile','-File',str(scripts/'inspect_move.ps1'),'-Src',op['src'],'-Dst',op['dst']],capture_output=True,text=True,env={**os.environ,'BUNDLE_ROOT':str(tmp_path)})
+    assert cp.returncode!=0
+    observed=json.loads(cp.stdout)
+    assert observed['ok'] is False and observed['error']=='unexpected_probe_failure'
