@@ -264,6 +264,14 @@ def test_relocate_dry_run_plan_ready_registers_plan_and_next_action(tmp_path) ->
                 "resumeAction": "apply_relocate_move_plan",
             },
             "requiresHumanInput": True,
+        },
+        {
+            "action": "review_planned_metadata",
+            "label": "Re-review metadata of planned candidates before moving",
+            "tool": "video_pipeline_resume",
+            "params": {"runId": "run_relocate_plan", "artifactId": "relocate_plan",
+                       "resumeAction": "prepare_planned_metadata"},
+            "requiresHumanInput": True,
         }
     ]
 
@@ -937,3 +945,72 @@ def test_relocate_metadata_actions_reject_wrong_phase_without_writing(tmp_path) 
         assert rejected["phase"] == "plan_ready"
 
     assert store.manifest_path(cfg.run_id).read_bytes() == before
+
+
+def test_planned_metadata_action_reopens_owned_plan_readonly(tmp_path):
+    harness=RelocateWorkflowHarness(tmp_path,run_id='planned_refresh')
+    result=harness.dry_run()
+    action=next(a for a in result.next_actions if a.action=='review_planned_metadata')
+    assert action.requires_human_input and action.params['artifactId']=='relocate_plan'
+    from workflow_cli import _next_actions_for_run
+    status_actions=_next_actions_for_run(WorkflowStore(Path(harness.cfg.windows_ops_root)).read_run(harness.cfg.run_id))
+    assert any(a.to_dict()==action.to_dict() for a in status_actions)
+    store=WorkflowStore(Path(harness.cfg.windows_ops_root));run=store.read_run(harness.cfg.run_id)
+    plan=Path(run.artifacts['relocate_plan'].path);before=plan.read_bytes();db=Path(harness.cfg.db);dbbefore=db.read_bytes()
+    reviewed=harness.service().resume(RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id),action='prepare_planned_metadata')
+    assert reviewed.phase=='review_required' and store.read_run(harness.cfg.run_id).phase=='review_required'
+    assert plan.read_bytes()==before and db.read_bytes()==dbbefore
+    run=store.read_run(harness.cfg.run_id);queue=run.artifacts['relocate_metadata_queue'];rows=[json.loads(l) for l in Path(queue.path).read_text().splitlines()]
+    assert len(rows)==1 and rows[0]['path_id']=='p1' and rows[0]['name']=='show.mp4'
+    assert queue.input_artifact_ids==['relocate_plan'] and queue.metadata['refreshReviewed']
+    extract_args=next(args for name,args in reversed(harness.calls) if name=='run_metadata_batches_promptv1.py')
+    assert '--output-only' in extract_args and '--ignore-human-reviewed' in extract_args
+    blocked=harness.service().apply(RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id))
+    assert not blocked.ok
+
+
+@pytest.mark.parametrize('bad', ['checksum','foreign','wrong_phase'])
+def test_planned_metadata_rejects_invalid_inputs_without_extraction(tmp_path,bad):
+    harness=RelocateWorkflowHarness(tmp_path,run_id='bad_refresh');harness.dry_run()
+    store=WorkflowStore(Path(harness.cfg.windows_ops_root));run=store.read_run(harness.cfg.run_id)
+    artifact='relocate_plan'
+    if bad=='checksum':Path(run.artifacts[artifact].path).write_text('changed')
+    if bad=='foreign':artifact='foreign_plan'
+    if bad=='wrong_phase':run.phase='complete';run.status='complete';store.write_run(run)
+    before=len(harness.calls)
+    result=harness.service().resume(RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id,artifact_id=artifact),action='prepare_planned_metadata')
+    assert not result.ok and len(harness.calls)==before
+    assert not any(a.type=='metadata_extract_output' for a in store.read_run(harness.cfg.run_id).artifacts.values())
+
+
+def test_planned_metadata_acceptance_generates_new_plan(tmp_path, monkeypatch):
+    import video_pipeline.workflows.relocate as module
+    harness=RelocateWorkflowHarness(tmp_path,run_id='refresh_accept');harness.dry_run()
+    service=harness.service();cfg=RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id)
+    reviewed=service.resume(cfg,action='prepare_planned_metadata')
+    action=next(a for a in reviewed.next_actions if a.action=='review_metadata')
+    monkeypatch.setattr(module,'apply_reviewed_metadata',lambda *args:{'ok':True,'rows':1})
+    accepted=service.resume(RelocateApplyConfig(windows_ops_root=cfg.windows_ops_root,run_id=cfg.run_id,
+        gate_id=action.params['gateId'],artifact_ids=action.params['artifactIds'],review_yaml_paths=action.params['reviewYamlPaths']),action='apply_reviewed_metadata')
+    assert accepted.phase=='plan_ready' and accepted.ok
+    planned=next(a for a in accepted.next_actions if a.action=='review_plan')
+    assert planned.params['artifactId']=='relocate_plan_0002'
+
+
+def test_planned_metadata_extract_failure_preserves_review_gate_and_retry(tmp_path):
+    from workflow_cli import _next_actions_for_run
+    harness=RelocateWorkflowHarness(tmp_path,run_id='refresh_failure');harness.dry_run()
+    def fail(script,args,cwd=None):
+        if script.name=='run_metadata_batches_promptv1.py':raise RuntimeError('extract failed')
+        return harness.python_runner(script,args,cwd)
+    service=RelocateWorkflowService(py_root=tmp_path,python_runner=fail)
+    cfg=RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id)
+    failed=service.resume(cfg,action='prepare_planned_metadata')
+    assert not failed.ok
+    store=WorkflowStore(Path(harness.cfg.windows_ops_root));run=store.read_run(cfg.run_id)
+    assert run.phase=='review_required'
+    actions=_next_actions_for_run(run)
+    assert actions and all(a.params.get('resumeAction')!='apply_relocate_move_plan' for a in actions)
+    retried=harness.service().resume(cfg,action=actions[0].params['resumeAction'])
+    assert retried.phase=='review_required'
+    assert any(g.type=='metadata_review' and g.status=='open' for g in store.read_run(cfg.run_id).review_gates.values())

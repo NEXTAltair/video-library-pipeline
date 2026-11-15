@@ -12,7 +12,7 @@ import sys
 from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
-from video_pipeline.workflows.relocate import metadata_reextract_action
+from video_pipeline.workflows.relocate import metadata_reextract_action, planned_metadata_action
 from video_pipeline.workflows import chunked_apply, idle_runs
 from video_pipeline.workflows import (
     NextAction,
@@ -155,7 +155,8 @@ def _next_actions_for_run(run: Any, run_dir: Path | None = None) -> list[NextAct
                             "resumeAction": "apply_relocate_move_plan",
                         },
                         requires_human_input=True,
-                    )
+                    ),
+                    planned_metadata_action(run.run_id, plan_id),
                 ]
     if run.phase != "review_required":
         return []
