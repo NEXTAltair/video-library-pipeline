@@ -131,7 +131,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
             merged["needs_review_reason"] = ""
         merged["genre"] = resolve_genre(merged)
         preserve_reviewed_identity = (strict and source in {"agent_accepted", "human_reviewed"}
-                                      and "genre" in explicit and "franchise" in merged)
+                                      and ({"genre", "program_title"} & set(explicit)) and "franchise" in merged)
         if "franchise" not in explicit and not preserve_reviewed_identity:
             merged["franchise"] = resolve_franchise(merged, franchise_rules or None)
 

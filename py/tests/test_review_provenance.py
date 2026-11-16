@@ -324,3 +324,23 @@ def test_genre_only_review_keeps_existing_franchise_identity(tmp_path):
         upsert_records(con,[row],source='agent_accepted',strict=True,reviewed_fields={'p0':['genre','review_note']})
         md, _ = latest_path_metadata(con,'p0')
         assert md['franchise'] == 'シリーズ_保持'
+
+
+def test_policy_alias_only_review_keeps_existing_franchise_identity(tmp_path):
+    from video_pipeline.domain.program_genre_policy import prepare_program_genre_review
+    _, db, _ = fixture(tmp_path)
+    rows = [dict(sample(),program_title='モーサテ',genre='news',source_genre='default'),
+            {'path_id':'p1','program_title':'Newsモーニングサテライト','genre':'news','source_genre':'default'}]
+    policy = {'aliases':[{'canonical_title':'Newsモーニングサテライト','aliases':['モーサテ'],
+                         'reference':'https://www.tv-tokyo.co.jp/nms/cast/','note':'official same show'}]}
+    edit = prepare_program_genre_review(rows,policy)['row_overrides']['p0']
+    assert set(edit)=={'program_title','review_note'}
+    with closing(sqlite3.connect(db)) as con:
+        con.row_factory = sqlite3.Row
+        con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,needs_review,human_reviewed) VALUES('p0','agent_accepted',?,'old','モーサテ','2026-11-01',0,0)",
+                    (json.dumps({'franchise':'シリーズ_保持','review_acceptance':'agent_accepted'}),))
+        con.commit();con.execute('BEGIN IMMEDIATE')
+        row=review_rows([rows[0]],[],{'p0':edit})[0]
+        upsert_records(con,[row],source='agent_accepted',strict=True,reviewed_fields={'p0':list(edit)})
+        md,_=latest_path_metadata(con,'p0')
+        assert md['program_title']=='Newsモーニングサテライト' and md['franchise']=='シリーズ_保持'
