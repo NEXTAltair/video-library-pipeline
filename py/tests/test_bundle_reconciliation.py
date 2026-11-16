@@ -214,14 +214,19 @@ def test_partly_moved_companion_bundle_is_fail_closed_without_deletion(tmp_path)
     assert log.read_bytes()==before and len(list((tmp_path/'src').iterdir()))==1 and len(list((tmp_path/'dst').iterdir()))==4
 
 
-def test_public_recovery_accepts_real_mover_intent_companion_order(tmp_path):
+@pytest.mark.parametrize("rename", [False, True])
+def test_public_recovery_accepts_real_mover_intent_companion_order(tmp_path, rename):
     from tests.test_move_bundle_powershell import run
     from video_pipeline.domain.companion_bundle import capture_bundle
     native=tmp_path/'native';native.mkdir()
     scripts,op,_=fixture(native)
     op.update(capture_bundle(op['src'],op['dst'],localize=lambda p:str(native/p[3:].replace('\\','/'))))
     assert op['members'][0]['kind']=='video'  # real Python planner order
-    parent,records=run(native,scripts,op)
+    if rename:
+        (native/'dst').mkdir()
+        (native/op['dst'][3:].replace('\\','/')).write_bytes(b'collision')
+    parent,records=run(native,scripts,op,*(['-OnDstExists','rename_suffix'] if rename else []))
+    assert ('__dup1' in parent['dst']) == rename
     intent=next(r for r in records if r.get('op')=='move_bundle_intent')
     assert intent['members'][-1]['kind']=='video'  # actual shipped mover order
     assert parent['ok']
@@ -230,7 +235,11 @@ def test_public_recovery_accepts_real_mover_intent_companion_order(tmp_path):
     log.write_text('\n'.join(json.dumps(r) for r in records if r.get('op')!='move')+'\n')
     internal=Path(state['internalPlan']);internal.write_text(json.dumps(op)+'\n')
     Path(state['chunks'][0]['localPlan']).write_text(json.dumps(op)+'\n')
-    manifest=e.store.read_run(e.run_id);manifest.artifacts['relocate_internal_move_plan'].sha256=sha256_file(internal);e.store.write_run(manifest)
+    manifest=e.store.read_run(e.run_id);manifest.artifacts['relocate_internal_move_plan'].sha256=sha256_file(internal)
+    if rename:
+        state['onDstExists']='rename_suffix';manifest.config_snapshot['onDstExists']='rename_suffix'
+        chunked_apply.save_state(e.store.run_dir(e.run_id),state,'now')
+    e.store.write_run(manifest)
     shutil.copy(ROOT/'assets/windows-scripts/reconcile_move_bundle.ps1',scripts)
     service=e.service()
     def ps(script,args):
@@ -242,6 +251,10 @@ def test_public_recovery_accepts_real_mover_intent_companion_order(tmp_path):
     assert result['ok'] and result['nextActions'][0]['params']['resumeAction']=='settle_interrupted_move',result['diagnostics']
     assert resume(e,'settle_interrupted_move',service)['ok']
     assert len(e.db_rows)==1
+    recovered=[json.loads(line) for line in log.read_text().splitlines() if json.loads(line).get('bundle_complete')]
+    assert len(recovered)==1 and recovered[0]['dst']==parent['dst']
+    if rename:
+        assert (native/op['dst'][3:].replace('\\','/')).read_bytes()==b'collision'
 
 
 def test_duplicate_intent_member_kind_is_rejected(tmp_path):
@@ -257,3 +270,23 @@ def test_intent_timestamp_mismatch_at_ntfs_tick_precision_is_rejected(tmp_path):
     service=e.service();service.powershell_runner=lambda *_:pytest.fail('100ns mismatch native probe')
     result=resume(e,'reconcile_relocate_apply',service)
     assert not result['ok'] and not e.db_rows
+
+
+@pytest.mark.parametrize('case',['error_policy','other_parent','zero','too_large','other_stem','other_extension','wrong_member','policy_tamper'])
+def test_suffix_resolution_is_bounded_by_owned_policy_and_identity(tmp_path,case):
+    e,state,log=bundle_env(tmp_path);row=e.rows[0];intent=json.loads(log.read_text())
+    dst=row['dst'][:-4]+'__dup1.mp4'
+    if case=='other_parent':dst=dst.replace('Show','Other')
+    elif case=='zero':dst=dst.replace('__dup1','__dup0')
+    elif case=='too_large':dst=dst.replace('__dup1','__dup10001')
+    elif case=='other_stem':dst=dst.replace('f0000','f9999')
+    elif case=='other_extension':dst=dst[:-4]+'.mkv'
+    intent['dst']=dst;intent['members'][0]['dst']=dst
+    if case=='wrong_member':intent['members'][0]['dst']=row['dst']
+    if case!='error_policy':
+        state['onDstExists']='rename_suffix';chunked_apply.save_state(e.store.run_dir(e.run_id),state,'now')
+        if case!='policy_tamper':
+            manifest=e.store.read_run(e.run_id);manifest.config_snapshot['onDstExists']='rename_suffix';e.store.write_run(manifest)
+    log.write_text(json.dumps(intent)+'\n')
+    service=e.service();service.powershell_runner=lambda *_:pytest.fail('unowned suffix native call')
+    assert not resume(e,'reconcile_relocate_apply',service)['ok'] and not e.db_rows

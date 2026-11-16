@@ -4,7 +4,9 @@ param(
   [Parameter(Mandatory=$true)][string]$PlanSha256,
   [Parameter(Mandatory=$true)][string]$LogSha256,
   [Parameter(Mandatory=$true)][string]$Src,
-  [ValidateSet('inspect','finalize')][string]$Mode='inspect'
+  [ValidateSet('inspect','finalize')][string]$Mode='inspect',
+  [ValidateSet('error','rename_suffix')][string]$OnDstExists='error',
+  [string]$ResolvedDst=''
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '_long_path_utils.ps1')
@@ -26,6 +28,15 @@ try {
   if ($rows.Count -ne 1) { throw 'recovery_row_ownership' }
   $row=$rows[0]
   if ($row.bundle_version -ne 1 -or !$row.path_id) { throw 'recovery_bundle_contract' }
+  if ($ResolvedDst -and $ResolvedDst -cne $row.dst) {
+    $ext=[IO.Path]::GetExtension($row.dst)
+    $stem=$row.dst.Substring(0,$row.dst.Length-$ext.Length)
+    $pattern='^'+[regex]::Escape($stem)+'__dup([1-9][0-9]{0,4})'+[regex]::Escape($ext)+'$'
+    $match=[regex]::Match($ResolvedDst,$pattern)
+    if ($OnDstExists -cne 'rename_suffix' -or !$match.Success -or [int]$match.Groups[1].Value -gt 10000) { throw 'recovery_suffix_not_authorized' }
+    $row.dst=$ResolvedDst
+    foreach ($member in $row.members) { $member.dst=Get-BundlePath $ResolvedDst $member.kind }
+  }
   $records=@(Get-Content -LiteralPath $LogJsonl -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
   $intents=@($records | Where-Object { $_.op -ceq 'move_bundle_intent' -and $_.src -ceq $row.src })
   if ($intents.Count -gt 1) { throw 'recovery_duplicate_intent' }

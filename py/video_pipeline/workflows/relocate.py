@@ -775,6 +775,23 @@ class RelocateWorkflowService:
         # Strict parsing: a torn intent is not authority to delete a file.
         records = [json.loads(l) for l in log.read_text(encoding="utf-8-sig").splitlines() if l.strip()]
         intents = [r for r in records if r.get("op") == "move_bundle_intent" and r.get("src") == row["src"]]
+        effective = row
+        policy = state.get("onDstExists", "error")
+        if policy != run.config_snapshot.get("onDstExists", "error"):
+            raise ValueError("bundle_recovery_collision_policy_mismatch")
+        if len(intents) == 1 and intents[0].get("dst") != row["dst"]:
+            import re
+            from video_pipeline.domain.companion_bundle import companion_paths
+            destination = PureWindowsPath(row["dst"])
+            prefix = str(destination.with_suffix(""))
+            match = re.fullmatch(re.escape(prefix) + r"__dup([1-9][0-9]{0,4})" + re.escape(destination.suffix), str(intents[0].get("dst")))
+            if policy != "rename_suffix" or not match or int(match[1]) > 10000:
+                raise ValueError("bundle_recovery_suffix_not_authorized")
+            resolved = intents[0]["dst"]
+            destinations = {"video": resolved, **companion_paths(resolved)}
+            effective = {**row, "dst": resolved,
+                         "members": [{**m, "dst": destinations[m["kind"]]} for m in row["members"]]}
+
         def members_by_kind(members):
             if not isinstance(members, list) or any(not isinstance(m, dict) or not isinstance(m.get("kind"), str) for m in members):
                 raise ValueError("bundle_recovery_invalid_members")
@@ -792,13 +809,14 @@ class RelocateWorkflowService:
             return indexed
 
         if (len(intents) > 1
-                or any(r.get(k) != row.get(k) for r in intents for k in ("src", "dst", "path_id"))
-                or any(members_by_kind(r.get("members")) != members_by_kind(row.get("members")) for r in intents)):
+                or any(r.get(k) != effective.get(k) for r in intents for k in ("src", "dst", "path_id"))
+                or any(members_by_kind(r.get("members")) != members_by_kind(effective.get("members")) for r in intents)):
             raise ValueError("bundle_recovery_intent_mismatch")
         result = self._powershell()(scripts_win + r"\reconcile_move_bundle.ps1", [
             "-PlanJsonl", path_for_powershell(plan), "-LogJsonl", path_for_powershell(log),
             "-PlanSha256", sha256_file(plan), "-LogSha256", sha256_file(log),
-            "-Src", row["src"], "-Mode", mode])
+            "-Src", row["src"], "-Mode", mode,
+            "-OnDstExists", policy, "-ResolvedDst", effective["dst"]])
         if result.get("ok") is not True or result.get("state") not in {"not_started", "ready", "complete"}:
             raise ValueError("bundle_recovery_native_blocked: " + str(result))
         if mode == "finalize":
