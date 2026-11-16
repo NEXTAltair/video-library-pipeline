@@ -62,8 +62,6 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
             acceptance_provenance("human_confirmed", rec.get("human_confirmation"))
             if rec.get("review_acceptance") != "human_confirmed" or rec.get("human_reviewed") is not True:
                 raise ValueError("human source requires explicit human_confirmed provenance")
-        elif source != "agent_accepted" and (rec.get("human_reviewed") or rec.get("review_acceptance") == "human_confirmed"):
-            raise ValueError("unreviewed source cannot assert human confirmation")
         path_id = rec.get("path_id")
         if not path_id:
             p = rec.get("path")
@@ -96,6 +94,13 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
         if prior:
             existing = reconstruct_path_metadata(prior)
 
+        if source not in {"human_reviewed", "agent_accepted"}:
+            # Normal extraction carries locked existing rows in the batch.
+            # Preserve them before checking claims on genuinely incoming data.
+            if prior and (prior["human_reviewed"] or prior["source"] in {"human_reviewed", "agent_accepted"}):
+                continue
+            if rec.get("human_reviewed") or rec.get("review_acceptance") == "human_confirmed":
+                raise ValueError("unreviewed source cannot assert human confirmation")
         if source == "agent_accepted" and prior and (prior["human_reviewed"] or prior["source"] == "human_reviewed"):
             # A new, validated run-bound review may supersede the current value
             # without making a retrospective claim about the old reviewer.

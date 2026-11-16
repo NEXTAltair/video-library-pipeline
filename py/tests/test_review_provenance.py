@@ -281,3 +281,19 @@ def test_new_run_review_supersedes_legacy_claim_without_retroactive_migration(tm
         assert history[0]['previous_human_confirmation']['evidence'] == 'old-proof'
         assert history[0]['review_context']['run_id'] == cfg.run_id
         assert 'provenance_migration_evidence' not in row
+
+
+def test_normal_extraction_preserves_locked_human_and_processes_remaining_rows(tmp_path):
+    _, db, _ = fixture(tmp_path)
+    with closing(sqlite3.connect(db)) as con:
+        con.row_factory = sqlite3.Row
+        con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,needs_review,human_reviewed) VALUES('p0','human_reviewed','{}','old','Locked','2026-11-01',0,1)")
+        con.commit()
+        con.execute('BEGIN IMMEDIATE')
+        locked = dict(sample(),program_title='Locked')
+        fresh = {'path_id':'p1','program_title':'New','air_date':'2026-11-01','needs_review':False}
+        result = upsert_records(con,[locked,fresh],source='rule_based')
+        con.commit()
+        assert result['rows'] == 1
+        assert con.execute("SELECT source,program_title,human_reviewed FROM path_metadata WHERE path_id='p0'").fetchone()[:] == ('human_reviewed','Locked',1)
+        assert con.execute("SELECT source,program_title,human_reviewed FROM path_metadata WHERE path_id='p1'").fetchone()[:] == ('rule_based','New',0)
