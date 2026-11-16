@@ -50,7 +50,7 @@ from pathscan_common import (
     wsl_to_windows_path,
 )
 from windows_pwsh_bridge import run_pwsh_json
-from video_pipeline.domain.routing_inventory import is_excluded_media_path, title_in_scope, summarize_routing
+from video_pipeline.domain.routing_inventory import is_recording_path, is_excluded_media_path, title_in_scope, summarize_routing
 from video_pipeline.domain.move_preflight import inspect_move
 from video_pipeline.platform.resources import default_program_aliases
 
@@ -137,6 +137,7 @@ def main() -> int:
     ap.add_argument("--db", required=True)
     ap.add_argument("--windows-ops-root", required=True)
     ap.add_argument("--dest-root", required=True)
+    ap.add_argument("--ts-root", default="", help="Recording/encoding intake excluded even under explicit scan roots")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument(
         "--register-unregistered-only",
@@ -232,7 +233,8 @@ def main() -> int:
         scan_retry_count=scan_retry_count,
         windows_ops_root=str(ops_root),
     )
-    scanned = [sf for sf in scanned if not is_excluded_media_path(sf.win_path)]
+    recording_root_excluded = sum(is_recording_path(sf.win_path, args.ts_root) for sf in scanned)
+    scanned = [sf for sf in scanned if not is_excluded_media_path(sf.win_path, args.ts_root)]
 
     if args.apply or args.register_unregistered_only:
         con = connect_db(db_path)
@@ -519,6 +521,7 @@ def main() -> int:
                 preflight_skipped += 1
         rows_for_move = [r for r in rows_for_move if destination_counts[normalize_win_for_id(r["dst"])] == 1]
         routing_inventory = summarize_routing(rows_for_plan, roots_win, scanned, program_titles)
+        routing_inventory.update({"excludedRecordingRoot": args.ts_root, "recordingRootExcludedFiles": recording_root_excluded})
         inventory_path.write_text(json.dumps(routing_inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
         # commit any mark_metadata_needs_review writes (apply mode only)
@@ -927,6 +930,8 @@ def main() -> int:
             "writeMetadataQueueOnDryRun": bool(write_metadata_queue_on_dry_run),
             "internalMovePlanPath": internal_move_plan_out if args.apply else None,
             "scannedFiles": len(scanned),
+            "excludedRecordingRoot": args.ts_root,
+            "recordingRootExcludedFiles": recording_root_excluded,
             "registeredFiles": registered_files,
             "plannedMoves": planned_moves,
             "movedFiles": moved_files if args.apply else 0,

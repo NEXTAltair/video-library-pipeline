@@ -118,3 +118,15 @@ def test_media_never_treated_as_disposable_cache(tmp_path, ext):
     plan = retention.plan_cleanup(tmp_path)
     assert plan['jobs'] == 0
     assert plan['protected']
+
+
+def test_discovery_policy_covers_all_audited_video_suffixes():
+    assert {".3gp", ".m2v", ".ogv", ".divx", ".asf"} <= set(VIDEO_EXTENSIONS)
+    assert len(VIDEO_EXTENSIONS) == 19
+
+
+def test_legacy_relocate_entrypoints_forward_recording_root():
+    root = Path(__file__).resolve().parents[2]
+    for tool in ["tool-relocate.ts", "tool-prepare-relocate-metadata.ts"]:
+        source = (root / "src/tools" / tool).read_text()
+        assert '\n          "--ts-root",\n          String(cfg.tsRoot || ""),' in source

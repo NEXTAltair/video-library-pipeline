@@ -11,8 +11,18 @@ from video_pipeline.platform.pathscan_common import canonicalize_windows_path, w
 EXCLUDED_DIRECTORY_NAMES = {"_ai_work", "quarantine_v3", "$recycle.bin", "system volume information"}
 
 
-def is_excluded_media_path(path: str) -> bool:
-    return any(part.casefold() in EXCLUDED_DIRECTORY_NAMES for part in PureWindowsPath(path).parts)
+def is_recording_path(path: str, ts_root: str) -> bool:
+    """Windows component containment, including WSL spellings; not a suffix ban."""
+    if not ts_root:
+        return False
+    candidate = PureWindowsPath(canonicalize_windows_path(windows_to_wsl_path(path)))
+    root = PureWindowsPath(canonicalize_windows_path(windows_to_wsl_path(ts_root)))
+    return candidate == root or root in candidate.parents
+
+
+def is_excluded_media_path(path: str, ts_root: str = "") -> bool:
+    return (is_recording_path(path, ts_root)
+            or any(part.casefold() in EXCLUDED_DIRECTORY_NAMES for part in PureWindowsPath(path).parts))
 
 
 def default_relocate_roots(source_root: str, dest_root: str, ts_root: str, drive_routes: str) -> list[str]:
@@ -24,11 +34,10 @@ def default_relocate_roots(source_root: str, dest_root: str, ts_root: str, drive
         roots.extend(str(r.root) for r in routes.work_routes)
         if routes.movie_grouping:
             roots.extend(routes.movie_grouping.destinations())
-    roots.append(ts_root)
     result: list[str] = []
     seen: set[str] = set()
     for root in roots:
-        if not root:
+        if not root or is_recording_path(root, ts_root):
             continue
         canonical = str(PureWindowsPath(canonicalize_windows_path(windows_to_wsl_path(root))))
         key = canonical.casefold()
