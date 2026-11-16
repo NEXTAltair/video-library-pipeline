@@ -176,7 +176,13 @@ def plan_recordings(con, roots, *, probe=probe_video, min_age_seconds=3600,
     if native_paths:
         from video_pipeline.platform.native_file_signatures import read_native_signatures
         for start in range(0, len(native_paths), 512):
-            native_cache.update(read_native_signatures(native_paths[start:start + 512]))
+            try:
+                native_cache.update(read_native_signatures(native_paths[start:start + 512]))
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                # No observation is not permission to use a stale location.
+                # An unavailable batch is excluded by the per-candidate checks;
+                # readable paths and successful batches remain independently usable.
+                continue
     for row in metadata_rows:
         path = Path(windows_to_wsl_path(row["path"]))
         if path.suffix.lower() not in {".mp4", ".mkv", ".m4v"}:

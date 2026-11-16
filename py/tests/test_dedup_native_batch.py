@@ -1,5 +1,6 @@
 """Native planning remains bounded and conservative on stale NTFS inventory."""
 import errno
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -126,4 +127,43 @@ def test_readable_drvfs_planning_does_not_require_powershell(library, monkeypatc
     plan = policy.plan_recordings(con, [fake_root], probe=quality_probe, min_age_seconds=0)
     assert plan["moves"] == []
     assert plan["excluded"] == {}
+    assert con.total_changes == before
+
+
+@pytest.mark.parametrize("failure", [ValueError("native scan failed"),
+                                    OSError(errno.EIO, "native scan IO failure"),
+                                    subprocess.TimeoutExpired("pwsh", 120)])
+def test_failed_native_batch_keeps_readable_recordings(library, monkeypatch, failure):
+    from video_pipeline.platform import native_file_signatures as native
+    con, _, root, _ = library
+    add_recording(library, "best.mp4", False, size=400)
+    add_recording(library, "duplicate.mp4", False, size=200)
+    _, pid = add_recording(library, "stale.mp4", False, observe=False)
+    con.execute("UPDATE paths SET path=? WHERE path_id=?", (r"Z:\library\stale.mp4", pid))
+    con.commit()
+    fake_root = Path("/mnt/z/library")
+    stale = fake_root / "stale.mp4"
+    original_stat, original_resolve = Path.stat, Path.resolve
+    def stat(path, *args, **kwargs):
+        if path == stale:
+            raise OSError(errno.EIO, "stale DrvFS path")
+        return original_stat(path, *args, **kwargs)
+    def resolve(path, *args, **kwargs):
+        if path in (fake_root, stale):
+            return path
+        return original_resolve(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    calls = []
+    def failed_scan(paths):
+        calls.append(list(paths))
+        raise failure
+    monkeypatch.setattr(native, "read_native_signatures", failed_scan)
+    before = con.total_changes
+    plan = policy.plan_recordings(con, [root, fake_root], probe=quality_probe, min_age_seconds=0)
+    assert calls == [[stale]]
+    assert plan["excluded"]["missing_empty_or_symlink"] == 1
+    assert len(plan["moves"]) == 1
+    assert len(plan["groups"][0]["candidates"]) == 2
+    assert plan["moves"][0]["bundle_version"] == 1
     assert con.total_changes == before
