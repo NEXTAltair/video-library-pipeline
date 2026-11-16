@@ -201,6 +201,30 @@ def planned_metadata_action(run_id: str, plan_id: str) -> NextAction:
         "resumeAction": "prepare_planned_metadata"}, requires_human_input=True)
 
 
+def available_planned_metadata_action(run: Any) -> NextAction | None:
+    """Preparation only; never authorize a partial physical apply."""
+    if (run.flow != "relocate" or run.status != "active"
+            or run.phase not in {"plan_ready", "review_required"}
+            or "relocate_internal_move_plan" in run.artifacts):
+        return None
+    plans = [run.artifacts[aid] for aid in run.artifact_ids
+             if run.artifacts[aid].type == "relocate_plan"]
+    if not plans or plans[-1].status != ArtifactStatus.AVAILABLE.value:
+        return None
+    plan = plans[-1]
+    if int((plan.metadata.get("summary") or {}).get("plannedMoves") or 0) <= 0:
+        return None
+    # One immutable preparation per plan. Retry extraction through its queue,
+    # not by creating another overlapping metadata acceptance cohort.
+    if any(a.type == "relocate_metadata_queue" and a.metadata.get("refreshReviewed")
+           and plan.id in a.input_artifact_ids for a in run.artifacts.values()):
+        return None
+    if any(g.type == "metadata_review" and g.status == ReviewGateStatus.OPEN.value
+           for g in run.review_gates.values()):
+        return None
+    return planned_metadata_action(run.run_id, plan.id)
+
+
 class RelocateWorkflowService:
     def __init__(
         self,
@@ -1163,6 +1187,11 @@ class RelocateWorkflowService:
                     "blockingGateStatuses": {gate.id: gate.status for gate in blocking_gates},
                 },
             ))
+        return self._validate_owned_plan_artifact(store, run_id, artifact_id)
+
+    def _validate_owned_plan_artifact(self, store: WorkflowStore, run_id: str, artifact_id: str) -> ArtifactRef:
+        """Shared ownership/current/checksum checks, not physical authorization."""
+        run = store.read_run(run_id)
         plan_artifact = run.artifacts.get(artifact_id)
         if plan_artifact is None:
             raise RelocateApplyRejected(Diagnostic(
@@ -1354,18 +1383,32 @@ class RelocateWorkflowService:
                 outcome="relocate_metadata_queue_missing",
             )
 
+        if queue_artifact.metadata.get("refreshReviewed"):
+            try:
+                return self._prepare_metadata_review(store, run_id, queue_artifact)
+            except RelocateApplyRejected as exc:
+                return self._reject_call(store.read_run(run_id), "planned_metadata_rejected", exc.diagnostic)
+            except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+                return self._reject_call(store.read_run(run_id), "planned_metadata_rejected", Diagnostic(
+                    code="planned_metadata_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc)))
         return self._prepare_metadata_review(store, run_id, queue_artifact)
 
     def _resume_planned_metadata(self, store: WorkflowStore, config: RelocateApplyConfig) -> WorkflowResult:
         """Reopen only owned planned candidates; no metadata or move acceptance."""
         run = store.read_run(config.run_id)
         try:
-            plan = self._validate_apply_plan(store, config.run_id, config.artifact_id)
+            action = available_planned_metadata_action(run)
+            if action is None or action.params["artifactId"] != config.artifact_id:
+                raise ValueError("planned metadata preparation is unavailable or already prepared")
+            if chunked_apply.state_path(store.run_dir(config.run_id)).exists():
+                raise ValueError("planned metadata preparation cannot follow a started apply")
+            plan = self._validate_owned_plan_artifact(store, config.run_id, config.artifact_id)
             path = local_path_from_any(plan.path)
             if not path.resolve().is_relative_to(store.run_dir(config.run_id).resolve()):
                 raise ValueError("planned metadata input escaped its run")
             rows = [row for row in iter_jsonl(path) if row.get("status") == "planned"]
-            if not rows or any(not row.get("path_id") or not row.get("src") for row in rows):
+            if not rows or any(not isinstance(row.get("path_id"), str) or not row["path_id"].strip()
+                               or not isinstance(row.get("src"), str) or not row["src"].strip() for row in rows):
                 raise ValueError("planned metadata review requires registered planned candidates")
             ids = [row["path_id"] for row in rows]
             if len(ids) != len(set(ids)):
@@ -1452,6 +1495,24 @@ class RelocateWorkflowService:
         run_dir = store.run_dir(run_id)
         metadata_dir = run_dir / "metadata"
         review_dir = run_dir / "review"
+        if queue_artifact.metadata.get("refreshReviewed"):
+            queue_path = local_path_from_any(queue_artifact.path)
+            if (not queue_path.resolve().is_relative_to(run_dir.resolve())
+                    or sha256_file(queue_path) != queue_artifact.sha256):
+                raise ValueError("planned metadata queue ownership/checksum mismatch")
+            if (len(queue_artifact.input_artifact_ids) != 1
+                    or "relocate_internal_move_plan" in run.artifacts
+                    or chunked_apply.state_path(run_dir).exists()):
+                raise ValueError("planned metadata queue lineage/apply state is invalid")
+            plan = self._validate_owned_plan_artifact(store, run_id, queue_artifact.input_artifact_ids[0])
+            if not local_path_from_any(plan.path).resolve().is_relative_to(run_dir.resolve()):
+                raise ValueError("planned metadata parent plan escaped its run")
+            planned_rows = [r for r in iter_jsonl(local_path_from_any(plan.path)) if r.get("status") == "planned"]
+            expected_rows = [{"path_id": r.get("path_id"), "path": r.get("src")} for r in planned_rows]
+            queued_rows = [{"path_id": r.get("path_id"), "path": r.get("path")}
+                           for r in iter_jsonl(queue_path) if "_meta" not in r]
+            if not expected_rows or queued_rows != expected_rows:
+                raise ValueError("planned metadata queue differs from its owned plan cohort")
         preparation_id = next_artifact_id(run, "metadata_extract_output")
         preparation_dir = metadata_dir / preparation_id
 
@@ -1486,6 +1547,26 @@ class RelocateWorkflowService:
             raise RuntimeError(
                 f"relocate metadata extraction produced no output JSONL: {extract_summary or extract_raw}"
             )
+
+        if queue_artifact.metadata.get("refreshReviewed"):
+            expected = {row["path_id"]: canonicalize_windows_path(row["path"])
+                        for row in iter_jsonl(local_path_from_any(queue_artifact.path)) if "_meta" not in row}
+            observed: dict[str, str] = {}
+            for output_path in output_paths:
+                if not local_path_from_any(output_path).resolve().is_relative_to(run_dir.resolve()):
+                    raise ValueError("planned extraction escaped its run")
+                for row in iter_jsonl(local_path_from_any(output_path)):
+                    if "_meta" in row:
+                        continue
+                    pid = row.get("path_id")
+                    if not isinstance(pid, str) or pid in observed or pid not in expected:
+                        raise ValueError("planned extraction changed its immutable path_id cohort")
+                    path = row.get("path")
+                    if not isinstance(path, str) or canonicalize_windows_path(path) != expected[pid]:
+                        raise ValueError("planned extraction changed its immutable source path")
+                    observed[pid] = expected[pid]
+            if observed != expected:
+                raise ValueError("planned extraction omitted immutable cohort rows")
 
         metadata_artifacts: list[ArtifactRef] = []
         for output_path in output_paths:
@@ -1546,12 +1627,15 @@ class RelocateWorkflowService:
                 )
             )
 
-        self._approve_open_gates(
-            store,
-            run_id,
-            gate_type="relocate_metadata_review",
-            action="prepare_relocate_metadata",
-        )
+        if queue_artifact.metadata.get("refreshReviewed"):
+            for gate in store.read_run(run_id).review_gates.values():
+                if (gate.type == "relocate_metadata_review" and gate.status == ReviewGateStatus.OPEN.value
+                        and gate.artifact_ids == [queue_artifact.id]):
+                    store.update_review_gate(run_id, gate.id, status=ReviewGateStatus.APPROVED,
+                                            resolution={"action": "prepare_planned_metadata"})
+        else:
+            self._approve_open_gates(store, run_id, gate_type="relocate_metadata_review",
+                                     action="prepare_relocate_metadata")
         current = store.read_run(run_id)
         gate_id = next_gate_id(current, "metadata_review")
         gate = store.create_review_gate(
@@ -1854,6 +1938,11 @@ class RelocateWorkflowService:
         next_actions: list[NextAction] | None = None,
     ) -> WorkflowResult:
         run = store.read_run(run_id)
+        actions = list(next_actions or [])
+        if run.phase == WorkflowPhase.REVIEW_REQUIRED.value:
+            planned = available_planned_metadata_action(run)
+            if planned is not None and not any(a.action == planned.action for a in actions):
+                actions.append(planned)
         return WorkflowResult(
             ok=ok,
             run_id=run_id,
@@ -1862,6 +1951,6 @@ class RelocateWorkflowService:
             outcome=outcome,
             artifacts=[run.artifacts[aid] for aid in run.artifact_ids],
             gates=[run.review_gates[gid] for gid in run.review_gate_ids],
-            next_actions=list(next_actions or []),
+            next_actions=actions,
             diagnostics=run.diagnostics,
         )

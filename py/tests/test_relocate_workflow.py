@@ -63,6 +63,11 @@ class RelocateWorkflowHarness:
                 + "\n",
                 encoding="utf-8",
             )
+            if "--ignore-human-reviewed" in args:
+                original = json.loads(output_path.read_text())
+                queue = Path(args[args.index("--queue") + 1])
+                row = next(json.loads(line) for line in queue.read_text().splitlines() if line.strip())
+                output_path.write_text(json.dumps({**original, "path_id": row["path_id"], "path": row["path"]}) + "\n")
             return json.dumps(
                 {
                     "ok": True,

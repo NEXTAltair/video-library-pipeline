@@ -12,7 +12,7 @@ import sys
 from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
-from video_pipeline.workflows.relocate import metadata_reextract_action, planned_metadata_action
+from video_pipeline.workflows.relocate import metadata_reextract_action, planned_metadata_action, available_planned_metadata_action
 from video_pipeline.workflows import chunked_apply, idle_runs
 from video_pipeline.workflows import (
     NextAction,
@@ -106,6 +106,15 @@ def _artifact_planned_count(run: Any, artifact_id: str) -> int | None:
 
 
 def _next_actions_for_run(run: Any, run_dir: Path | None = None) -> list[NextAction]:
+    actions = _existing_next_actions_for_run(run, run_dir)
+    if run.phase == "review_required":
+        planned = available_planned_metadata_action(run)
+        if planned is not None:
+            actions.append(planned)
+    return actions
+
+
+def _existing_next_actions_for_run(run: Any, run_dir: Path | None = None) -> list[NextAction]:
     if run_dir is not None:
         in_apply = chunked_apply.applying_next_actions(run, run_dir)
         if in_apply or run.phase == "applying":
