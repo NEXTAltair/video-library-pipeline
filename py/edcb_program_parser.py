@@ -24,6 +24,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from video_pipeline.platform.media_extensions import VIDEO_EXTENSIONS
+
 
 # ── full-width → half-width normalization ──────────────────────
 def _nfkc(s: str) -> str:
@@ -248,9 +250,9 @@ def _extract_date_time_from_filename(filename: str) -> tuple[str | None, str | N
 def recording_stem_from_program_info(path: str) -> str:
     """Map name.ts.program.txt and name.mp4.program.txt to recording name."""
     name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
-    if name.endswith(".program.txt"):
+    if name.lower().endswith(".program.txt"):
         name = name[:-len(".program.txt")]
-    for ext in (".ts", ".m2ts", ".mp4", ".m4v", ".mkv"):
+    for ext in VIDEO_EXTENSIONS:
         if name.lower().endswith(ext):
             return name[:-len(ext)]
     return name

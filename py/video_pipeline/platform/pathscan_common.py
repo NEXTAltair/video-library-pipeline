@@ -12,7 +12,9 @@ from typing import Any
 
 from windows_pwsh_bridge import run_pwsh_jsonl
 
-DEFAULT_EXTENSIONS = [".mp4"]
+from video_pipeline.platform.media_extensions import VIDEO_EXTENSIONS
+
+DEFAULT_EXTENSIONS = list(VIDEO_EXTENSIONS)
 DEFAULT_SCAN_RETRY_COUNT = 1
 MAX_SUMMARY_WARNINGS = 200
 EXCLUDED_SCAN_DIRECTORIES = {"_ai_work", "quarantine_v3", "$recycle.bin", "system volume information"}

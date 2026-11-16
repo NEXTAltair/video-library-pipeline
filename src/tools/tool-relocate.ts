@@ -1,3 +1,4 @@
+import { VIDEO_EXTENSIONS } from "./media-extensions";
 import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
@@ -17,7 +18,7 @@ export function registerToolRelocate(api: PluginApi, getCfg: GetCfgFn) {
           planPath: { type: "string", description: "Required when apply=true. Path to plan file returned by dry-run (plan_path field). Do not guess — take the exact value from dry-run result." },
           roots: { type: "array", items: { type: "string" }, description: "Windows paths to scan, e.g. [\"B:\\\\VideoLibrary\"] or [\"D:\\\\Anime\"]. Must be Windows-style paths (backslash). Required unless rootsFilePath is given." },
           rootsFilePath: { type: "string", description: "Path to a YAML/text file listing roots. Alternative to roots array." },
-          extensions: { type: "array", items: { type: "string" }, default: [".mp4"], description: "File extensions to include. Default: [\".mp4\"]." },
+          extensions: { type: "array", items: { type: "string" }, default: VIDEO_EXTENSIONS, description: "Video container extensions to include. Omit for the supported video defaults; explicit lists replace defaults." },
           limit: { type: "integer", minimum: 1, maximum: 100000, description: "Max files to process in one run." },
           allowNeedsReview: { type: "boolean", default: false, description: "Include files flagged needs_review in move plan. Default false (skip them)." },
           allowUnreviewedMetadata: { type: "boolean", default: false, description: "Allow relocation planning with metadata source other than human_reviewed/llm. Default false (safer: skip unknown sources)." },
