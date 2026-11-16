@@ -1072,6 +1072,8 @@ class RelocateWorkflowService:
             "--on-dst-exists", cfg.on_dst_exists,
             "--skip-suspicious-title-check", str(bool(cfg.skip_suspicious_title_check)).lower(),
         ]
+        if cfg.ts_root:
+            args.extend(["--ts-root", cfg.ts_root])
         if cfg.roots:
             args.extend(["--roots-json", json.dumps(cfg.roots, ensure_ascii=False)])
         elif cfg.roots_file_path:

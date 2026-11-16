@@ -1027,3 +1027,19 @@ def test_recording_exclusion_survives_explicit_roots_and_resume(tmp_path):
     restored = harness.service()._config_from_run(run)
     assert restored.ts_root == r"J:\TVFile"
     assert restored.roots == harness.cfg.roots
+
+
+def test_recording_root_forwarded_during_registration_resume_and_recheck(tmp_path):
+    harness = RelocateWorkflowHarness(tmp_path, run_id="register_recording_exclusion", scenario="unregistered")
+    harness.cfg.ts_root = r"J:\TVFile"
+    harness.cfg.roots = ["J:\\", r"B:\Library"]
+    params = harness.dry_run().to_dict()["nextActions"][0]["params"]
+    harness.scenario = "metadata_gap"
+    harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=params["runId"]),
+        action=params["resumeAction"],
+    )
+    calls = [args for script, args in harness.calls if script == "relocate_existing_files.py"]
+    assert len(calls) == 3
+    assert any("--register-unregistered-only" in args for args in calls)
+    assert all(args[args.index("--ts-root") + 1] == r"J:\TVFile" for args in calls)

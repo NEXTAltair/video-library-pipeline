@@ -285,3 +285,16 @@ def test_explicit_recording_roots_do_not_queue_or_plan_recordings(tmp_path, monk
     assert summary["recordingRootExcludedFiles"] == inventory["recordingRootExcludedFiles"] == 2
     assert summary["metadataQueuePlannedCount"] == 0
     assert len(rows) == 1 and rows[0]["src"].startswith("B:")
+
+
+def test_recording_root_excluded_before_registration_writes(tmp_path, monkeypatch, capsys):
+    preview = Preview(tmp_path, monkeypatch)
+    recording = preview.add(r"J:\TVFile\Show recording.ts", title=None, registered=False)
+    library = preview.add(r"B:\Library\Show unknown.ts", title=None, registered=False)
+    summary, rows, inventory = preview.run(
+        monkeypatch, capsys, "--ts-root", r"J:\TVFile", "--register-unregistered-only", readonly=False)
+    assert summary["recordingRootExcludedFiles"] == 1
+    assert summary["autoRegisteredPaths"] == 1
+    with connect_db(str(preview.db)) as con:
+        assert con.execute("SELECT COUNT(*) FROM paths WHERE path=?", (recording.win_path,)).fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM paths WHERE path=?", (library.win_path,)).fetchone()[0] == 1
