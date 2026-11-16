@@ -775,7 +775,25 @@ class RelocateWorkflowService:
         # Strict parsing: a torn intent is not authority to delete a file.
         records = [json.loads(l) for l in log.read_text(encoding="utf-8-sig").splitlines() if l.strip()]
         intents = [r for r in records if r.get("op") == "move_bundle_intent" and r.get("src") == row["src"]]
-        if len(intents) > 1 or any(r.get(k) != row.get(k) for r in intents for k in ("src", "dst", "path_id", "members")):
+        def members_by_kind(members):
+            if not isinstance(members, list) or any(not isinstance(m, dict) or not isinstance(m.get("kind"), str) for m in members):
+                raise ValueError("bundle_recovery_invalid_members")
+            from video_pipeline.domain.companion_bundle import _signature_ticks
+            # ConvertFrom-Json/ConvertTo-Json can change only the UTC offset.
+            # Compare the instant at NTFS 100ns precision, retaining every other
+            # signature field (including the original mtime_ns) exactly.
+            indexed = {}
+            for member in members:
+                signature = dict(member["precondition"])
+                signature["mtime_utc"] = _signature_ticks({"mtime_utc": signature["mtime_utc"]})
+                indexed[member["kind"]] = {**member, "precondition": signature}
+            if len(indexed) != len(members):
+                raise ValueError("bundle_recovery_duplicate_member")
+            return indexed
+
+        if (len(intents) > 1
+                or any(r.get(k) != row.get(k) for r in intents for k in ("src", "dst", "path_id"))
+                or any(members_by_kind(r.get("members")) != members_by_kind(row.get("members")) for r in intents)):
             raise ValueError("bundle_recovery_intent_mismatch")
         result = self._powershell()(scripts_win + r"\reconcile_move_bundle.ps1", [
             "-PlanJsonl", path_for_powershell(plan), "-LogJsonl", path_for_powershell(log),

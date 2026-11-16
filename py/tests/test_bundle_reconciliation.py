@@ -212,3 +212,48 @@ def test_partly_moved_companion_bundle_is_fail_closed_without_deletion(tmp_path)
     before=log.read_bytes()
     r,info=invoke(e,'finalize');assert r.returncode==1 and info['error']=='recovery_mixed_partial_bundle_fail_closed'
     assert log.read_bytes()==before and len(list((tmp_path/'src').iterdir()))==1 and len(list((tmp_path/'dst').iterdir()))==4
+
+
+def test_public_recovery_accepts_real_mover_intent_companion_order(tmp_path):
+    from tests.test_move_bundle_powershell import run
+    from video_pipeline.domain.companion_bundle import capture_bundle
+    native=tmp_path/'native';native.mkdir()
+    scripts,op,_=fixture(native)
+    op.update(capture_bundle(op['src'],op['dst'],localize=lambda p:str(native/p[3:].replace('\\','/'))))
+    assert op['members'][0]['kind']=='video'  # real Python planner order
+    parent,records=run(native,scripts,op)
+    intent=next(r for r in records if r.get('op')=='move_bundle_intent')
+    assert intent['members'][-1]['kind']=='video'  # actual shipped mover order
+    assert parent['ok']
+    e,state,log=bundle_env(tmp_path/'workflow')
+    # Crash after the last durable member receipt, before the parent receipt.
+    log.write_text('\n'.join(json.dumps(r) for r in records if r.get('op')!='move')+'\n')
+    internal=Path(state['internalPlan']);internal.write_text(json.dumps(op)+'\n')
+    Path(state['chunks'][0]['localPlan']).write_text(json.dumps(op)+'\n')
+    manifest=e.store.read_run(e.run_id);manifest.artifacts['relocate_internal_move_plan'].sha256=sha256_file(internal);e.store.write_run(manifest)
+    shutil.copy(ROOT/'assets/windows-scripts/reconcile_move_bundle.ps1',scripts)
+    service=e.service()
+    def ps(script,args):
+        result=subprocess.run(['pwsh','-NoProfile','-File',str(scripts/'reconcile_move_bundle.ps1'),*args],env={**os.environ,'BUNDLE_ROOT':str(native)},capture_output=True,text=True)
+        assert result.returncode==0,(result.stdout,result.stderr)
+        return json.loads(result.stdout)
+    service.powershell_runner=ps
+    result=resume(e,'reconcile_relocate_apply',service)
+    assert result['ok'] and result['nextActions'][0]['params']['resumeAction']=='settle_interrupted_move',result['diagnostics']
+    assert resume(e,'settle_interrupted_move',service)['ok']
+    assert len(e.db_rows)==1
+
+
+def test_duplicate_intent_member_kind_is_rejected(tmp_path):
+    e,state,log=bundle_env(tmp_path);intent=json.loads(log.read_text());intent['members'].append(intent['members'][0]);log.write_text(json.dumps(intent)+'\n')
+    service=e.service();service.powershell_runner=lambda *_:pytest.fail('duplicate kind native probe')
+    assert not resume(e,'reconcile_relocate_apply',service)['ok']
+
+
+def test_intent_timestamp_mismatch_at_ntfs_tick_precision_is_rejected(tmp_path):
+    e,state,log=bundle_env(tmp_path);intent=json.loads(log.read_text())
+    intent['members'][0]['precondition']['mtime_utc']='2026-01-01T00:00:00.0000001Z'
+    log.write_text(json.dumps(intent)+'\n')
+    service=e.service();service.powershell_runner=lambda *_:pytest.fail('100ns mismatch native probe')
+    result=resume(e,'reconcile_relocate_apply',service)
+    assert not result['ok'] and not e.db_rows
