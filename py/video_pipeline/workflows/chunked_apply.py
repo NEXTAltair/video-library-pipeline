@@ -171,6 +171,9 @@ def applying_next_actions(run: Any, run_dir: Path) -> list[NextAction]:
         return [action("reconcile_relocate_apply", "Reconcile interrupted relocate apply", False)]
     if info["state"] == "settlement_required":
         return [action("settle_interrupted_move", "Settle the interrupted move (verified delete)", True)]
+    from .receipt_coverage import needs_flush
+    if needs_flush(load_state(run_dir)):
+        return [action("reconcile_relocate_apply", "Record newly completed move receipts", False)]
     return [action("continue_relocate_apply", "Continue relocate apply", False)]
 
 

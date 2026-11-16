@@ -527,15 +527,35 @@ class RelocateWorkflowService:
         return summary
 
     def _flush_db(self, run_dir: Path, state: dict[str, Any]) -> None:
-        """Record every receipt log the DB has not seen. Replays are idempotent."""
-        for chunk in state["chunks"]:
-            if chunk.get("dbUpdated"):
+        """Flush immutable successful receipts; legacy dbUpdated is not coverage."""
+        from . import receipt_coverage
+        for chunk_index, chunk in enumerate(state["chunks"]):
+            current = receipt_coverage.successful_receipts(Path(chunk["localLog"]))
+            covered = chunk.get("dbReceiptCoverage", {})
+            if not set(covered).issubset(current):
+                raise ValueError("previously covered move receipts removed or changed")
+            for key in covered:
+                if covered[key] != receipt_coverage.coverage_entry(current[key]):
+                    raise ValueError("move receipt member coverage changed")
+            pending = {key: row for key, row in current.items() if key not in covered}
+            if not pending:
                 continue
-            log = Path(chunk["localLog"])
-            if chunked_apply.read_receipts(log):
-                state["dbSummaries"].append(self._db_update(state, log))
-            chunk["dbUpdated"] = True
-            chunked_apply.save_state(run_dir, state, now_iso())
+            # Freeze exactly what the DB will see. Later native appends are not
+            # acknowledged by this flush and will be discovered next time.
+            entries = {key: receipt_coverage.coverage_entry(row) for key, row in pending.items()}
+            frozen = receipt_coverage.snapshot(run_dir, list(pending.values()))
+            summary = self._db_update(state, frozen)
+            updated = {**covered, **entries}
+            # Do not let an unsuccessful state save acknowledge coverage even
+            # in memory. A retry after DB commit reuses the immutable snapshot
+            # and the DB's receipt transaction idempotency.
+            durable = json.loads(json.dumps(state))
+            durable["chunks"][chunk_index].update(dbReceiptCoverage=updated, dbUpdated=True)
+            durable["dbSummaries"].append(summary)
+            chunked_apply.save_state(run_dir, durable, now_iso())
+            chunk.update(dbReceiptCoverage=updated, dbUpdated=True)
+            state["dbSummaries"].append(summary)
+            state["updatedAt"] = durable["updatedAt"]
 
     def _persist_diagnostic(self, store: WorkflowStore, run_id: str, diagnostic: Diagnostic) -> None:
         self._append_diagnostic(store, run_id, diagnostic)
