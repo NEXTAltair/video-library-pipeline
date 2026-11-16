@@ -631,8 +631,19 @@ class RelocateWorkflowService:
         state = chunked_apply.load_state(run_dir)
         merged = run_dir / "apply" / "relocate_move_apply_merged.jsonl"
         receipts = []
-        for log in chunked_apply.chunk_logs(state):
-            receipts.extend(chunked_apply.read_receipts(log))
+        from . import receipt_coverage
+        for chunk in state["chunks"]:
+            frozen_receipts = chunked_apply.read_receipts(Path(chunk["localLog"]))
+            covered = chunk.get("dbReceiptCoverage", {})
+            # pending_rows() reads live logs after the preceding DB flush. A
+            # late append can exhaust the plan without having reached the DB.
+            # Fence the exact receipts we will publish, not an earlier read.
+            for receipt in frozen_receipts:
+                if (receipt_coverage.parent_move_succeeded(receipt)
+                        and covered.get(receipt_coverage.digest(receipt)) != receipt_coverage.coverage_entry(receipt)):
+                    return self._apply_result(store, run_id, ok=True,
+                                              outcome="relocate_apply_db_flush_pending")
+            receipts.extend(frozen_receipts)
         merged.write_text(
             "\n".join([json.dumps({"_meta": {"kind": "move_apply", "merged_chunks": len(state["chunks"])}}),
                        *(json.dumps(r, ensure_ascii=False) for r in receipts)]) + "\n",

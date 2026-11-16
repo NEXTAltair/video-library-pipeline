@@ -107,3 +107,26 @@ def test_public_status_exposes_reconcile_for_legacy_uncovered_receipts(tmp_path)
     assert _cmd_status(args)['run']['nextActions'][0]['params']['resumeAction']=='reconcile_relocate_apply'
     e.service()._flush_db(run,state)
     assert _cmd_status(args)['run']['nextActions'][0]['params']['resumeAction']=='continue_relocate_apply'
+
+
+def test_append_exhausting_plan_cannot_finalize_before_db_coverage(tmp_path):
+    from video_pipeline.workflows import WorkflowPhase,RelocateApplyConfig
+    from tests.test_relocate_chunked_apply import resume
+    e,run,log,state,rows=setup(tmp_path,2);write(log,rows[:1])
+    state.update(internalPlan=str(run/'plan/relocate_plan.jsonl'),inFlight=None,settlement=None,onDstExists='error');state['chunks'][0].update(log=str(log),index=1,rows=2)
+    e.store.transition_run(e.run_id,WorkflowPhase.APPLYING);chunked_apply.save_state(run,state,'seed')
+    e.store.register_artifact(e.run_id,artifact_type='relocate_internal_move_plan',artifact_id='relocate_internal_move_plan',path=run/'plan/relocate_plan.jsonl',producer='test')
+    service=e.service();normal=service._db_update;calls=[]
+    def update(st,snapshot):
+        result=normal(st,snapshot);calls.append(result)
+        if len(calls)==1:write(log,rows)
+        return result
+    service._db_update=update
+    first=resume(e,'continue_relocate_apply',service)
+    assert first['phase']=='applying' and first['outcome']=='relocate_apply_db_flush_pending'
+    assert first['nextActions'][0]['params']['resumeAction']=='reconcile_relocate_apply'
+    assert e.db_rows=={rows[0]['src']} and not (run/'apply/relocate_move_apply_merged.jsonl').exists()
+    assert resume(e,'reconcile_relocate_apply',service)['ok']
+    # Complete after successful reconciliation; no physical mover may run.
+    result=resume(e,'continue_relocate_apply',service)
+    assert result['phase']=='complete' and e.db_rows=={r['src'] for r in rows} and not e.moved_calls
