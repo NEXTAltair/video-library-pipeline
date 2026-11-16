@@ -777,7 +777,11 @@ class RelocateWorkflowService:
         intents = [r for r in records if r.get("op") == "move_bundle_intent" and r.get("src") == row["src"]]
         effective = row
         policy = state.get("onDstExists", "error")
-        if policy != run.config_snapshot.get("onDstExists", "error"):
+        # Apply may explicitly override the dry-run default. The mover header
+        # records that actual apply policy; never infer permission from a suffix.
+        headers = [r["_meta"] for r in records if (r.get("_meta") or {}).get("kind") == "move_apply"]
+        authorized_policy = headers[0].get("on_dst_exists") if len(headers) == 1 else run.config_snapshot.get("onDstExists", "error")
+        if len(headers) > 1 or policy not in {"error", "rename_suffix"} or policy != authorized_policy:
             raise ValueError("bundle_recovery_collision_policy_mismatch")
         if len(intents) == 1 and intents[0].get("dst") != row["dst"]:
             import re

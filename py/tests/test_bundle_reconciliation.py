@@ -214,8 +214,8 @@ def test_partly_moved_companion_bundle_is_fail_closed_without_deletion(tmp_path)
     assert log.read_bytes()==before and len(list((tmp_path/'src').iterdir()))==1 and len(list((tmp_path/'dst').iterdir()))==4
 
 
-@pytest.mark.parametrize("rename", [False, True])
-def test_public_recovery_accepts_real_mover_intent_companion_order(tmp_path, rename):
+@pytest.mark.parametrize("rename,apply_override", [(False,False),(True,False),(True,True)])
+def test_public_recovery_accepts_real_mover_intent_companion_order(tmp_path, rename, apply_override):
     from tests.test_move_bundle_powershell import run
     from video_pipeline.domain.companion_bundle import capture_bundle
     native=tmp_path/'native';native.mkdir()
@@ -237,7 +237,8 @@ def test_public_recovery_accepts_real_mover_intent_companion_order(tmp_path, ren
     Path(state['chunks'][0]['localPlan']).write_text(json.dumps(op)+'\n')
     manifest=e.store.read_run(e.run_id);manifest.artifacts['relocate_internal_move_plan'].sha256=sha256_file(internal)
     if rename:
-        state['onDstExists']='rename_suffix';manifest.config_snapshot['onDstExists']='rename_suffix'
+        state['onDstExists']='rename_suffix'
+        if not apply_override:manifest.config_snapshot['onDstExists']='rename_suffix'
         chunked_apply.save_state(e.store.run_dir(e.run_id),state,'now')
     e.store.write_run(manifest)
     shutil.copy(ROOT/'assets/windows-scripts/reconcile_move_bundle.ps1',scripts)
@@ -290,3 +291,10 @@ def test_suffix_resolution_is_bounded_by_owned_policy_and_identity(tmp_path,case
     log.write_text(json.dumps(intent)+'\n')
     service=e.service();service.powershell_runner=lambda *_:pytest.fail('unowned suffix native call')
     assert not resume(e,'reconcile_relocate_apply',service)['ok'] and not e.db_rows
+
+
+def test_actual_mover_policy_header_must_match_state(tmp_path):
+    e,state,log=bundle_env(tmp_path)
+    log.write_text(json.dumps({'_meta':{'kind':'move_apply','on_dst_exists':'rename_suffix'}})+'\n'+log.read_text())
+    service=e.service();service.powershell_runner=lambda *_:pytest.fail('policy mismatch native call')
+    assert not resume(e,'reconcile_relocate_apply',service)['ok']
