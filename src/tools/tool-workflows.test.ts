@@ -526,3 +526,19 @@ describe("V2 workflow tools", () => {
     expect(result.followUpToolCalls).toBeUndefined();
   });
 });
+
+describe("explicit physical subset forwarding", () => {
+  it("preserves selected/held IDs verbatim for fail-closed Python validation", async () => {
+    const api = createMockApi();
+    vi.mocked(ensureWindowsScripts).mockReturnValue({ ok: true } as never);
+    registerWorkflowTools(api as never, cfg as never);
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({ ok: false, outcome: "relocate_subset_rejected" }) as never);
+    const tool = getRegisteredTool(api, "video_pipeline_resume");
+    await tool.execute("subset", { runId: "r", artifactId: "p", resumeAction: "prepare_relocate_subset",
+      runRevision: 7, selectedPathIds: ["a", "a", 123], heldPathIds: ["held"] });
+    const args = vi.mocked(runCmdAsync).mock.calls.at(-1)![1];
+    expect(args[args.indexOf("--selected-path-ids-json") + 1]).toBe('["a","a",123]');
+    expect(args[args.indexOf("--held-path-ids-json") + 1]).toBe('["held"]');
+    expect(tool.parameters.properties.selectedPathIds.uniqueItems).toBe(true);
+  });
+});
