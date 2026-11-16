@@ -297,3 +297,30 @@ def test_normal_extraction_preserves_locked_human_and_processes_remaining_rows(t
         assert result['rows'] == 1
         assert con.execute("SELECT source,program_title,human_reviewed FROM path_metadata WHERE path_id='p0'").fetchone()[:] == ('human_reviewed','Locked',1)
         assert con.execute("SELECT source,program_title,human_reviewed FROM path_metadata WHERE path_id='p1'").fetchone()[:] == ('rule_based','New',0)
+
+
+def test_legacy_agent_cli_rejection_fails_instead_of_archiving_success(tmp_path):
+    _, db, _, _ = legacy(tmp_path)
+    source = tmp_path/'reviewed.jsonl'
+    source.write_text(json.dumps(dict(sample(),program_title='Correction'))+'\n')
+    before = db_state(db)
+    script = Path(__file__).resolve().parents[1]/'upsert_path_metadata_jsonl.py'
+    result = subprocess.run([sys.executable,str(script),'--db',str(db),
+        '--in',str(source),'--source','agent_accepted'],capture_output=True,text=True)
+    assert result.returncode != 0
+    assert 'agent acceptance cannot overwrite human-reviewed' in result.stderr
+    assert source.is_file() and db_state(db) == before
+
+
+def test_genre_only_review_keeps_existing_franchise_identity(tmp_path):
+    _, db, _ = fixture(tmp_path)
+    with closing(sqlite3.connect(db)) as con:
+        con.row_factory = sqlite3.Row
+        con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,needs_review,human_reviewed) VALUES('p0','agent_accepted',?,'old','Example Show','2026-11-01',0,0)",
+                    (json.dumps({'franchise':'シリーズ_保持','review_acceptance':'agent_accepted'}),))
+        con.commit()
+        con.execute('BEGIN IMMEDIATE')
+        row = review_rows([dict(sample(),genre='news')],[])[0]
+        upsert_records(con,[row],source='agent_accepted',strict=True,reviewed_fields={'p0':['genre','review_note']})
+        md, _ = latest_path_metadata(con,'p0')
+        assert md['franchise'] == 'シリーズ_保持'
