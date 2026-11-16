@@ -773,7 +773,11 @@ class RelocateWorkflowService:
                 or any(r not in owned for r in chunked_apply.read_plan_rows(plan))):
             raise ValueError("bundle_recovery_chunk_mismatch")
         # Strict parsing: a torn intent is not authority to delete a file.
-        records = [json.loads(l) for l in log.read_text(encoding="utf-8-sig").splitlines() if l.strip()]
+        log_exists = log.exists()
+        if not log_exists and mode != "inspect":
+            raise ValueError("bundle_recovery_missing_intent")
+        records = ([json.loads(l) for l in log.read_text(encoding="utf-8-sig").splitlines() if l.strip()]
+                   if log_exists else [])
         intents = [r for r in records if r.get("op") == "move_bundle_intent" and r.get("src") == row["src"]]
         effective = row
         policy = state.get("onDstExists", "error")
@@ -781,6 +785,10 @@ class RelocateWorkflowService:
         # records that actual apply policy; never infer permission from a suffix.
         headers = [r["_meta"] for r in records if (r.get("_meta") or {}).get("kind") == "move_apply"]
         authorized_policy = headers[0].get("on_dst_exists") if len(headers) == 1 else run.config_snapshot.get("onDstExists", "error")
+        # No log can prove deletion. Read-only inspection may only establish
+        # all-source/absent-destination and return control to the original apply.
+        if not log_exists:
+            authorized_policy = policy
         if len(headers) > 1 or policy not in {"error", "rename_suffix"} or policy != authorized_policy:
             raise ValueError("bundle_recovery_collision_policy_mismatch")
         if len(intents) == 1 and intents[0].get("dst") != row["dst"]:
@@ -818,7 +826,7 @@ class RelocateWorkflowService:
             raise ValueError("bundle_recovery_intent_mismatch")
         result = self._powershell()(scripts_win + r"\reconcile_move_bundle.ps1", [
             "-PlanJsonl", path_for_powershell(plan), "-LogJsonl", path_for_powershell(log),
-            "-PlanSha256", sha256_file(plan), "-LogSha256", sha256_file(log),
+            "-PlanSha256", sha256_file(plan), "-LogSha256", sha256_file(log) if log_exists else "absent",
             "-Src", row["src"], "-Mode", mode,
             "-OnDstExists", policy, "-ResolvedDst", effective["dst"]])
         if result.get("ok") is not True or result.get("state") not in {"not_started", "ready", "complete"}:

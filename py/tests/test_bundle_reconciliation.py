@@ -35,7 +35,7 @@ def native_env(tmp_path, companions=True):
 def invoke(env, mode='inspect', **kwargs):
     scripts, op, plan, log = env
     args = {'PlanJsonl':str(plan),'LogJsonl':str(log),'PlanSha256':sha256_file(plan),
-            'LogSha256':sha256_file(log),'Src':op['src'],'Mode':mode, **kwargs}
+            'LogSha256':sha256_file(log) if log.exists() else 'absent','Src':op['src'],'Mode':mode, **kwargs}
     result = subprocess.run(['pwsh','-NoProfile','-File',str(scripts/'reconcile_move_bundle.ps1'),
                              *(v for k,x in args.items() for v in ('-'+k,x))],
                             env={**os.environ,'BUNDLE_ROOT':str(plan.parent)},capture_output=True,text=True)
@@ -298,3 +298,30 @@ def test_actual_mover_policy_header_must_match_state(tmp_path):
     log.write_text(json.dumps({'_meta':{'kind':'move_apply','on_dst_exists':'rename_suffix'}})+'\n'+log.read_text())
     service=e.service();service.powershell_runner=lambda *_:pytest.fail('policy mismatch native call')
     assert not resume(e,'reconcile_relocate_apply',service)['ok']
+
+
+@pytest.mark.parametrize('moved',[False,True])
+def test_native_missing_log_only_admits_untouched_source_bundle(tmp_path,moved):
+    e=native_env(tmp_path,companions=False);e[3].unlink()
+    if moved:next((tmp_path/'src').iterdir()).unlink()
+    else:
+        for p in (tmp_path/'dst').iterdir():p.unlink()
+    r,info=invoke(e)
+    if moved:assert r.returncode==1 and info['error']=='recovery_missing_intent'
+    else:assert r.returncode==0 and info['state']=='not_started'
+    assert not e[3].exists()
+
+
+@pytest.mark.parametrize('override',[False,True])
+def test_public_missing_log_returns_continue_only_after_readonly_inspection(tmp_path,override):
+    e,state,log=bundle_env(tmp_path);log.unlink()
+    if override:
+        state['onDstExists']='rename_suffix';chunked_apply.save_state(e.store.run_dir(e.run_id),state,'now')
+    service=e.service();calls=[]
+    def ps(script,args):
+        assert args[args.index('-Mode')+1]=='inspect' and args[args.index('-LogSha256')+1]=='absent'
+        calls.append(script);return {'ok':True,'state':'not_started'}
+    service.powershell_runner=ps
+    result=resume(e,'reconcile_relocate_apply',service)
+    assert result['ok'] and result['nextActions'][0]['params']['resumeAction']=='continue_relocate_apply'
+    assert len(calls)==1 and not log.exists() and not e.db_rows

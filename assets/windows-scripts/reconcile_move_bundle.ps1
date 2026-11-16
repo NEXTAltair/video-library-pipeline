@@ -23,7 +23,9 @@ function Append-Proof($Record) {
   finally { $writer.Dispose() }
 }
 try {
-  if ((Hash-File $PlanJsonl) -cne $PlanSha256 -or (Hash-File $LogJsonl) -cne $LogSha256) { throw 'recovery_artifact_checksum_mismatch' }
+  $logExists=Test-PathFileLong $LogJsonl
+  if (!$logExists -and (Test-PathAnyLong $LogJsonl)) { throw 'recovery_log_not_file' }
+  if ((Hash-File $PlanJsonl) -cne $PlanSha256 -or ($logExists -and (Hash-File $LogJsonl) -cne $LogSha256) -or (!$logExists -and ($LogSha256 -cne 'absent' -or $Mode -cne 'inspect'))) { throw 'recovery_artifact_checksum_mismatch' }
   $rows=@(Get-Content -LiteralPath $PlanJsonl -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.src -ceq $Src })
   if ($rows.Count -ne 1) { throw 'recovery_row_ownership' }
   $row=$rows[0]
@@ -37,7 +39,8 @@ try {
     $row.dst=$ResolvedDst
     foreach ($member in $row.members) { $member.dst=Get-BundlePath $ResolvedDst $member.kind }
   }
-  $records=@(Get-Content -LiteralPath $LogJsonl -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+  $records=@()
+  if ($logExists) { $records=@(Get-Content -LiteralPath $LogJsonl -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json }) }
   $intents=@($records | Where-Object { $_.op -ceq 'move_bundle_intent' -and $_.src -ceq $row.src })
   if ($intents.Count -gt 1) { throw 'recovery_duplicate_intent' }
   $kinds=@('program_txt','recording_json','psc','vtt','video')
