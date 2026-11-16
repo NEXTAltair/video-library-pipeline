@@ -5,6 +5,8 @@ native entries must still match the historical checksum-bound move population.
 """
 from __future__ import annotations
 
+from video_pipeline.domain.companion_bundle import parent_move_succeeded
+
 import base64
 from datetime import datetime, timezone
 import gzip
@@ -78,7 +80,7 @@ def verified_population(handoff_path, ops_root):
         for receipt in receipts:
             pair = (path_key(receipt["src"]), path_key(receipt["dst"]))
             move = by_pair.get(pair)
-            if (move is None or pair in seen or receipt.get("ok") is not True or receipt.get("dry_run")
+            if (move is None or pair in seen or not parent_move_succeeded(receipt) or receipt.get("dry_run")
                     or not move.get("file_id") or receipt.get("file_id") != move["file_id"]):
                 raise ValueError("invalid successful receipt: " + run_id)
             seen.add(pair)

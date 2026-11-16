@@ -52,7 +52,8 @@ from pathscan_common import (
 )
 from windows_pwsh_bridge import run_pwsh_json
 from video_pipeline.domain.routing_inventory import is_recording_path, is_excluded_media_path, title_in_scope, summarize_routing
-from video_pipeline.domain.move_preflight import inspect_move
+from video_pipeline.domain.move_preflight import inspect_move, _mtime_timestamp
+from video_pipeline.domain.companion_bundle import capture_bundle, parent_move_succeeded, companion_paths
 from video_pipeline.platform.resources import default_program_aliases
 
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
@@ -488,6 +489,21 @@ def main() -> int:
                 rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "dst": dst, "status": "skipped",
                                       "reason": preflight_reason, "genre_route": vr.genre_route, "ts": ts_row})
                 continue
+            try:
+                bundle = capture_bundle(sf.win_path, dst, windows_probe=lambda src, dest: run_pwsh_json(
+                    str(ops_root / "scripts" / "inspect_move.ps1"), ["-Src", src, "-Dst", dest], normalize_args=False))
+            except (OSError, ValueError, KeyError) as exc:
+                preflight_skipped += 1
+                rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "dst": dst, "status": "skipped",
+                                      "reason": str(exc), "ts": ts_row})
+                continue
+            captured_video = bundle["members"][0]["precondition"]
+            if (captured_video["size_bytes"] != precondition["size_bytes"] or
+                    abs(_mtime_timestamp(captured_video["mtime_utc"]) - _mtime_timestamp(precondition["mtime_utc"])) > 0.005):
+                preflight_skipped += 1
+                rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "dst": dst, "status": "skipped", "reason": "source_changed", "ts": ts_row})
+                continue
+            precondition = captured_video
             planned_moves += 1
             reason = "recompute_destination"
             plan_row: dict[str, Any] = {
@@ -504,24 +520,29 @@ def main() -> int:
             }
             if vr.genre_route:
                 plan_row["genre_route"] = vr.genre_route
+            plan_row.update(bundle)
             rows_for_plan.append(plan_row)
             row_move = {"path_id": path_id, "src": sf.win_path, "dst": dst, "precondition": precondition,
                         "file_id": file_states.get(path_id)}
+            row_move.update(bundle)
             rows_for_move.append(row_move)
             plan_reason_map[(path_id, sf.win_path, dst)] = reason
 
         # No arbitrary winner when two sources resolve to the same destination.
         destination_counts: dict[str, int] = {}
+        def destination_keys(row):
+            return {normalize_win_for_id(p) for p in [row["dst"], *companion_paths(row["dst"]).values()]}
+
         for row in rows_for_move:
-            key = normalize_win_for_id(row["dst"])
-            destination_counts[key] = destination_counts.get(key, 0) + 1
+            for key in destination_keys(row):
+                destination_counts[key] = destination_counts.get(key, 0) + 1
         for row in rows_for_plan:
             row.update({k: v for k, v in candidate_info[normalize_win_for_id(row["src"])].items() if k not in row})
-            if row["status"] == "planned" and destination_counts.get(normalize_win_for_id(row["dst"]), 0) > 1:
+            if row["status"] == "planned" and any(destination_counts.get(key, 0) > 1 for key in destination_keys(row)):
                 row.update(status="skipped", reason="destination_collision_in_plan")
                 planned_moves -= 1
                 preflight_skipped += 1
-        rows_for_move = [r for r in rows_for_move if destination_counts[normalize_win_for_id(r["dst"])] == 1]
+        rows_for_move = [r for r in rows_for_move if all(destination_counts[key] == 1 for key in destination_keys(r))]
         routing_inventory = summarize_routing(rows_for_plan, roots_win, scanned, program_titles)
         routing_inventory.update({"excludedRecordingRoot": args.ts_root, "recordingRootExcludedFiles": recording_root_excluded})
         inventory_path.write_text(json.dumps(routing_inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -703,7 +724,7 @@ def main() -> int:
                         path_id = str(rec.get("path_id") or "") or None
                         src = str(rec.get("src") or "") or None
                         dst = str(rec.get("dst") or "") or None
-                        ok = bool(rec.get("ok"))
+                        ok = parent_move_succeeded(rec)
                         err = str(rec.get("error") or "") if rec.get("error") is not None else None
                         if (err or "") == "dst_exists":
                             dst_exists_errors += 1

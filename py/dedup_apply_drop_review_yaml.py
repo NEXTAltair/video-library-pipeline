@@ -6,6 +6,8 @@ to quarantine using PowerShell apply_move_plan.ps1.
 
 from __future__ import annotations
 
+from video_pipeline.domain.companion_bundle import parent_move_succeeded, capture_bundle
+
 import argparse
 import os
 import uuid
@@ -102,7 +104,7 @@ def apply_yaml(yaml_path: str, db_path: str, windows_ops_root: str) -> dict:
             )
             base_name = PureWindowsPath(src_win).name
             dst_win = canonicalize_windows_path(group_dir_win + "\\" + base_name)
-            w.write(safe_json({"op": "move", "path_id": row["path_id"], "src": src_win, "dst": dst_win}) + "\n")
+            w.write(safe_json({**capture_bundle(src_win, dst_win, allow_destination_exists=True), "op": "move", "path_id": row["path_id"], "src": src_win, "dst": dst_win}) + "\n")
 
     # run PowerShell move
     move_apply_file = None
@@ -145,7 +147,7 @@ def apply_yaml(yaml_path: str, db_path: str, windows_ops_root: str) -> dict:
                 pid = str(rec.get("path_id") or "")
                 src_win = canonicalize_windows_path(str(rec.get("src") or ""))
                 dst_win_val = canonicalize_windows_path(str(rec.get("dst") or ""))
-                ok = bool(rec.get("ok"))
+                ok = parent_move_succeeded(rec)
                 err_text = None if ok else str(rec.get("error") or "")
                 src_row = drop_by_path_id.get(pid, {})
                 group_key = src_row.get("group_key")

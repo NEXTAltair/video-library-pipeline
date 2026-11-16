@@ -4,6 +4,8 @@
 Replaying the same durable log is idempotent. Dry-run receipts never update DB.
 """
 from __future__ import annotations
+
+from video_pipeline.domain.companion_bundle import parent_move_succeeded
 import argparse
 import hashlib
 import json
@@ -41,7 +43,7 @@ def main():
     if any(r.get('_meta', {}).get('dry_run') for r in records):
         print(json.dumps({'updated': 0, 'events': 0, 'dry_run_log': True}))
         return 0
-    rows = [(i,r) for i,r in enumerate(records) if r.get('op') == 'move' and r.get('ok') is True and not r.get('dry_run')]
+    rows = [(i,r) for i,r in enumerate(records) if r.get('op') == 'move' and parent_move_succeeded(r) and not r.get('dry_run')]
     con = connect_db(args.db)
     if args.dry_run:
         clone = connect_db(":memory:")

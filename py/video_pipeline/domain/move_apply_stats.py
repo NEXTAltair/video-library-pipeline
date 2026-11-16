@@ -7,6 +7,8 @@ unwatched_pipeline_runner, relocate_existing_files, and dedup_recordings.
 
 from __future__ import annotations
 
+from video_pipeline.domain.companion_bundle import parent_move_succeeded
+
 import json
 from pathlib import Path
 from typing import Any
@@ -57,7 +59,7 @@ def aggregate_move_apply(jsonl_path: str | Path) -> dict[str, Any]:
             continue
 
         total += 1
-        if rec.get("ok"):
+        if parent_move_succeeded(rec):
             succeeded += 1
         else:
             failed += 1

@@ -4,6 +4,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_long_path_utils.ps1')
+. (Join-Path $PSScriptRoot '_move_bundle.ps1')
 
 function Get-LiteralAttributesOrMissing([string]$Path) {
   try { return [System.IO.File]::GetAttributes((Convert-ToLongPathLiteral $Path)) }
@@ -17,6 +18,8 @@ function Get-LiteralAttributesOrMissing([string]$Path) {
 }
 
 try {
+  Assert-NoReparseAncestors $Src
+  Assert-NoReparseAncestors $Dst
   $attrs = Get-LiteralAttributesOrMissing $Src
   $exists = $null -ne $attrs -and ($attrs -band [System.IO.FileAttributes]::Directory) -eq 0
   $size = $null
@@ -27,14 +30,49 @@ try {
     $mtime = $info.LastWriteTimeUtc.ToString('o')
   }
   $destAttrs = Get-LiteralAttributesOrMissing $Dst
+  $destinationExists = $null -ne $destAttrs
+  $bundleVerified = $true
+  $bundleError = $null
+  $cohort = @()
+  $members = @()
+  if ($exists) {
+    try { $cohort = @(Get-CurrentCompanionKinds $Src) }
+    catch {
+      # Ownership refusal is a bundle result, not failure to observe the video.
+      # Do not mask filesystem/permission/other unexpected failures.
+      if ($_.Exception.Message -ne 'ambiguous_companion_owner') { throw }
+      $bundleVerified = $false
+      $bundleError = 'ambiguous_companion_owner'
+    }
+  }
+  if ($exists -and $bundleVerified) {
+    foreach ($kind in @('video') + $cohort) {
+      $memberSrc = Get-BundlePath $Src $kind
+      $memberDst = Get-BundlePath $Dst $kind
+      Assert-NoReparseAncestors $memberSrc
+      Assert-NoReparseAncestors $memberDst
+      $memberInfo = [System.IO.FileInfo]::new((Convert-ToLongPathLiteral $memberSrc))
+      $members += @{ kind=$kind; src=$memberSrc; dst=$memberDst; precondition=@{ size_bytes=[int64]$memberInfo.Length; mtime_utc=$memberInfo.LastWriteTimeUtc.ToString('o') } }
+    }
+    foreach ($kind in @('video', 'program_txt', 'recording_json', 'psc', 'vtt')) {
+      $target = Get-BundlePath $Dst $kind
+      Assert-NoReparseAncestors $target
+      if ($null -ne (Get-LiteralAttributesOrMissing $target)) { $destinationExists = $true; $bundleVerified = $false; $bundleError = 'destination_exists' }
+    }
+  }
   [ordered]@{
     ok = $true
+    bundle_verified = $bundleVerified
+    bundle_error = $bundleError
+    bundle_version = 1
+    members = @($members)
+    companion_cohort = @($cohort)
     source_exists = [bool]$exists
     size_bytes = $size
     mtime_utc = $mtime
-    destination_exists = ($null -ne $destAttrs)
-  } | ConvertTo-Json -Compress
+    destination_exists = $destinationExists
+  } | ConvertTo-Json -Compress -Depth 6
 } catch {
-  @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress
+  @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress -Depth 6
   exit 1
 }

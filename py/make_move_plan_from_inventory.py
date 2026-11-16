@@ -13,7 +13,8 @@ from db_helpers import latest_path_metadata
 from mediaops_schema import connect_db
 from path_placement_rules import load_drive_routes
 from plan_validation import validate_move_candidate
-from video_pipeline.domain.move_preflight import inspect_move
+from video_pipeline.domain.move_preflight import inspect_move, _mtime_timestamp
+from video_pipeline.domain.companion_bundle import capture_bundle
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="")
@@ -137,8 +138,21 @@ def main() -> int:
                     preflight_counts[conflict] = preflight_counts.get(conflict, 0) + 1
                     excluded.append({"path_id":pid,"src":src,"dst":dst,"reason":conflict})
                     continue
+                try:
+                    bundle = capture_bundle(src, dst)
+                    video = bundle["members"][0]["precondition"]
+                    if (video["size_bytes"] != precondition["size_bytes"] or
+                            abs(_mtime_timestamp(video["mtime_utc"]) - _mtime_timestamp(precondition["mtime_utc"])) > 0.005):
+                        raise ValueError("source_changed")
+                except (OSError, ValueError, KeyError) as exc:
+                    conflict = str(exc)
+                    preflight_counts[conflict] = preflight_counts.get(conflict, 0) + 1
+                    excluded.append({"path_id": pid, "src": src, "dst": dst, "reason": conflict})
+                    continue
+                precondition = video
                 state = con.execute("SELECT file_id FROM path_file_state WHERE path_id=?", (pid,)).fetchone()
                 plan_row: dict = {
+                    **bundle,
                     "path_id": pid,
                     "src": src,
                     "dst": dst,

@@ -5,6 +5,8 @@ broadcast, even if another recording in the group has a repeat flag.
 """
 from __future__ import annotations
 
+from video_pipeline.domain.companion_bundle import capture_bundle
+
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import hashlib
@@ -253,6 +255,8 @@ def plan_recordings(con, roots, *, probe=probe_video, min_age_seconds=3600,
                               "group_id": group_id, "broadcast_kind": kind,
                               "metadata_checksum": c["metadata_checksum"]})
         results.append(result)
+    for move in moves:
+        move.update(capture_bundle(move["src"], move["dst"]))
     decisions = Counter(c["decision"] for g in results for c in g["candidates"])
     reasons = Counter(c["reason"] for g in results for c in g["candidates"] if c["decision"] == "defer")
     return {"policy": "preserve_original_and_repeat", "groups_total": total, "groups_checked": len(results),

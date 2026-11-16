@@ -90,6 +90,8 @@ class Preview:
         create_schema_if_needed(self.con)
         self.con.execute("CREATE TABLE recording_holds(path_id TEXT, reason TEXT, resolved_at TEXT)")
         monkeypatch.setattr(relocate, "scan_files", lambda **_kw: (self.files, [], [], {}))
+        from video_pipeline.domain.companion_bundle import capture_bundle
+        monkeypatch.setattr(relocate, "capture_bundle", lambda src, dst, **kw: capture_bundle(src, dst, localize=self.localize, **kw))
         monkeypatch.setattr(relocate, "inspect_move", lambda src, dst, inv, **kw: inspect_move(src, dst, inv, localize=self.localize, **kw))
 
     def localize(self, path):
@@ -252,6 +254,22 @@ def test_reviewed_matching_curated_identity_is_not_requeued(tmp_path, monkeypatc
     monkeypatch.setattr(relocate, 'default_program_aliases', lambda root: path)
     summary, rows, _ = preview.run(monkeypatch, capsys, '--program-titles-json', '["もぎたて", "もぎたて!"]')
     assert summary['metadataQueuePlannedCount'] == 0 and summary['plannedMoves'] == 1
+
+
+def test_native_bundle_owner_refusal_is_visible_candidate_skip(tmp_path, monkeypatch, capsys):
+    preview=Preview(tmp_path,monkeypatch)
+    preview.add(r'B:\Library\Show ambiguous.mp4')
+    preview.add(r'B:\Library\Show ordinary.mp4')
+    import video_pipeline.domain.companion_bundle as bundles
+    original=relocate.capture_bundle
+    def capture(src,dst,**kwargs):
+        if 'ambiguous' in src: raise ValueError('ambiguous_companion_owner')
+        return original(src,dst,**kwargs)
+    monkeypatch.setattr(relocate,'capture_bundle',capture)
+    summary,rows,_=preview.run(monkeypatch,capsys)
+    assert summary['plannedMoves']==1 and summary['preflightSkipped']==1
+    refused=next(row for row in rows if 'ambiguous' in row['src'])
+    assert refused['status']=='skipped' and refused['reason']=='ambiguous_companion_owner'
 
 
 @pytest.mark.parametrize("path,excluded", [

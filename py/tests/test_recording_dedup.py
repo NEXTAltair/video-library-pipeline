@@ -272,3 +272,38 @@ def test_native_restore_never_accepts_unproven_ancestry_or_overwrite(unsafe):
         cache[native_path_key(entry)]["error"] = "native_reparse_ancestor"
     with pytest.raises(ValueError):
         native_restore_signature(local,target,local,roots,cache)
+
+
+@pytest.mark.parametrize('change', ['none', 'remove', 'replace', 'add', 'mtime'])
+def test_versioned_restore_validates_recorded_companion_cohort(library, change):
+    import video_pipeline.domain.companion_bundle as bundles
+    keeper,_=add_recording(library,'keep.mp4',False,size=400)
+    source,_=add_recording(library,'drop.mp4',False)
+    companion=source.with_suffix('.psc');companion.write_bytes(b'original metadata')
+    con,db,root,ops=library
+    plan,directory=make_plan(db,ops,[root],probe=quality_probe)
+    def bundle_runner(_script,args):
+        from video_pipeline.platform.pathscan_common import windows_to_wsl_path
+        def local(value):return Path(windows_to_wsl_path(value).replace('\\','/'))
+        moveplan=local(args[args.index('-PlanJsonl')+1]);receipt=local(args[args.index('-OutJsonl')+1]);records=[]
+        for line in moveplan.read_text().splitlines():
+            op=json.loads(line)
+            for member in op['members']:
+                src,dst=local(member['src']),local(member['dst']);dst.parent.mkdir(parents=True,exist_ok=True);src.rename(dst)
+            records.append({**op,'ok':True,'bundle_complete':True,'ts':'2026-10-06T00:00:00Z'})
+        receipt.write_text(''.join(json.dumps(row)+'\n' for row in records))
+    assert apply_plan(db,ops,directory,runner=bundle_runner)['ok']
+    quarantined=Path(plan['moves'][0]['dst']);psc=quarantined.with_suffix('.psc')
+    if change=='remove':psc.unlink()
+    if change=='replace':psc.write_bytes(b'unrelated metadata')
+    if change=='add':quarantined.with_suffix('.vtt').write_bytes(b'added')
+    if change=='mtime':
+        stat=psc.stat();os.utime(psc,ns=(stat.st_atime_ns,stat.st_mtime_ns+100))
+    if change=='none':
+        assert restore_plan(db,ops,directory)['restore_operations']==1
+        assert restore_plan(db,ops,directory,apply=True,runner=bundle_runner)['ok']
+        assert source.exists() and companion.read_bytes()==b'original metadata'
+    else:
+        with pytest.raises(ValueError,match='quarantined companion'):
+            restore_plan(db,ops,directory)
+        assert quarantined.exists() and not source.exists()
