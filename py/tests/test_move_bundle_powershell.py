@@ -301,3 +301,25 @@ def test_native_unexpected_bundle_probe_failure_still_fails_closed(tmp_path):
     assert cp.returncode!=0
     observed=json.loads(cp.stdout)
     assert observed['ok'] is False and observed['error']=='unexpected_probe_failure'
+
+
+def test_restore_accepts_actual_mover_receipt_order_and_rejects_damage(tmp_path):
+    from copy import deepcopy
+    from video_pipeline.domain.companion_bundle import validate_restore_bundle
+
+    scripts, op, _ = fixture(tmp_path)
+    row, _ = run(tmp_path, scripts, op)
+    assert row['ok']
+    assert row['members'][-1]['kind'] == 'video'
+    expected = sorted(op['members'], key=lambda m: m['kind'] != 'video')
+    plan = {**op, 'members': expected, 'bundle_version': 1}
+    current = {'members': deepcopy(expected), 'companion_cohort': [m['kind'] for m in expected[1:]]}
+    validate_restore_bundle(plan, row, current)
+    for damage in ('removed', 'added', 'replaced', 'timestamp'):
+        broken = deepcopy(row)
+        if damage == 'removed': broken['members'].pop(0)
+        elif damage == 'added': broken['members'].append(deepcopy(broken['members'][0]))
+        elif damage == 'replaced': broken['members'][0]['src'] += '.other'
+        else: broken['members'][0]['precondition']['mtime_utc'] = '2000-01-01T00:00:00Z'
+        with pytest.raises(ValueError):
+            validate_restore_bundle(plan, broken, current)

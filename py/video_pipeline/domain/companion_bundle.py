@@ -113,7 +113,7 @@ def _signature_ticks(signature):
     if signature.get('mtime_ns') is not None:
         return int(signature['mtime_ns']) // 100
     value = signature['mtime_utc'].replace('Z', '+00:00')
-    dt = datetime.fromisoformat(value)
+    dt = datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', value))
     fraction = re.search(r'\.(\d+)', value)
     ticks = int(((fraction.group(1) if fraction else '') + '0000000')[:7])
     return int(dt.replace(microsecond=0).timestamp()) * 10_000_000 + ticks
@@ -134,10 +134,17 @@ def validate_restore_bundle(plan, receipt, current):
         raise ValueError('unsupported quarantine bundle version')
     recorded = receipt.get('members') or []
     observed = current.get('members') or []
-    if ([m['kind'] for m in recorded] != kinds or [m['kind'] for m in observed] != kinds
+    recorded_kinds = [m['kind'] for m in recorded]
+    observed_kinds = [m['kind'] for m in observed]
+    if (len(recorded_kinds) != len(kinds) or set(recorded_kinds) != set(kinds)
+            or len(observed_kinds) != len(kinds) or set(observed_kinds) != set(kinds)
             or current['companion_cohort'] != kinds[1:]):
         raise ValueError('quarantined companion cohort changed')
-    for old, proof, now in zip(expected, recorded, observed):
+    recorded_by_kind = {m['kind']: m for m in recorded}
+    observed_by_kind = {m['kind']: m for m in observed}
+    for old in expected:
+        proof = recorded_by_kind[old['kind']]
+        now = observed_by_kind[old['kind']]
         if (proof['src'], proof['dst']) != (old['src'], old['dst']):
             raise ValueError('quarantine bundle receipt identity mismatch')
         for actual in (proof['precondition'], now['precondition']):
