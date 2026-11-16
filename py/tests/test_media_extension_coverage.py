@@ -58,7 +58,8 @@ def test_inventory_ingest_queue_and_source_root_plan_all_video_containers(tmp_pa
             con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,needs_review,human_reviewed) VALUES(?,'human_reviewed','{}','now','Show','2026-11-01',0,1)", (row['path_id'],))
         con.commit()
     # Only the Windows filesystem boundary is simulated. No production media is read or moved.
-    monkeypatch.setattr(planner, 'inspect_move', lambda *a, **kw: ({'size_bytes': 12, 'mtime_utc': 'now'}, None))
+    monkeypatch.setattr(planner, 'inspect_move', lambda *a, **kw: ({'size_bytes': 12, 'mtime_utc': '2026-01-01T00:00:00+00:00'}, None))
+    monkeypatch.setattr(planner, 'capture_bundle', lambda src, dst: {'bundle_version': 1, 'companion_cohort': [], 'members': [{'kind': 'video', 'src': src, 'dst': dst, 'precondition': {'size_bytes': 12, 'mtime_utc': '2026-01-01T00:00:00+00:00'}}]})
     plan = tmp_path / 'plan.jsonl'
     monkeypatch.setattr(sys, 'argv', ['plan', '--db', str(db), '--inventory', str(inventory),
                                     '--source-root', r'B:\Unwatched', '--dest-root', r'D:\Library', '--out', str(plan)])
