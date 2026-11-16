@@ -749,9 +749,54 @@ class RelocateWorkflowService:
                                 "log": path_for_powershell(log_p), "rows": 1, "startedAt": now_iso(),
                                 "finishedAt": now_iso(), "dbUpdated": False, "reconciled": kind})
 
+    def _bundle_recovery(self, store, run_id, state, row, mode):
+        """Bind native recovery to the checksum-owned plan and durable exact intent."""
+        run_dir, _, scripts_win = self._paths(store, run_id)
+        run = store.read_run(run_id)
+        artifact = run.artifacts["relocate_internal_move_plan"]
+        internal = Path(artifact.path)
+        if (internal.resolve() != (run_dir / "apply/relocate_internal_move_plan.jsonl").resolve()
+                or Path(state["internalPlan"]).resolve() != internal.resolve()
+                or internal.is_symlink()
+                or sha256_file(internal) != artifact.sha256
+                or state["db"] != run.config_snapshot["db"]):
+            raise ValueError("bundle_recovery_owned_plan_mismatch")
+        owned = chunked_apply.read_plan_rows(internal)
+        if sum(r == row for r in owned) != 1:
+            raise ValueError("bundle_recovery_row_mismatch")
+        index = (state.get("inFlight") or state.get("settlement", {})).get("chunk")
+        chunk = next(c for c in state["chunks"] if c["index"] == index)
+        plan, log = Path(chunk["localPlan"]), Path(chunk["localLog"])
+        if (plan != run_dir / "apply/chunks" / f"chunk_{index:04d}_plan.jsonl"
+                or log != run_dir / "apply/receipts" / f"chunk_{index:04d}.jsonl"
+                or plan.is_symlink() or log.is_symlink()
+                or any(r not in owned for r in chunked_apply.read_plan_rows(plan))):
+            raise ValueError("bundle_recovery_chunk_mismatch")
+        # Strict parsing: a torn intent is not authority to delete a file.
+        records = [json.loads(l) for l in log.read_text(encoding="utf-8-sig").splitlines() if l.strip()]
+        intents = [r for r in records if r.get("op") == "move_bundle_intent" and r.get("src") == row["src"]]
+        if len(intents) > 1 or any(r.get(k) != row.get(k) for r in intents for k in ("src", "dst", "path_id", "members")):
+            raise ValueError("bundle_recovery_intent_mismatch")
+        result = self._powershell()(scripts_win + r"\reconcile_move_bundle.ps1", [
+            "-PlanJsonl", path_for_powershell(plan), "-LogJsonl", path_for_powershell(log),
+            "-PlanSha256", sha256_file(plan), "-LogSha256", sha256_file(log),
+            "-Src", row["src"], "-Mode", mode])
+        if result.get("ok") is not True or result.get("state") not in {"not_started", "ready", "complete"}:
+            raise ValueError("bundle_recovery_native_blocked: " + str(result))
+        if mode == "finalize":
+            if result["state"] != "complete":
+                raise ValueError("bundle_recovery_incomplete")
+            chunk["dbUpdated"] = False
+        return result
+
     def _reconcile(self, store: WorkflowStore, run_id: str, state: dict[str, Any]) -> WorkflowResult:
         run_dir, _ops, scripts_win = self._paths(store, run_id)
         try:
+            bundle_info = None
+            in_flight = state.get("inFlight")
+            candidate = chunked_apply.candidate_row(state, int(in_flight["chunk"])) if in_flight else None
+            if candidate is not None and "bundle_version" in candidate:
+                bundle_info = self._bundle_recovery(store, run_id, state, candidate, "inspect")
             self._flush_db(run_dir, state)
             in_flight = state.get("inFlight")
             if state.get("settlement"):
@@ -761,7 +806,14 @@ class RelocateWorkflowService:
                 row = chunked_apply.candidate_row(state, int(in_flight["chunk"]))
                 if row is not None:
                     if "bundle_version" in row:
-                        raise ValueError("interrupted_bundle_requires_member_reconciliation: inspect durable member intent and actual member locations before recovery")
+                        info = bundle_info
+                        if info["state"] != "not_started":
+                            state["settlement"] = {"proposal": "finalize_bundle", "row": row,
+                                                   "chunk": in_flight["chunk"], "since": now_iso()}
+                        state["inFlight"] = None
+                        chunked_apply.save_state(run_dir, state, now_iso())
+                        return self._apply_result(store, run_id, ok=True, outcome=(
+                            "relocate_apply_settlement_required" if state.get("settlement") else "relocate_apply_reconciled"))
                     info = self._settle_probe(scripts_win, row, "inspect")
                     src_x, dst_x = bool(info.get("source_exists")), bool(info.get("destination_exists"))
                     expected = (row.get("precondition") or {}).get("size_bytes")
@@ -810,7 +862,10 @@ class RelocateWorkflowService:
                 message="no interrupted move awaits settlement", details={"runId": run_id}))
         try:
             row, mode = settlement["row"], settlement["proposal"]
-            done = self._settle_probe(scripts_win, row, mode)  # re-verifies before deleting
+            if mode == "finalize_bundle":
+                done = self._bundle_recovery(store, run_id, state, row, "finalize")
+            else:
+                done = self._settle_probe(scripts_win, row, mode)  # re-verifies before deleting
             if mode == "finalize":
                 self._record_receipt(run_dir, state, row, "settled_finalize")
             state["settlement"] = None
