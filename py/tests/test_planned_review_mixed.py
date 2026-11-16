@@ -195,3 +195,21 @@ def test_planned_queue_retry_rechecks_lineage_and_immutable_cohort(tmp_path,corr
     assert not result.ok and len(h.calls)==n
     assert not any(g.type=='metadata_review' for g in h.store.read_run(h.cfg.run_id).review_gates.values())
     assert h.store.read_run(h.cfg.run_id).review_gates['unrelated'].status=='open'
+
+
+def test_failed_mixed_planned_extraction_has_public_retry_without_registration(tmp_path):
+    h=MixedHarness(tmp_path);start=h.setup()
+    action=next(a for a in start.next_actions if a.action=='review_planned_metadata')
+    def fail(script,args,cwd=None):
+        if script.name=='run_metadata_batches_promptv1.py':raise RuntimeError('temporary extraction error')
+        return h.python_runner(script,args,cwd)
+    rejected=RelocateWorkflowService(py_root=tmp_path,python_runner=fail).resume(h.cfg_from(action.params),action=action.params['resumeAction'])
+    assert not rejected.ok
+    run=h.store.read_run(h.cfg.run_id)
+    retry=next(a for a in _next_actions_for_run(run) if a.params.get('artifactIds')==['relocate_metadata_queue_0002'])
+    assert retry.params['resumeAction']=='prepare_relocate_metadata'
+    reviewed=h.service().resume(RelocateApplyConfig(windows_ops_root=h.cfg.windows_ops_root,run_id=retry.params['runId'],artifact_ids=retry.params['artifactIds']),action=retry.params['resumeAction'])
+    assert any(a.action=='review_metadata' for a in reviewed.next_actions)
+    assert h.store.read_run(h.cfg.run_id).review_gates['unrelated'].status=='open'
+    assert not h.service().apply(h.cfg_from(action.params)).ok
+    assert len([a for a in h.store.read_run(h.cfg.run_id).artifacts.values() if a.metadata.get('refreshReviewed')])==1

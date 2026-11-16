@@ -225,6 +225,27 @@ def available_planned_metadata_action(run: Any) -> NextAction | None:
     return planned_metadata_action(run.run_id, plan.id)
 
 
+def planned_metadata_retry_action(run: Any) -> NextAction | None:
+    """Recover output-only extraction without registering unrelated candidates."""
+    if (run.flow != "relocate" or run.status != "active" or run.phase != "review_required"
+            or "relocate_internal_move_plan" in run.artifacts
+            or any(g.type == "metadata_review" and g.status == ReviewGateStatus.OPEN.value
+                   for g in run.review_gates.values())):
+        return None
+    queues = [run.artifacts[aid] for aid in run.artifact_ids
+              if run.artifacts[aid].type == "relocate_metadata_queue"]
+    if not queues or not queues[-1].metadata.get("refreshReviewed"):
+        return None
+    queue = queues[-1]
+    if queue.status != ArtifactStatus.AVAILABLE.value or not any(
+            g.type == "relocate_metadata_review" and g.status == ReviewGateStatus.OPEN.value
+            and g.artifact_ids == [queue.id] for g in run.review_gates.values()):
+        return None
+    return NextAction(action="prepare_relocate_metadata", label="Retry planned-candidate metadata extraction",
+        tool="video_pipeline_resume", params={"runId": run.run_id, "artifactIds": [queue.id],
+        "resumeAction": "prepare_relocate_metadata"}, requires_human_input=False)
+
+
 class RelocateWorkflowService:
     def __init__(
         self,
