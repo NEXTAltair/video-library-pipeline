@@ -527,15 +527,35 @@ class RelocateWorkflowService:
         return summary
 
     def _flush_db(self, run_dir: Path, state: dict[str, Any]) -> None:
-        """Record every receipt log the DB has not seen. Replays are idempotent."""
-        for chunk in state["chunks"]:
-            if chunk.get("dbUpdated"):
+        """Flush immutable successful receipts; legacy dbUpdated is not coverage."""
+        from . import receipt_coverage
+        for chunk_index, chunk in enumerate(state["chunks"]):
+            current = receipt_coverage.successful_receipts(Path(chunk["localLog"]))
+            covered = chunk.get("dbReceiptCoverage", {})
+            if not set(covered).issubset(current):
+                raise ValueError("previously covered move receipts removed or changed")
+            for key in covered:
+                if covered[key] != receipt_coverage.coverage_entry(current[key]):
+                    raise ValueError("move receipt member coverage changed")
+            pending = {key: row for key, row in current.items() if key not in covered}
+            if not pending:
                 continue
-            log = Path(chunk["localLog"])
-            if chunked_apply.read_receipts(log):
-                state["dbSummaries"].append(self._db_update(state, log))
-            chunk["dbUpdated"] = True
-            chunked_apply.save_state(run_dir, state, now_iso())
+            # Freeze exactly what the DB will see. Later native appends are not
+            # acknowledged by this flush and will be discovered next time.
+            entries = {key: receipt_coverage.coverage_entry(row) for key, row in pending.items()}
+            frozen = receipt_coverage.snapshot(run_dir, list(pending.values()))
+            summary = self._db_update(state, frozen)
+            updated = {**covered, **entries}
+            # Do not let an unsuccessful state save acknowledge coverage even
+            # in memory. A retry after DB commit reuses the immutable snapshot
+            # and the DB's receipt transaction idempotency.
+            durable = json.loads(json.dumps(state))
+            durable["chunks"][chunk_index].update(dbReceiptCoverage=updated, dbUpdated=True)
+            durable["dbSummaries"].append(summary)
+            chunked_apply.save_state(run_dir, durable, now_iso())
+            chunk.update(dbReceiptCoverage=updated, dbUpdated=True)
+            state["dbSummaries"].append(summary)
+            state["updatedAt"] = durable["updatedAt"]
 
     def _persist_diagnostic(self, store: WorkflowStore, run_id: str, diagnostic: Diagnostic) -> None:
         self._append_diagnostic(store, run_id, diagnostic)
@@ -611,8 +631,19 @@ class RelocateWorkflowService:
         state = chunked_apply.load_state(run_dir)
         merged = run_dir / "apply" / "relocate_move_apply_merged.jsonl"
         receipts = []
-        for log in chunked_apply.chunk_logs(state):
-            receipts.extend(chunked_apply.read_receipts(log))
+        from . import receipt_coverage
+        for chunk in state["chunks"]:
+            frozen_receipts = chunked_apply.read_receipts(Path(chunk["localLog"]))
+            covered = chunk.get("dbReceiptCoverage", {})
+            # pending_rows() reads live logs after the preceding DB flush. A
+            # late append can exhaust the plan without having reached the DB.
+            # Fence the exact receipts we will publish, not an earlier read.
+            for receipt in frozen_receipts:
+                if (receipt_coverage.parent_move_succeeded(receipt)
+                        and covered.get(receipt_coverage.digest(receipt)) != receipt_coverage.coverage_entry(receipt)):
+                    return self._apply_result(store, run_id, ok=True,
+                                              outcome="relocate_apply_db_flush_pending")
+            receipts.extend(frozen_receipts)
         merged.write_text(
             "\n".join([json.dumps({"_meta": {"kind": "move_apply", "merged_chunks": len(state["chunks"])}}),
                        *(json.dumps(r, ensure_ascii=False) for r in receipts)]) + "\n",
