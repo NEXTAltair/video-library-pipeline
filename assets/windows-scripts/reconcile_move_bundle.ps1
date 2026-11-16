@@ -89,10 +89,18 @@ try {
   # Never move or discard partial companions. Only finish already verified copies.
   if ($sourceOnly -gt 0) { throw 'recovery_mixed_partial_bundle_fail_closed' }
   if ($Mode -eq 'inspect') { @{ok=$true;state='ready'} | ConvertTo-Json -Compress; exit 0 }
+  function Assert-FinalCohorts {
+    $sourceKinds=@(Get-CurrentCompanionKinds $row.src)
+    $destinationKinds=@(Get-CurrentCompanionKinds $row.dst | Sort-Object)
+    $wanted=@($row.companion_cohort | Sort-Object)
+    if ($sourceKinds.Count -ne 0 -or ($destinationKinds -join ',') -cne ($wanted -join ',')) { throw 'recovery_final_cohort_changed' }
+    if (Test-PathAnyLong $row.src) { throw 'recovery_source_reappeared' }
+  }
   $parents=@($records | Where-Object { $_.op -ceq 'move' -and $_.src -ceq $row.src -and $_.dst -ceq $row.dst -and $_.path_id -ceq $row.path_id -and $_.bundle_complete -eq $true -and $_.ok -eq $true })
   if ($parents.Count -gt 1) { throw 'recovery_duplicate_parent' }
   if ($parents.Count -eq 1) {
     if (@($checks | Where-Object { $_.sourceExists }).Count -gt 0) { throw 'recovery_completed_source_reappeared' }
+    Assert-FinalCohorts
     @{ok=$true;state='complete'} | ConvertTo-Json -Compress; exit 0
   }
   foreach ($check in $checks) {
@@ -112,6 +120,7 @@ try {
     if (Test-PathAnyLong $m.src) { throw 'recovery_source_reappeared' }
     Assert-BundleSignature $m.dst $m.precondition
   }
+  Assert-FinalCohorts
   $complete=@{}; foreach ($p in $row.PSObject.Properties) { $complete[$p.Name]=$p.Value }
   $complete.op='move'; $complete.ok=$true; $complete.bundle_complete=$true; $complete.reconciled='bundle_members'; $complete.ts=(Get-Date).ToString('o')
   Append-Proof $complete

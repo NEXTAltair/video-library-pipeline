@@ -758,8 +758,7 @@ class RelocateWorkflowService:
         if (internal.resolve() != (run_dir / "apply/relocate_internal_move_plan.jsonl").resolve()
                 or Path(state["internalPlan"]).resolve() != internal.resolve()
                 or internal.is_symlink()
-                or sha256_file(internal) != artifact.sha256
-                or state["db"] != run.config_snapshot["db"]):
+                or sha256_file(internal) != artifact.sha256):
             raise ValueError("bundle_recovery_owned_plan_mismatch")
         owned = chunked_apply.read_plan_rows(internal)
         if sum(r == row for r in owned) != 1:
@@ -772,6 +771,13 @@ class RelocateWorkflowService:
                 or plan.is_symlink() or log.is_symlink()
                 or any(r not in owned for r in chunked_apply.read_plan_rows(plan))):
             raise ValueError("bundle_recovery_chunk_mismatch")
+        # The effective DB is persisted by apply(), which supports an explicit
+        # DB override. Continue/flush use that same durable state, not the dryrun
+        # snapshot. Custody validation precedes all DB writes.
+        if not isinstance(state.get("db"), str) or not state["db"].strip():
+            raise ValueError("bundle_recovery_effective_db_missing")
+        if mode == "validate":
+            return {"ok": True, "state": "owned"}
         # Strict parsing: a torn intent is not authority to delete a file.
         log_exists = log.exists()
         if not log_exists and mode != "inspect":
@@ -844,8 +850,10 @@ class RelocateWorkflowService:
             in_flight = state.get("inFlight")
             candidate = chunked_apply.candidate_row(state, int(in_flight["chunk"])) if in_flight else None
             if candidate is not None and "bundle_version" in candidate:
-                bundle_info = self._bundle_recovery(store, run_id, state, candidate, "inspect")
+                self._bundle_recovery(store, run_id, state, candidate, "validate")
             self._flush_db(run_dir, state)
+            if candidate is not None and "bundle_version" in candidate:
+                bundle_info = self._bundle_recovery(store, run_id, state, candidate, "inspect")
             in_flight = state.get("inFlight")
             if state.get("settlement"):
                 return self._apply_result(store, run_id, ok=True, outcome="relocate_apply_settlement_required")

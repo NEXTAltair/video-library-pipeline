@@ -325,3 +325,59 @@ def test_public_missing_log_returns_continue_only_after_readonly_inspection(tmp_
     result=resume(e,'reconcile_relocate_apply',service)
     assert result['ok'] and result['nextActions'][0]['params']['resumeAction']=='continue_relocate_apply'
     assert len(calls)==1 and not log.exists() and not e.db_rows
+
+
+def test_effective_apply_db_override_is_used_for_recovery_flush(tmp_path):
+    e,state,log=bundle_env(tmp_path)
+    state['db']=str(e.ops/'db'/'override.sqlite')
+    chunked_apply.save_state(e.store.run_dir(e.run_id),state,'now')
+    service=e.service();calls=[]
+    service.powershell_runner=lambda *_:{'ok':True,'state':'ready'}
+    assert resume(e,'reconcile_relocate_apply',service)['ok']
+    def ps(script,args):
+        with log.open('a') as f:f.write(json.dumps({**e.rows[0],'op':'move','ok':True,'bundle_complete':True})+'\n')
+        return {'ok':True,'state':'complete'}
+    service.powershell_runner=ps
+    old=e._py
+    def py(script,args,cwd=None):
+        if script.name=='update_db_paths_from_move_apply.py':calls.append(args[args.index('--db')+1])
+        return old(script,args,cwd)
+    service.python_runner=py
+    assert resume(e,'settle_interrupted_move',service)['ok']
+    assert calls==[state['db']]
+
+
+def test_completed_parents_flush_even_when_next_native_bundle_blocks(tmp_path):
+    e,state,log=bundle_env(tmp_path)
+    first={**e.rows[0], 'path_id':'prior', 'src':'B:\\Old\\prior.mp4','dst':'N:\\Show\\prior.mp4'}
+    original=Path(state['internalPlan']);original.write_text(json.dumps(first)+'\n'+json.dumps(e.rows[0])+'\n')
+    Path(state['chunks'][0]['localPlan']).write_text(original.read_text())
+    manifest=e.store.read_run(e.run_id);manifest.artifacts['relocate_internal_move_plan'].sha256=sha256_file(original);e.store.write_run(manifest)
+    log.write_text(json.dumps({**first,'op':'move','ok':True,'bundle_complete':True})+'\n'+log.read_text())
+    service=e.service();service.powershell_runner=lambda *_:{'ok':False,'error':'recovery_mixed_partial_bundle_fail_closed'}
+    result=resume(e,'reconcile_relocate_apply',service)
+    assert not result['ok'] and e.db_rows=={first['src']}
+    assert chunked_apply.load_state(e.store.run_dir(e.run_id))['inFlight'] is not None
+
+
+@pytest.mark.parametrize('side',['src','dst'])
+def test_late_companion_prevents_recovery_parent_success(tmp_path,side):
+    e=native_env(tmp_path,companions=False);scripts,op,_,log=e
+    # Inject a newly written sidecar after the initial cohort scan, during the
+    # final video signature check. The shipped recovery algorithm is unchanged.
+    with (scripts/'_move_bundle.ps1').open('a') as f:
+        f.write('''
+$script:oldSignature=${function:Assert-BundleSignature}
+function Assert-BundleSignature($Path,$Expected) {
+  & $script:oldSignature $Path $Expected
+  $script:sigCalls++
+  if ($script:sigCalls -eq 5) {
+    [IO.File]::WriteAllText((Convert-ToLongPathLiteral ($env:LATE_BASE + '.program.txt')), 'late')
+  }
+}
+''')
+    os.environ['LATE_BASE']=op[side]
+    try:r,info=invoke(e,'finalize')
+    finally:os.environ.pop('LATE_BASE',None)
+    assert r.returncode==1 and info['error']=='recovery_final_cohort_changed'
+    assert not any(json.loads(l).get('bundle_complete') for l in log.read_text().splitlines())
