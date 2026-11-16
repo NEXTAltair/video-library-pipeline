@@ -2,7 +2,7 @@
 """Shared canonical title resolution helpers across workflow stages.
 
 Centralizes:
-- loading canonical title sources (human_reviewed + programs + prefix families)
+- loading canonical title sources (human-reviewed + agent-accepted + programs + prefix families)
 - prefix-based canonical title suggestion
 - subtitle separator cleanup fallback
 
@@ -40,6 +40,8 @@ class CanonicalTitleSources:
     programs: tuple[str, ...]
     human_reviewed_norm: frozenset[str]
     prefix_families: tuple[str, ...]
+    agent_accepted: tuple[str, ...] = ()
+    agent_accepted_norm: frozenset[str] = frozenset()
 
 
 def load_canonical_title_sources(con: sqlite3.Connection) -> CanonicalTitleSources:
@@ -47,8 +49,9 @@ def load_canonical_title_sources(con: sqlite3.Connection) -> CanonicalTitleSourc
 
     Priority:
       1. human_reviewed path metadata (authoritative)
-      2. programs canonical titles
-      3. prefix families (self-referential: shorter titles that are
+      2. agent_accepted path metadata (accepted, not human confirmation)
+      3. programs canonical titles
+      4. prefix families (self-referential: shorter titles that are
          prefixes of other titles in path_metadata)
     """
 
@@ -72,7 +75,12 @@ def load_canonical_title_sources(con: sqlite3.Connection) -> CanonicalTitleSourc
         """SELECT DISTINCT program_title
            FROM path_metadata
            WHERE program_title IS NOT NULL AND program_title != ''
+             AND source != 'agent_accepted'
              AND (source = 'human_reviewed' OR human_reviewed = 1)"""
+    )
+    agent_accepted = _load_titles(
+        "SELECT DISTINCT program_title FROM path_metadata "
+        "WHERE source = 'agent_accepted' AND program_title IS NOT NULL AND program_title != ''"
     )
     programs = _load_titles(
         "SELECT canonical_title FROM programs "
@@ -90,6 +98,8 @@ def load_canonical_title_sources(con: sqlite3.Connection) -> CanonicalTitleSourc
         programs=programs,
         human_reviewed_norm=human_reviewed_norm,
         prefix_families=prefix_families,
+        agent_accepted=agent_accepted,
+        agent_accepted_norm=frozenset(normalize_title_for_comparison(t) for t in agent_accepted),
     )
 
 
@@ -186,6 +196,7 @@ def suggest_canonical_title(
     Returns (suggested_title, match_source) where match_source is one of:
       "exact_human_reviewed" — title is already canonical (no change needed)
       "human_reviewed"      — prefix match against human-reviewed titles
+      "exact_agent_accepted" / "agent_accepted" — corresponding agent-only matches
       "programs_table"      — prefix match against programs table
       "prefix_family"       — shorter title exists as prefix in DB
       "separator_split"     — fallback: split at first subtitle separator
@@ -214,6 +225,9 @@ def suggest_canonical_title(
     if pt_norm in sources.human_reviewed_norm:
         return (cleaned_edges, "edge_delimiters") if edge_changed else (None, "exact_human_reviewed")
 
+    if pt_norm in sources.agent_accepted_norm:
+        return (cleaned_edges, "edge_delimiters") if edge_changed else (None, "exact_agent_accepted")
+
     # Sorted longest-first: first match is the best
     def _match_prefix(
         candidates: tuple[str, ...], source_name: str
@@ -234,6 +248,10 @@ def suggest_canonical_title(
     hr_match, hr_source = _match_prefix(sources.human_reviewed, "human_reviewed")
     if hr_match:
         return hr_match, hr_source
+
+    agent_match, agent_source = _match_prefix(sources.agent_accepted, "agent_accepted")
+    if agent_match:
+        return agent_match, agent_source
 
     pr_match, pr_source = _match_prefix(sources.programs, "programs_table")
     if pr_match:

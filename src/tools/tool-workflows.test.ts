@@ -328,6 +328,8 @@ describe("V2 workflow tools", () => {
       gateId: "metadata_review",
       artifactIds: ["review_1"],
       runRevision: 12,
+      acceptance: "human_confirmed",
+      humanConfirmation: { confirmed_by: "owner", evidence: "original message" },
     });
 
     expect(mocks.applyReviewedExecute).not.toHaveBeenCalled();
@@ -341,6 +343,9 @@ describe("V2 workflow tools", () => {
       "--artifact-ids-json", '["review_1"]',
       "--review-yaml-paths-json", '["/ops/review.yaml"]',
       "--run-revision", "12",
+      "--acceptance", "human_confirmed",
+      "--human-confirmation-json", '{"confirmed_by":"owner","evidence":"original message"}',
+
     ]), "/ext/py");
     expect(result).toMatchObject({
       ok: true,

@@ -82,6 +82,8 @@ class SourceRootApplyConfig:
     review_yaml_paths: list[str] = field(default_factory=list)
     run_revision: int | None = None
     review_digests: dict[str, str] = field(default_factory=dict)
+    acceptance: str = "agent_accepted"
+    human_confirmation: dict[str, str] | None = None
 
 
 def run_py_uv(script: Path, args: list[str], cwd: str | None = None) -> str:
