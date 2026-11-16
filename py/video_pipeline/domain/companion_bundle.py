@@ -113,7 +113,7 @@ def _signature_ticks(signature):
     if signature.get('mtime_ns') is not None:
         return int(signature['mtime_ns']) // 100
     value = signature['mtime_utc'].replace('Z', '+00:00')
-    dt = datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', value))
+    dt = datetime.fromisoformat(re.sub(r'\.(\d+)', lambda m: '.' + (m.group(1) + '000000')[:6], value))
     fraction = re.search(r'\.(\d+)', value)
     ticks = int(((fraction.group(1) if fraction else '') + '0000000')[:7])
     return int(dt.replace(microsecond=0).timestamp()) * 10_000_000 + ticks
