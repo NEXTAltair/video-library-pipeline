@@ -78,3 +78,17 @@ Continuation and Authorization Contract throughout this branch.
 ## Unsupported Legacy Cleanup
 
 Some older folder-contamination and direct-title-repair flows depended on hidden legacy public tools. In V2 public operation, report that those flows require a future V2 workflow unless the current run returns an explicit supported `video_pipeline_resume` action for them.
+
+## Re-review metadata of planned candidates
+
+A structurally valid plan can still carry an old but incorrect genre. Do not
+apply it merely because no metadata queue remains. Use its returned
+`review_planned_metadata` action (`prepare_planned_metadata`) with the exact
+current plan artifact. This creates an immutable queue of only its planned
+candidates and returns to `metadata_review`; skipped/held rows are not included.
+
+The explicit action regenerates read-only candidates even for previously
+reviewed metadata. It does not accept them or change the DB. Inspect and edit
+the returned review YAML through `video-library-pipeline-extract-review`, accept
+only supported corrections, and inspect the newly generated plan before moving.
+Never reuse the old plan after the metadata acceptance or edit its JSONL.

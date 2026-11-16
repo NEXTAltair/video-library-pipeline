@@ -302,3 +302,29 @@ def test_reviewed_overrides_clear_existing_fields_and_preserve_franchise(tmp_pat
         assert station is None and stored.get('epg_genres') is None
         assert stored.get('franchise') == franchise
         assert any('epg_genres' in h['fields'] and 'broadcaster' in h['fields'] for h in stored['source_history'])
+
+
+def test_explicit_title_review_does_not_trust_contaminated_old_folder():
+    from video_pipeline.application.reviewed_metadata import review_rows
+    row = {'path_id': 'a-studio', 'path': r'B:\VideoLibrary\A-Studio+ゲスト対談\show.mp4',
+           'program_title': 'A-Studio+ゲスト対談', 'air_date': '2026-11-13', 'needs_review': False}
+    original = dict(row)
+    overrides = {'a-studio': {'program_title': 'A-Studio+', 'review_note': '先頭番組名/EPGトークバラエティを確認'}}
+    reviewed = review_rows([row], [], overrides)
+    assert reviewed[0]['program_title'] == 'A-Studio+'
+    assert reviewed[0]['human_reviewed'] is True
+    assert row == original
+
+
+@pytest.mark.parametrize('case', ['no_note', 'contaminated_title', 'needs_review', 'no_title_override'])
+def test_explicit_title_review_keeps_other_risk_guards(case):
+    from video_pipeline.application.reviewed_metadata import review_rows
+    row = {'path_id': 'a-studio', 'path': r'B:\VideoLibrary\A-Studio+ゲスト対談\show.mp4',
+           'program_title': 'A-Studio+', 'air_date': '2026-11-13', 'needs_review': False}
+    fields = {'program_title': 'A-Studio+', 'review_note': '先頭番組名を確認'}
+    if case == 'no_note': fields.pop('review_note')
+    if case == 'contaminated_title': fields['program_title'] = 'A-Studio+▽ゲスト対談'
+    if case == 'needs_review': fields['needs_review'] = True
+    if case == 'no_title_override': fields.pop('program_title')
+    with pytest.raises(ValueError):
+        review_rows([row], [], {'a-studio': fields})

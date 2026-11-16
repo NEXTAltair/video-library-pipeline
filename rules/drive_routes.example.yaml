@@ -3,6 +3,11 @@ default_dest: "C:\\VideoLibrary"
 default_layout: by_program_year_month
 # Optional: single films grouped by broadcast frame, series by explicit work list.
 # movie_grouping_path: movie_grouping.example.yaml
+# Optional exact-work storage override, independent of genre/movie framing.
+# work_routes:
+#   - works: [Example Work]
+#     dest_root: "C:\\VideoLibrary\\Example Series"
+#     layout: by_title
 routes:
   - genre: anime
     dest_root: "C:\\VideoLibrary\\Anime"

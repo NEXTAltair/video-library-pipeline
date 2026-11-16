@@ -1,3 +1,4 @@
+import { VIDEO_EXTENSIONS } from "./media-extensions";
 import path from "node:path";
 import { getExtensionRootDir, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
 import type { AnyObj, PluginApi, GetCfgFn } from "./types";
@@ -15,7 +16,7 @@ export function registerToolBackfill(api: PluginApi, getCfg: GetCfgFn) {
           apply: { type: "boolean", default: false, description: "false = dry-run (no DB changes). true = write to DB." },
           roots: { type: "array", items: { type: "string" }, description: "Windows paths to scan. Omit to use backfill_roots.yaml (covers all library drives). Only set if scanning a new/temporary location." },
           rootsFilePath: { type: "string", description: "Path to YAML/text file listing roots. Alternative to roots array." },
-          extensions: { type: "array", items: { type: "string" }, default: [".mp4"] },
+          extensions: { type: "array", items: { type: "string" }, default: VIDEO_EXTENSIONS },
           limit: { type: "integer", minimum: 1, maximum: 100000 },
           includeObservations: { type: "boolean", default: true, description: "Also upsert file observations (size, mtime). Default true." },
           queueMissingMetadata: { type: "boolean", default: false, description: "Queue newly upserted rows that are missing metadata for reextract. Scoped to rows touched by this run only." },

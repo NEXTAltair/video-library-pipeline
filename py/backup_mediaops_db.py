@@ -28,8 +28,13 @@ def _bak_pattern(db_path: str) -> re.Pattern:
     return re.compile(r"^" + re.escape(base) + r"\.bak_(\d{8}_\d{6})(?:_(.+))?$")
 
 
+LIVE_BACKUP_TIMEOUT_SECONDS = 120
+
+
 def backup_db(db_path: str, descriptor: str = "") -> tuple[bool, str, str]:
     """WALを含む整合したSQLite snapshotを、一意の新規パスへ作成する。
+
+    実運用のNTFS上のDB退避はコピーに最大120秒を許す。preview等の共通既定は変更しない。
 
     Args:
         db_path: 現在の DB パス
@@ -52,7 +57,7 @@ def backup_db(db_path: str, descriptor: str = "") -> tuple[bool, str, str]:
 
     backup_path += "_" + uuid.uuid4().hex
     try:
-        online_snapshot(db_path, backup_path)
+        online_snapshot(db_path, backup_path, timeout=LIVE_BACKUP_TIMEOUT_SECONDS)
     except (OSError, sqlite3.Error, ValueError, TimeoutError) as e:
         return False, "", f"snapshot failed: {e}"
 

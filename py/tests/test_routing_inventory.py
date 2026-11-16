@@ -11,7 +11,7 @@ from mediaops_schema import connect_db, create_schema_if_needed
 from video_pipeline.db.file_identity import ensure_location
 from video_pipeline.domain.move_preflight import inspect_move
 from video_pipeline.domain.path_placement_rules import DriveRoute, DriveRoutes
-from video_pipeline.domain.routing_inventory import default_relocate_roots, title_in_scope
+from video_pipeline.domain.routing_inventory import default_relocate_roots, title_in_scope, is_excluded_media_path
 from video_pipeline.platform.pathscan_common import ScannedFile, scan_files, canonicalize_windows_path, windows_to_wsl_path, wsl_to_windows_path
 
 
@@ -54,7 +54,7 @@ def test_default_roots_use_configured_locations_and_deduplicate(tmp_path):
     route_file = tmp_path / "routes.yaml"
     route_file.write_text('default_dest: "B:\\\\VideoLibrary"\nroutes:\n  - genre: anime\n    dest_root: "D:\\\\Anime"\n')
     assert default_relocate_roots("/mnt/b/未視聴", r"B:\VideoLibrary", r"J:\TVFile", str(route_file)) == [
-        r"B:\未視聴", r"B:\VideoLibrary", r"D:\Anime", r"J:\TVFile"]
+        r"B:\未視聴", r"B:\VideoLibrary", r"D:\Anime"]
     with pytest.raises(FileNotFoundError):
         default_relocate_roots("", r"B:\VideoLibrary", "", str(tmp_path / "missing.yaml"))
 
@@ -69,7 +69,7 @@ def test_windows_fallback_roundtrip_preserves_drive_roots(windows):
 def test_default_roots_deduplicate_bare_mounts_and_windows_drive_roots(tmp_path):
     route_file = tmp_path / "routes.yaml"
     route_file.write_text('default_dest: "N:\\\\"\nroutes:\n  - genre: movie\n    dest_root: "L:\\\\"\n')
-    assert default_relocate_roots("/mnt/n", "N:\\", "/mnt/l/", str(route_file)) == ["N:\\", "L:\\"]
+    assert default_relocate_roots("/mnt/n", "N:\\", "/mnt/j/TVFile", str(route_file)) == ["N:\\", "L:\\"]
 
 
 def test_title_filter_does_not_merge_seasons_or_ignore_metadata_conflicts():
@@ -270,3 +270,49 @@ def test_native_bundle_owner_refusal_is_visible_candidate_skip(tmp_path, monkeyp
     assert summary['plannedMoves']==1 and summary['preflightSkipped']==1
     refused=next(row for row in rows if 'ambiguous' in row['src'])
     assert refused['status']=='skipped' and refused['reason']=='ambiguous_companion_owner'
+
+
+@pytest.mark.parametrize("path,excluded", [
+    (r"J:\TVFile\recording.ts", True),
+    (r"j:\tvfile\encoding-wait\Show.M2TS", True),
+    (r"J:\TVFile\encoded.mp4", True),
+    ("/mnt/j/TVFile/in-progress/Show.ts", True),
+    (r"J:\TVFile-old\Show.ts", False),
+    (r"B:\放送大学\historical.ts", False),
+])
+def test_recording_root_component_exclusion_not_ts_suffix_ban(path, excluded):
+    assert is_excluded_media_path(path, r"J:\TVFile") is excluded
+
+
+def test_default_roots_never_include_configured_recording_location():
+    assert default_relocate_roots(r"J:\TVFile\pending", r"B:\Library", r"J:\TVFile", "") == [r"B:\Library"]
+
+
+@pytest.mark.parametrize("root_args", [
+    ["--roots-json", json.dumps(["J:\\"])],
+    ["--roots-json", json.dumps([r"J:\TVFile"])],
+])
+def test_explicit_recording_roots_do_not_queue_or_plan_recordings(tmp_path, monkeypatch, capsys, root_args):
+    preview = Preview(tmp_path, monkeypatch)
+    preview.add(r"J:\TVFile\Show recording.ts")
+    preview.add(r"J:\TVFile\pending\Show encoding.ts", title=None)
+    preview.add(r"B:\放送大学\Show historical.ts")
+    summary, rows, inventory = preview.run(monkeypatch, capsys, "--ts-root", r"J:\TVFile", *root_args)
+    assert summary["scannedFiles"] == inventory["scannedFiles"] == 1
+    assert summary["plannedMoves"] == 1
+    assert summary["recordingRootExcludedFiles"] == inventory["recordingRootExcludedFiles"] == 2
+    assert summary["metadataQueuePlannedCount"] == 0
+    assert len(rows) == 1 and rows[0]["src"].startswith("B:")
+
+
+def test_recording_root_excluded_before_registration_writes(tmp_path, monkeypatch, capsys):
+    preview = Preview(tmp_path, monkeypatch)
+    recording = preview.add(r"J:\TVFile\Show recording.ts", title=None, registered=False)
+    library = preview.add(r"B:\Library\Show unknown.ts", title=None, registered=False)
+    summary, rows, inventory = preview.run(
+        monkeypatch, capsys, "--ts-root", r"J:\TVFile", "--register-unregistered-only", readonly=False)
+    assert summary["recordingRootExcludedFiles"] == 1
+    assert summary["autoRegisteredPaths"] == 1
+    with connect_db(str(preview.db)) as con:
+        assert con.execute("SELECT COUNT(*) FROM paths WHERE path=?", (recording.win_path,)).fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM paths WHERE path=?", (library.win_path,)).fetchone()[0] == 1

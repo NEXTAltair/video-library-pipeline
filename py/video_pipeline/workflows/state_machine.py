@@ -35,6 +35,7 @@ VALID_TRANSITIONS: dict[WorkflowPhase, set[WorkflowPhase]] = {
         WorkflowPhase.FAILED,
     },
     WorkflowPhase.PLAN_READY: {
+        WorkflowPhase.REVIEW_REQUIRED,
         WorkflowPhase.APPLYING,
         WorkflowPhase.APPLIED,
         WorkflowPhase.COMPLETE,

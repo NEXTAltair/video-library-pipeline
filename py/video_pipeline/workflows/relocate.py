@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
 from run_metadata_batches_promptv1 import extract_air_date
 
@@ -191,6 +191,13 @@ def metadata_reextract_action(run: Any, gate: Any) -> NextAction | None:
     )
 
 
+def planned_metadata_action(run_id: str, plan_id: str) -> NextAction:
+    return NextAction(action="review_planned_metadata",
+        label="Re-review metadata of planned candidates before moving",
+        tool="video_pipeline_resume", params={"runId": run_id, "artifactId": plan_id,
+        "resumeAction": "prepare_planned_metadata"}, requires_human_input=True)
+
+
 class RelocateWorkflowService:
     def __init__(
         self,
@@ -219,6 +226,7 @@ class RelocateWorkflowService:
             config_snapshot={
                 "windowsOpsRoot": config.windows_ops_root,
                 "destRoot": config.dest_root,
+                "tsRoot": config.ts_root,
                 "db": db_path,
                 "roots": list(config.roots or []),
                 "rootsFilePath": config.roots_file_path,
@@ -259,6 +267,8 @@ class RelocateWorkflowService:
     @serialized_workflow
     def resume(self, config: RelocateApplyConfig, *, action: str = "apply_relocate_move_plan") -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        if action == "prepare_planned_metadata":
+            return self._resume_planned_metadata(store, config)
         if action == "register_unregistered":
             return self._resume_register_unregistered(store, config.run_id)
         if action in {"prepare_relocate_metadata", "review_relocate_metadata"}:
@@ -810,6 +820,8 @@ class RelocateWorkflowService:
             "--skip-suspicious-title-check",
             str(bool(config.skip_suspicious_title_check)).lower(),
         ]
+        if config.ts_root:
+            args.extend(["--ts-root", config.ts_root])
         if config.roots:
             args.extend(["--roots-json", json.dumps(list(config.roots), ensure_ascii=False)])
         elif config.roots_file_path:
@@ -922,7 +934,8 @@ class RelocateWorkflowService:
                 ],
             )
 
-        if planned_moves > 0 and plan_artifact is not None:
+        # A partial plan does not clear metadata blockers for the remaining files.
+        if planned_moves > 0 and plan_artifact is not None and not has_metadata_gap and not has_review_blocker:
             self._approve_blocking_metadata_gates(store, run_id, "relocate_metadata_recheck_plan_ready")
             self._advance_to_phase(store, run_id, WorkflowPhase.PLAN_READY)
             return self._result(
@@ -942,7 +955,8 @@ class RelocateWorkflowService:
                             "resumeAction": "apply_relocate_move_plan",
                         },
                         requires_human_input=True,
-                    )
+                    ),
+                    planned_metadata_action(run_id, plan_artifact.id)
                 ],
             )
 
@@ -1063,6 +1077,8 @@ class RelocateWorkflowService:
             "--on-dst-exists", cfg.on_dst_exists,
             "--skip-suspicious-title-check", str(bool(cfg.skip_suspicious_title_check)).lower(),
         ]
+        if cfg.ts_root:
+            args.extend(["--ts-root", cfg.ts_root])
         if cfg.roots:
             args.extend(["--roots-json", json.dumps(cfg.roots, ensure_ascii=False)])
         elif cfg.roots_file_path:
@@ -1337,6 +1353,41 @@ class RelocateWorkflowService:
 
         return self._prepare_metadata_review(store, run_id, queue_artifact)
 
+    def _resume_planned_metadata(self, store: WorkflowStore, config: RelocateApplyConfig) -> WorkflowResult:
+        """Reopen only owned planned candidates; no metadata or move acceptance."""
+        run = store.read_run(config.run_id)
+        try:
+            plan = self._validate_apply_plan(store, config.run_id, config.artifact_id)
+            path = local_path_from_any(plan.path)
+            if not path.resolve().is_relative_to(store.run_dir(config.run_id).resolve()):
+                raise ValueError("planned metadata input escaped its run")
+            rows = [row for row in iter_jsonl(path) if row.get("status") == "planned"]
+            if not rows or any(not row.get("path_id") or not row.get("src") for row in rows):
+                raise ValueError("planned metadata review requires registered planned candidates")
+            ids = [row["path_id"] for row in rows]
+            if len(ids) != len(set(ids)):
+                raise ValueError("planned metadata cohort has duplicate path identities")
+            artifact_id = next_artifact_id(run, "relocate_metadata_queue")
+            queue_path = store.run_dir(config.run_id) / "metadata" / f"{artifact_id}.jsonl"
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            with queue_path.open("x", encoding="utf-8") as stream:
+                for row in rows:
+                    stream.write(json.dumps({"path_id": row["path_id"], "path": row["src"],
+                        "name": PureWindowsPath(row["src"]).name,
+                        "mtime_utc": (row.get("precondition") or {}).get("mtime_utc") or row.get("mtimeUtc")}, ensure_ascii=False) + "\n")
+            queue = store.register_artifact(config.run_id, artifact_type="relocate_metadata_queue",
+                path=queue_path, producer="RelocateWorkflowService.review_planned_metadata",
+                artifact_id=artifact_id, input_artifact_ids=[plan.id], metadata={"refreshReviewed": True, "rows": len(rows)})
+            store.create_review_gate(config.run_id, gate_type="relocate_metadata_review",
+                artifact_ids=[queue.id], gate_id=next_gate_id(store.read_run(config.run_id), "relocate_metadata_review"))
+            self._advance_to_phase(store, config.run_id, WorkflowPhase.REVIEW_REQUIRED)
+            return self._prepare_metadata_review(store, config.run_id, queue)
+        except RelocateApplyRejected as exc:
+            return self._reject_call(store.read_run(config.run_id), "planned_metadata_rejected", exc.diagnostic)
+        except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+            return self._reject_call(store.read_run(config.run_id), "planned_metadata_rejected", Diagnostic(
+                code="planned_metadata_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc)))
+
     def _resume_reextract_metadata(self, store: WorkflowStore, run_id: str) -> WorkflowResult:
         run = store.read_run(run_id)
         if run.flow != WorkflowFlow.RELOCATE.value or run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
@@ -1417,6 +1468,7 @@ class RelocateWorkflowService:
                 "--start-batch",
                 "1",
                 "--output-only",
+                *(["--ignore-human-reviewed"] if queue_artifact.metadata.get("refreshReviewed") is True else []),
             ],
             str(self.py_root),
         )
@@ -1642,6 +1694,7 @@ class RelocateWorkflowService:
         return RelocateDryRunConfig(
             windows_ops_root=str(snapshot.get("windowsOpsRoot") or ""),
             dest_root=str(snapshot.get("destRoot") or ""),
+            ts_root=str(snapshot.get("tsRoot") or ""),
             db=str(snapshot.get("db") or ""),
             roots=[str(v) for v in snapshot.get("roots") or [] if isinstance(v, str) and v],
             roots_file_path=str(snapshot.get("rootsFilePath") or ""),
@@ -1706,7 +1759,7 @@ class RelocateWorkflowService:
             if run.phase == WorkflowPhase.CREATED.value:
                 store.transition_run(run_id, WorkflowPhase.METADATA_EXTRACTED)
                 store.transition_run(run_id, WorkflowPhase.REVIEW_REQUIRED)
-            elif run.phase == WorkflowPhase.METADATA_EXTRACTED.value:
+            elif run.phase in {WorkflowPhase.METADATA_EXTRACTED.value, WorkflowPhase.PLAN_READY.value}:
                 store.transition_run(run_id, WorkflowPhase.REVIEW_REQUIRED)
             return
         if target == WorkflowPhase.PLAN_READY:

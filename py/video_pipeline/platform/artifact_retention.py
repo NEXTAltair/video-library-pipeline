@@ -20,11 +20,12 @@ import uuid
 import yaml
 
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
+from video_pipeline.platform.media_extensions import VIDEO_EXTENSIONS
 
 POLICY = ".artifact-policy.json"
 KIND = "video_pipeline_artifact_workspace"
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-MEDIA_SUFFIXES = {".ts", ".m2ts", ".mp4", ".mkv", ".avi", ".mov", ".wmv"}
+MEDIA_SUFFIXES = set(VIDEO_EXTENSIONS)
 
 
 def valid_id(value):

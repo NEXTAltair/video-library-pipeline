@@ -11,7 +11,6 @@ import shutil
 import sys
 from datetime import datetime, timezone
 
-import yaml
 
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
 from video_pipeline.workflows.dedup import make_plan, apply_plan, recover_quarantines, restore_plan
@@ -24,14 +23,14 @@ def configured_roots(source_root, dest_root, drive_routes):
         route_file = Path(windows_to_wsl_path(drive_routes))
         if not route_file.is_file():
             raise ValueError("drive routes file missing: " + str(route_file))
-        routes = yaml.safe_load(route_file.read_text(encoding="utf-8")) or {}
-        if routes.get("default_dest"):
-            roots.append(routes["default_dest"])
-        roots.extend(r["dest_root"] for r in routes.get("routes", []) if r.get("dest_root"))
-        if routes.get('movie_grouping_path'):
-            from video_pipeline.domain.path_placement_rules import load_drive_routes
-            loaded = load_drive_routes(route_file)
-            roots.extend(loaded.movie_grouping.destinations())
+        from video_pipeline.domain.path_placement_rules import load_drive_routes
+        routes = load_drive_routes(route_file)
+        if routes.default_dest:
+            roots.append(routes.default_dest)
+        roots.extend(r.dest_root for r in routes.routes if r.dest_root)
+        roots.extend(str(r.root) for r in routes.work_routes)
+        if routes.movie_grouping:
+            roots.extend(routes.movie_grouping.destinations())
     return list(dict.fromkeys(str(Path(windows_to_wsl_path(r)).resolve()) for r in roots if r))
 
 

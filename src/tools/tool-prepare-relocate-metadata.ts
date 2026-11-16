@@ -1,3 +1,4 @@
+import { VIDEO_EXTENSIONS } from "./media-extensions";
 import fs from "node:fs";
 import path from "node:path";
 import { getExtensionRootDir, latestJsonlFile, parseJsonObject, resolvePythonScript, runCmd, toToolResult } from "./runtime";
@@ -49,7 +50,7 @@ export function registerToolPrepareRelocateMetadata(api: PluginApi, getCfg: GetC
         properties: {
           roots: { type: "array", items: { type: "string" } },
           rootsFilePath: { type: "string" },
-          extensions: { type: "array", items: { type: "string" }, default: [".mp4"] },
+          extensions: { type: "array", items: { type: "string" }, default: VIDEO_EXTENSIONS },
           limit: { type: "integer", minimum: 1, maximum: 100000 },
           allowNeedsReview: { type: "boolean", default: false },
           scanErrorPolicy: { type: "string", enum: ["warn", "fail", "threshold"], default: "warn" },
@@ -98,6 +99,8 @@ export function registerToolPrepareRelocateMetadata(api: PluginApi, getCfg: GetC
           String(cfg.windowsOpsRoot || ""),
           "--dest-root",
           String(cfg.destRoot || ""),
+          "--ts-root",
+          String(cfg.tsRoot || ""),
           "--roots-file-path",
           String(params.rootsFilePath || defaultRootsFile),
           "--allow-needs-review",

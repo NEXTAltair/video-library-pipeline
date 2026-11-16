@@ -2,5 +2,4 @@ version: 1
 roots:
 # Example: relocate legacy by_program leftovers to current placement rules
 - B:\\VideoLibrary
-extensions:
-- .mp4
+# Omit extensions to use the shared video defaults; explicit lists restrict scanning.

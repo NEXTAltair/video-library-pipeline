@@ -10,6 +10,7 @@ from pathlib import PureWindowsPath
 from db_helpers import latest_path_metadata
 from mediaops_schema import connect_db
 from pathscan_common import now_iso
+from video_pipeline.platform.media_extensions import VIDEO_EXTENSIONS
 
 
 def main() -> int:
@@ -62,7 +63,7 @@ def main() -> int:
                 path = str(path)
                 if not (path == root or path.startswith(root + "\\")):
                     continue
-                if PureWindowsPath(path).suffix.lower() != ".mp4":
+                if PureWindowsPath(path).suffix.lower() not in VIDEO_EXTENSIONS:
                     continue
 
                 row = con.execute("SELECT path_id FROM paths WHERE path=?", (path,)).fetchone()

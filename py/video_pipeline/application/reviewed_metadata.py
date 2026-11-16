@@ -25,7 +25,7 @@ def local_path(value):
     return Path(windows_to_wsl_path(str(value))).resolve()
 
 
-def suspicious(row):
+def suspicious(row, *, explicit_title_review=False):
     title = str(row.get("program_title") or "").strip()
     folder = by_program_group_from_path(row.get("path"))
     if detect_subtitle_in_program_title(title):
@@ -34,7 +34,7 @@ def suspicious(row):
         return False
     tn, fn = lower_compact(title), lower_compact(folder)
     return looks_swallowed_program_title(title, folder) or bool(
-        tn and fn and fn.startswith(tn) and len(fn) >= len(tn) + 3)
+        not explicit_title_review and tn and fn and fn.startswith(tn) and len(fn) >= len(tn) + 3)
 
 
 REVIEW_FIELDS = {'program_title', 'air_date', 'episode_no', 'subtitle', 'genre', 'franchise',
@@ -121,7 +121,9 @@ def review_rows(rows, hints, row_overrides=None):
             raise ValueError(f"invalid reviewed metadata: {reason}")
         if not edited.get("program_title") or not edited.get("air_date"):
             raise ValueError("reviewed metadata requires title and air_date")
-        if edited.get("needs_review") or suspicious(edited):
+        # An explicit, note-backed title correction need not match the old folder.
+        # Keep title contamination and unresolved review-risk checks intact.
+        if edited.get("needs_review") or suspicious(edited, explicit_title_review="program_title" in row_edit):
             raise ValueError("review-risk rows remain; edit the review before applying")
         if not edited.get("path_id"):
             raise ValueError("reviewed metadata requires registered path_id")

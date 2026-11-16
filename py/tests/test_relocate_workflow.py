@@ -1,5 +1,7 @@
 import json
 import sqlite3
+
+import pytest
 from pathlib import Path
 from video_pipeline.workflows.relocate import metadata_reextract_action
 from video_pipeline.workflows.store import sha256_file
@@ -205,7 +207,7 @@ def test_relocate_default_scope_and_work_filter_survive_recheck(tmp_path):
     result = harness.dry_run()
     assert result.ok
     snapshot = harness.manifest()["configSnapshot"]
-    assert snapshot["roots"] == [r"B:\Unwatched", r"B:\VideoLibrary", r"D:\Anime", r"J:\TVFile"]
+    assert snapshot["roots"] == [r"B:\Unwatched", r"B:\VideoLibrary", r"D:\Anime"]
     assert snapshot["programTitles"] == ["Show"]
     restored = harness.service()._config_from_run(WorkflowStore(Path(harness.cfg.windows_ops_root)).read_run("run_work_scope"))
     assert restored.roots == snapshot["roots"]
@@ -262,6 +264,14 @@ def test_relocate_dry_run_plan_ready_registers_plan_and_next_action(tmp_path) ->
                 "resumeAction": "apply_relocate_move_plan",
             },
             "requiresHumanInput": True,
+        },
+        {
+            "action": "review_planned_metadata",
+            "label": "Re-review metadata of planned candidates before moving",
+            "tool": "video_pipeline_resume",
+            "params": {"runId": "run_relocate_plan", "artifactId": "relocate_plan",
+                       "resumeAction": "prepare_planned_metadata"},
+            "requiresHumanInput": True,
         }
     ]
 
@@ -285,6 +295,63 @@ def test_relocate_dry_run_metadata_gap_registers_queue_without_already_correct(t
     assert payload["outcome"] != "relocate_already_correct"
     assert payload["diagnostics"][-1]["code"] == "relocate_metadata_preparation_required"
     assert payload["nextActions"][0]["action"] == "prepare_relocate_metadata"
+
+
+def test_relocate_partial_plan_preserves_metadata_prepare_action(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_partial_metadata", scenario="metadata_gap")
+    original_runner = harness.python_runner
+
+    def mixed_runner(script, args, cwd=None):
+        payload = json.loads(original_runner(script, args, cwd))
+        if script.name == "relocate_existing_files.py":
+            payload["plannedMoves"] = 9
+            payload["metadataQueuePlannedCount"] = 2185
+            payload["canProceedToRelocateApply"] = False
+            with Path(payload["planPath"]).open("a", encoding="utf-8") as plan:
+                plan.write(json.dumps({"path_id": "valid", "src": "old.mp4", "dst": "new.mp4", "status": "planned"}) + "\n")
+        return json.dumps(payload)
+
+    harness.python_runner = mixed_runner
+    payload = harness.dry_run().to_dict()
+    assert payload["phase"] == "review_required"
+    action = payload["nextActions"][0]
+    assert action["action"] == "prepare_relocate_metadata"
+    assert action["tool"] == "video_pipeline_resume"
+    assert action["params"]["artifactIds"] == ["relocate_metadata_queue"]
+    cfg = RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=harness.cfg.run_id)
+    rejected = harness.service().resume(cfg, action="apply_relocate_move_plan").to_dict()
+    assert rejected["ok"] is False
+    assert not any(name == "apply_move_plan.ps1" for name, _ in harness.calls)
+    reviewed = harness.service().resume(cfg, action=action["params"]["resumeAction"]).to_dict()
+    assert reviewed["outcome"] == "relocate_metadata_review_required"
+    assert reviewed["nextActions"][0]["action"] == "review_metadata"
+
+
+@pytest.mark.parametrize(
+    ("counter", "expected_action"),
+    [
+        ("metadataMissingSkipped", "prepare_relocate_metadata"),
+        ("unreviewedMetadataSkipped", "prepare_relocate_metadata"),
+        ("suspiciousProgramTitleSkipped", "review_relocate_metadata"),
+        ("needsReviewSkipped", "review_relocate_metadata"),
+    ],
+)
+def test_relocate_partial_plan_does_not_approve_metadata_gate(tmp_path, counter, expected_action) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_partial_blocker", scenario="plan_ready")
+    original_runner = harness.python_runner
+
+    def blocked_runner(script, args, cwd=None):
+        payload = json.loads(original_runner(script, args, cwd))
+        if script.name == "relocate_existing_files.py":
+            payload[counter] = 1
+        return json.dumps(payload)
+
+    harness.python_runner = blocked_runner
+    payload = harness.dry_run().to_dict()
+    assert payload["phase"] == "review_required"
+    assert payload["nextActions"][0]["action"] == expected_action
+    if counter != "metadataMissingSkipped":
+        assert payload["gates"][0]["status"] == "open"
 
 
 def test_relocate_dry_run_suspicious_title_creates_review_gate(tmp_path) -> None:
@@ -878,3 +945,101 @@ def test_relocate_metadata_actions_reject_wrong_phase_without_writing(tmp_path) 
         assert rejected["phase"] == "plan_ready"
 
     assert store.manifest_path(cfg.run_id).read_bytes() == before
+
+
+def test_planned_metadata_action_reopens_owned_plan_readonly(tmp_path):
+    harness=RelocateWorkflowHarness(tmp_path,run_id='planned_refresh')
+    result=harness.dry_run()
+    action=next(a for a in result.next_actions if a.action=='review_planned_metadata')
+    assert action.requires_human_input and action.params['artifactId']=='relocate_plan'
+    from workflow_cli import _next_actions_for_run
+    status_actions=_next_actions_for_run(WorkflowStore(Path(harness.cfg.windows_ops_root)).read_run(harness.cfg.run_id))
+    assert any(a.to_dict()==action.to_dict() for a in status_actions)
+    store=WorkflowStore(Path(harness.cfg.windows_ops_root));run=store.read_run(harness.cfg.run_id)
+    plan=Path(run.artifacts['relocate_plan'].path);before=plan.read_bytes();db=Path(harness.cfg.db);dbbefore=db.read_bytes()
+    reviewed=harness.service().resume(RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id),action='prepare_planned_metadata')
+    assert reviewed.phase=='review_required' and store.read_run(harness.cfg.run_id).phase=='review_required'
+    assert plan.read_bytes()==before and db.read_bytes()==dbbefore
+    run=store.read_run(harness.cfg.run_id);queue=run.artifacts['relocate_metadata_queue'];rows=[json.loads(l) for l in Path(queue.path).read_text().splitlines()]
+    assert len(rows)==1 and rows[0]['path_id']=='p1' and rows[0]['name']=='show.mp4'
+    assert queue.input_artifact_ids==['relocate_plan'] and queue.metadata['refreshReviewed']
+    extract_args=next(args for name,args in reversed(harness.calls) if name=='run_metadata_batches_promptv1.py')
+    assert '--output-only' in extract_args and '--ignore-human-reviewed' in extract_args
+    blocked=harness.service().apply(RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id))
+    assert not blocked.ok
+
+
+@pytest.mark.parametrize('bad', ['checksum','foreign','wrong_phase'])
+def test_planned_metadata_rejects_invalid_inputs_without_extraction(tmp_path,bad):
+    harness=RelocateWorkflowHarness(tmp_path,run_id='bad_refresh');harness.dry_run()
+    store=WorkflowStore(Path(harness.cfg.windows_ops_root));run=store.read_run(harness.cfg.run_id)
+    artifact='relocate_plan'
+    if bad=='checksum':Path(run.artifacts[artifact].path).write_text('changed')
+    if bad=='foreign':artifact='foreign_plan'
+    if bad=='wrong_phase':run.phase='complete';run.status='complete';store.write_run(run)
+    before=len(harness.calls)
+    result=harness.service().resume(RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id,artifact_id=artifact),action='prepare_planned_metadata')
+    assert not result.ok and len(harness.calls)==before
+    assert not any(a.type=='metadata_extract_output' for a in store.read_run(harness.cfg.run_id).artifacts.values())
+
+
+def test_planned_metadata_acceptance_generates_new_plan(tmp_path, monkeypatch):
+    import video_pipeline.workflows.relocate as module
+    harness=RelocateWorkflowHarness(tmp_path,run_id='refresh_accept');harness.dry_run()
+    service=harness.service();cfg=RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id)
+    reviewed=service.resume(cfg,action='prepare_planned_metadata')
+    action=next(a for a in reviewed.next_actions if a.action=='review_metadata')
+    monkeypatch.setattr(module,'apply_reviewed_metadata',lambda *args:{'ok':True,'rows':1})
+    accepted=service.resume(RelocateApplyConfig(windows_ops_root=cfg.windows_ops_root,run_id=cfg.run_id,
+        gate_id=action.params['gateId'],artifact_ids=action.params['artifactIds'],review_yaml_paths=action.params['reviewYamlPaths']),action='apply_reviewed_metadata')
+    assert accepted.phase=='plan_ready' and accepted.ok
+    planned=next(a for a in accepted.next_actions if a.action=='review_plan')
+    assert planned.params['artifactId']=='relocate_plan_0002'
+
+
+def test_planned_metadata_extract_failure_preserves_review_gate_and_retry(tmp_path):
+    from workflow_cli import _next_actions_for_run
+    harness=RelocateWorkflowHarness(tmp_path,run_id='refresh_failure');harness.dry_run()
+    def fail(script,args,cwd=None):
+        if script.name=='run_metadata_batches_promptv1.py':raise RuntimeError('extract failed')
+        return harness.python_runner(script,args,cwd)
+    service=RelocateWorkflowService(py_root=tmp_path,python_runner=fail)
+    cfg=RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root,run_id=harness.cfg.run_id)
+    failed=service.resume(cfg,action='prepare_planned_metadata')
+    assert not failed.ok
+    store=WorkflowStore(Path(harness.cfg.windows_ops_root));run=store.read_run(cfg.run_id)
+    assert run.phase=='review_required'
+    actions=_next_actions_for_run(run)
+    assert actions and all(a.params.get('resumeAction')!='apply_relocate_move_plan' for a in actions)
+    retried=harness.service().resume(cfg,action=actions[0].params['resumeAction'])
+    assert retried.phase=='review_required'
+    assert any(g.type=='metadata_review' and g.status=='open' for g in store.read_run(cfg.run_id).review_gates.values())
+
+
+def test_recording_exclusion_survives_explicit_roots_and_resume(tmp_path):
+    harness = RelocateWorkflowHarness(tmp_path, run_id="recording_exclusion")
+    harness.cfg.ts_root = r"J:\TVFile"
+    harness.cfg.roots = ["J:\\", r"B:\Library"]
+    harness.dry_run()
+    args = next(args for name, args in harness.calls if name == "relocate_existing_files.py")
+    assert args[args.index("--ts-root") + 1] == r"J:\TVFile"
+    run = WorkflowStore(Path(harness.cfg.windows_ops_root)).read_run(harness.cfg.run_id)
+    restored = harness.service()._config_from_run(run)
+    assert restored.ts_root == r"J:\TVFile"
+    assert restored.roots == harness.cfg.roots
+
+
+def test_recording_root_forwarded_during_registration_resume_and_recheck(tmp_path):
+    harness = RelocateWorkflowHarness(tmp_path, run_id="register_recording_exclusion", scenario="unregistered")
+    harness.cfg.ts_root = r"J:\TVFile"
+    harness.cfg.roots = ["J:\\", r"B:\Library"]
+    params = harness.dry_run().to_dict()["nextActions"][0]["params"]
+    harness.scenario = "metadata_gap"
+    harness.service().resume(
+        RelocateApplyConfig(windows_ops_root=harness.cfg.windows_ops_root, run_id=params["runId"]),
+        action=params["resumeAction"],
+    )
+    calls = [args for script, args in harness.calls if script == "relocate_existing_files.py"]
+    assert len(calls) == 3
+    assert any("--register-unregistered-only" in args for args in calls)
+    assert all(args[args.index("--ts-root") + 1] == r"J:\TVFile" for args in calls)
