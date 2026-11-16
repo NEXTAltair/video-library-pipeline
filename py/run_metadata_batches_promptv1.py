@@ -737,10 +737,11 @@ def _build_locked_row(existing: dict, rec: dict, model: str, extraction_version:
     row["model"] = row.get("model") or model
     row["extraction_version"] = row.get("extraction_version") or extraction_version
 
-    row["evidence"] = row.get("evidence") or {"source_name": "manual_review_lock", "raw": rec.get("name")}
-    row["human_reviewed"] = True
+    row["evidence"] = row.get("evidence") or {"source_name": "accepted_review_lock", "raw": rec.get("name")}
+    # Preserve provenance from the locked existing record; do not upgrade it.
+    row["human_reviewed"] = bool(row.get("human_reviewed")) and row.get("review_acceptance") != "agent_accepted"
     row.setdefault("title_architecture", ACTIVE_TITLE_ARCHITECTURE)
-    row.setdefault("title_extraction_path", "human_review_lock")
+    row.setdefault("title_extraction_path", "accepted_review_lock")
     return row
 
 
@@ -790,6 +791,7 @@ def main() -> int:
     batch_idx = 0
     processed = 0
     preserved_human_reviewed = 0
+    preserved_agent_accepted = 0
     title_auto_corrected = 0
     generated_input_jsonl_paths: list[str] = []
     generated_output_jsonl_paths: list[str] = []
@@ -807,7 +809,7 @@ def main() -> int:
     print(f"INFO program_dictionary_count={program_dict.count}")
 
     def flush():
-        nonlocal batch, batch_idx, processed, preserved_human_reviewed, title_auto_corrected
+        nonlocal batch, batch_idx, processed, preserved_human_reviewed, preserved_agent_accepted, title_auto_corrected
         nonlocal generated_input_jsonl_paths, generated_output_jsonl_paths
         if not batch:
             return
@@ -830,11 +832,14 @@ def main() -> int:
                            and reviewed_title_conflicts_with_filename(
                                str(existing.get("program_title") or ""), strip_suffix(str(rec.get("name") or "")),
                                _match_from_known_programs(strip_suffix(str(rec.get("name") or "")), None, alias_hints)))
-                if isinstance(existing, dict) and existing.get("human_reviewed") is True and not recheck:
+                if isinstance(existing, dict) and (existing.get("human_reviewed") is True or existing.get("review_acceptance") == "agent_accepted") and not recheck:
                     locked_row = _build_locked_row(existing, rec, args.model, args.extraction_version)
                     enforce_db_contract(locked_row)
                     rows.append(locked_row)
-                    preserved_human_reviewed += 1
+                    if locked_row.get("human_reviewed"):
+                        preserved_human_reviewed += 1
+                    else:
+                        preserved_agent_accepted += 1
                     continue
 
             name = rec["name"]
@@ -1048,6 +1053,7 @@ def main() -> int:
     finally:
         db_con.close()
     print(f"OK preserved_human_reviewed={preserved_human_reviewed}")
+    print(f"OK preserved_agent_accepted={preserved_agent_accepted}")
     print(f"OK title_auto_corrected={title_auto_corrected}")
     print(f"OK processed={processed} batches={batch_idx}")
     print(
@@ -1065,6 +1071,7 @@ def main() -> int:
                 "extractionVersion": str(args.extraction_version),
                 "preserveHumanReviewed": not bool(args.ignore_human_reviewed),
                 "preservedHumanReviewed": int(preserved_human_reviewed),
+                "preservedAgentAccepted": int(preserved_agent_accepted),
                 "titleAutoCorrected": int(title_auto_corrected),
                 "processed": int(processed),
                 "batches": int(batch_idx),

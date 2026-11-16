@@ -73,7 +73,7 @@ def repair(db, pairs, titles, *, strict=False, archive_orphans=False):
             changes.append({"kind":"missing_destination_registered",**detail})
         for item in titles:
             name = item["filename"]
-            candidates = con.execute("SELECT p.path_id,p.path,m.data_json,m.human_reviewed,m.program_title,m.episode_no FROM paths p JOIN path_metadata m ON p.path_id=m.path_id WHERE p.name=?",(name,)).fetchall()
+            candidates = con.execute("SELECT p.path_id,p.path,m.data_json,m.source,m.human_reviewed,m.program_title,m.episode_no FROM paths p JOIN path_metadata m ON p.path_id=m.path_id WHERE p.name=?",(name,)).fetchall()
             if not candidates:
                 unresolved.append({"filename":name,"reason":"no_exact_filename_match"}); continue
             title = item["reproducedInitial"]["program_title"]
@@ -81,8 +81,8 @@ def repair(db, pairs, titles, *, strict=False, archive_orphans=False):
             from run_metadata_batches_promptv1 import parse_episode
             episode = parse_episode(name)
             for row in candidates:
-                if row["human_reviewed"]:
-                    unresolved.append({"path":row["path"],"reason":"human_reviewed_preserved"}); continue
+                if row["human_reviewed"] or row["source"] == "agent_accepted":
+                    unresolved.append({"path":row["path"],"reason":"accepted_metadata_preserved"}); continue
                 if not Path(windows_to_wsl_path(row["path"])).is_file():
                     unresolved.append({"path":row["path"],"reason":"file_not_present"}); continue
                 md = json.loads(row["data_json"])

@@ -222,6 +222,7 @@ def main() -> int:
 
     # human_reviewed=true のレコードが何件保護されるか事前カウント
     human_reviewed_protected = 0
+    agent_accepted_protected = 0
     if to_upsert:
         pids = [r[0] for r in to_upsert]
         placeholders = ",".join("?" * len(pids))
@@ -231,6 +232,11 @@ def main() -> int:
             pids,
         ).fetchone()
         human_reviewed_protected = row[0] if row else 0
+        row = con.execute(
+            f"SELECT COUNT(*) FROM path_metadata WHERE path_id IN ({placeholders})"
+            " AND source = 'agent_accepted'", pids,
+        ).fetchone()
+        agent_accepted_protected = row[0] if row else 0
 
     try:
         begin_immediate(con)
@@ -253,6 +259,7 @@ def main() -> int:
                   broadcaster=excluded.broadcaster,
                   human_reviewed=excluded.human_reviewed
                 WHERE path_metadata.human_reviewed IS NOT 1
+                  AND path_metadata.source != 'agent_accepted'
                 """,
                 to_upsert,
             )
@@ -264,6 +271,7 @@ def main() -> int:
         con.close()
 
     result["humanReviewedProtected"] = int(human_reviewed_protected)
+    result["agentAcceptedProtected"] = int(agent_accepted_protected)
 
     print(json.dumps(result, ensure_ascii=False))
     return 0

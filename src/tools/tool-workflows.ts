@@ -157,6 +157,11 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
         reviewYamlPaths: { type: "array", items: { type: "string" } },
         runRevision: { type: "integer", minimum: 0 },
         reviewDigests: { type: "object", additionalProperties: { type: "string", pattern: "^[a-f0-9]{64}$" } },
+        acceptance: { type: "string", enum: ["agent_accepted", "human_confirmed"] },
+        humanConfirmation: {
+          type: "object", additionalProperties: false, required: ["confirmed_by", "evidence"],
+          properties: { confirmed_by: { type: "string", minLength: 1 }, evidence: { type: "string", minLength: 1 } },
+        },
         onDstExists: { type: "string", enum: ["error", "rename_suffix"] },
         supersededByRunId: { type: "string" },
         reason: { type: "string" },
@@ -191,6 +196,8 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
       const revision = finiteInteger(params.runRevision);
       if (revision !== null) args.push("--run-revision", String(revision));
       if (params.reviewDigests) args.push("--review-digests-json", JSON.stringify(params.reviewDigests));
+      if (params.acceptance) args.push("--acceptance", String(params.acceptance));
+      if (params.humanConfirmation) args.push("--human-confirmation-json", JSON.stringify(params.humanConfirmation));
       return runWorkflowCli("resume", args, workflowToolResult);
     },
   });

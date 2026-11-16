@@ -173,7 +173,7 @@ def test_atomic_apply_freezes_drafts_keeps_references_and_replays_committed_resu
     assert len(list(accepted.glob("*.yaml"))) == 2
     assert len(list(db.parent.glob("*.bak_*"))) == 1
     with closing(sqlite3.connect(db)) as con:
-        assert con.execute("SELECT program_title,human_reviewed,source FROM path_metadata").fetchall() == [("After", 1, "human_reviewed")] * 2
+        assert con.execute("SELECT program_title,human_reviewed,source FROM path_metadata").fetchall() == [("After", 0, "agent_accepted")] * 2
         assert con.execute("SELECT COUNT(*) FROM workflow_metadata_commits").fetchone()[0] == 1
     # An interrupted caller cannot silently apply newly edited bytes to a
     # gate whose earlier exact acceptance was already committed.
@@ -262,7 +262,7 @@ def test_planning_failure_reports_committed_metadata_and_does_not_offer_reapplic
     assert store.read_run(cfg.run_id).review_gates[cfg.gate_id].status == "approved"
     assert not result.next_actions
     with closing(sqlite3.connect(db)) as con:
-        assert con.execute("SELECT COUNT(*) FROM path_metadata WHERE source='human_reviewed'").fetchone()[0] == 2
+        assert con.execute("SELECT COUNT(*) FROM path_metadata WHERE source='agent_accepted'").fetchone()[0] == 2
     before = db_state(db)
     retry = service.resume(cfg, action="apply_reviewed_metadata")
     assert not retry.ok
@@ -312,7 +312,8 @@ def test_explicit_title_review_does_not_trust_contaminated_old_folder():
     overrides = {'a-studio': {'program_title': 'A-Studio+', 'review_note': '先頭番組名/EPGトークバラエティを確認'}}
     reviewed = review_rows([row], [], overrides)
     assert reviewed[0]['program_title'] == 'A-Studio+'
-    assert reviewed[0]['human_reviewed'] is True
+    assert reviewed[0]['human_reviewed'] is False
+    assert reviewed[0]['review_acceptance'] == 'agent_accepted'
     assert row == original
 
 

@@ -76,7 +76,7 @@ def main() -> int:
                     pick = True
                 else:
                     pick = (
-                        (not md.get("human_reviewed") and md.get("title_architecture") != "RULE_BASED_TITLE_V2")
+                        (not md.get("human_reviewed") and md.get("review_acceptance") != "agent_accepted" and md.get("title_architecture") != "RULE_BASED_TITLE_V2")
                         or not md.get("program_title")
                         or md.get("air_date") is None
                         or bool(md.get("needs_review"))

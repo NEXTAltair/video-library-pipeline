@@ -107,6 +107,8 @@ class RelocateApplyConfig:
     review_yaml_paths: list[str] = field(default_factory=list)
     run_revision: int | None = None
     review_digests: dict[str, str] = field(default_factory=dict)
+    acceptance: str = "agent_accepted"
+    human_confirmation: dict[str, str] | None = None
 
 
 def local_path_from_any(path_str: str) -> Path:
@@ -172,6 +174,7 @@ def metadata_reextract_action(run: Any, gate: Any) -> NextAction | None:
             if (expected := extract_air_date(str(row.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]))
             and row.get("air_date") != expected
             and row.get("human_reviewed") is not True
+            and row.get("review_acceptance") != "agent_accepted"
         )
     except (OSError, ValueError):
         return None

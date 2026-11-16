@@ -153,7 +153,7 @@ def main() -> int:
         # re-opening large numbers of accepted titles. (Issue #94)
         # In targeted mode, prefix_family alone is sufficient (operator
         # explicitly asked about this title).
-        if match_source == "exact_human_reviewed":
+        if match_source in {"exact_human_reviewed", "exact_agent_accepted"}:
             if not SUBTITLE_SEPARATORS.search(program_title):
                 continue
             pf_match = longest_prefix_title_match(
@@ -167,7 +167,7 @@ def main() -> int:
                 # Broad scan: require strong corroboration
                 pf_norm = normalize_title_for_comparison(pf_match)
                 has_strong_source = (
-                    pf_norm in sources.human_reviewed_norm
+                    pf_norm in (sources.human_reviewed_norm | sources.agent_accepted_norm)
                     or any(
                         normalize_title_for_comparison(p) == pf_norm
                         for p in sources.programs
@@ -187,7 +187,7 @@ def main() -> int:
             continue
 
         confidence = (
-            "high" if match_source == "human_reviewed"
+            "high" if match_source in {"human_reviewed", "agent_accepted"}
             else "medium" if match_source == "programs_table"
             else "low"  # prefix_family, separator_split
         )
@@ -240,7 +240,7 @@ def main() -> int:
                 program_title, sources, min_extra_chars=args.min_extra_chars,
             )
             has_suggestion = False
-            if match_src == "exact_human_reviewed" and SUBTITLE_SEPARATORS.search(program_title):
+            if match_src in {"exact_human_reviewed", "exact_agent_accepted"} and SUBTITLE_SEPARATORS.search(program_title):
                 # Fallback: check prefix_family only for contaminated human_reviewed titles
                 pf = longest_prefix_title_match(
                     program_title, sources.prefix_families,
@@ -248,7 +248,7 @@ def main() -> int:
                 )
                 if pf:
                     suggested, match_src = pf, "prefix_family"
-            if suggested and match_src != "exact_human_reviewed":
+            if suggested and match_src not in {"exact_human_reviewed", "exact_agent_accepted"}:
                 st_norm = normalize_title_for_comparison(suggested)
                 if st_norm != normalize_title_for_comparison(program_title):
                     rt_entry["suggestedTitle"] = suggested
@@ -258,7 +258,7 @@ def main() -> int:
             # Broad targeted: skip clean human_reviewed entries without a suggestion.
             # Exception: operator-supplied canonicalTitle means they already know the
             # correct title — include the row so forced-correction can proceed. (Issue #94)
-            if not is_narrow_targeted and match_src == "exact_human_reviewed" and not has_suggestion:
+            if not is_narrow_targeted and match_src in {"exact_human_reviewed", "exact_agent_accepted"} and not has_suggestion:
                 if not canonical_title_override:
                     continue
 

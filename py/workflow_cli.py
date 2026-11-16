@@ -423,6 +423,8 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                 review_yaml_paths=_parse_json_array(getattr(args, "review_yaml_paths_json", "")),
                 run_revision=getattr(args, "run_revision", None),
                 review_digests=json.loads(getattr(args, "review_digests_json", "") or "{}"),
+                acceptance=getattr(args, "acceptance", "agent_accepted"),
+                human_confirmation=json.loads(args.human_confirmation_json) if getattr(args, "human_confirmation_json", "") else None,
             ),
             action=action,
         )
@@ -440,6 +442,8 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                 review_yaml_paths=_parse_json_array(getattr(args, "review_yaml_paths_json", "")),
                 run_revision=getattr(args, "run_revision", None),
                 review_digests=json.loads(getattr(args, "review_digests_json", "") or "{}"),
+                acceptance=getattr(args, "acceptance", "agent_accepted"),
+                human_confirmation=json.loads(args.human_confirmation_json) if getattr(args, "human_confirmation_json", "") else None,
             ),
             action=action,
         )
@@ -585,6 +589,8 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--review-yaml-paths-json", default="")
     resume.add_argument("--run-revision", type=int)
     resume.add_argument("--review-digests-json", default="")
+    resume.add_argument("--acceptance", choices=["agent_accepted", "human_confirmed"], default="agent_accepted")
+    resume.add_argument("--human-confirmation-json", default="")
 
     status = sub.add_parser("status")
     status.add_argument("--windows-ops-root", required=True)

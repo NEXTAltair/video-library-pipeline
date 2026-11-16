@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from video_pipeline.domain.review_provenance import is_agent_accepted_metadata
 from db_helpers import metadata_source_flags, reconstruct_path_metadata
 from mediaops_schema import connect_db, create_schema_if_needed, fetchall
 from path_placement_rules import build_expected_dest_path, build_routed_dest_path, has_required_db_contract, load_drive_routes
@@ -273,7 +274,7 @@ def main() -> int:
                 continue
 
             is_human_reviewed, is_llm = metadata_source_flags(md, md_source)
-            if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
+            if not is_human_reviewed and not is_llm and not is_agent_accepted_metadata(md_source, md) and not allow_unreviewed_metadata:
                 metadata_skipped += 1
                 continue
 
