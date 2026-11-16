@@ -130,6 +130,8 @@ def latest_path_metadata_by_path(con, path: str) -> tuple[dict[str, Any] | None,
 def is_human_reviewed_metadata(source: str | None, md: dict[str, Any] | None) -> bool:
     """Return whether metadata should be treated as human-reviewed."""
     source_norm = str(source or "").strip().lower()
+    if source_norm == "agent_accepted" or (isinstance(md, dict) and md.get("review_acceptance") == "agent_accepted"):
+        return False
     if source_norm == "human_reviewed":
         return True
     if isinstance(md, dict):

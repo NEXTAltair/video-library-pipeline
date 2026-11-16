@@ -26,10 +26,12 @@ function stringArray(v: unknown): string[] {
   return v.filter((x): x is string => typeof x === "string" && x.length > 0);
 }
 
-function parseReextractStats(stdout: string): { processed?: number; batches?: number; preservedHumanReviewed?: number } {
-  const out: { processed?: number; batches?: number; preservedHumanReviewed?: number } = {};
+function parseReextractStats(stdout: string): { processed?: number; batches?: number; preservedHumanReviewed?: number; preservedAgentAccepted?: number } {
+  const out: { processed?: number; batches?: number; preservedHumanReviewed?: number; preservedAgentAccepted?: number } = {};
   const m1 = stdout.match(/OK preserved_human_reviewed=(\d+)/);
   if (m1) out.preservedHumanReviewed = Number(m1[1]);
+  const agent = stdout.match(/OK preserved_agent_accepted=(\d+)/);
+  if (agent) out.preservedAgentAccepted = Number(agent[1]);
   const m2 = stdout.match(/OK processed=(\d+)\s+batches=(\d+)/);
   if (m2) {
     out.processed = Number(m2[1]);

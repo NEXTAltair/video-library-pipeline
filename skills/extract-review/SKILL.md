@@ -107,3 +107,34 @@ Never edit the extraction JSONL, IDs, source paths, cohort, or destinations.
 Acceptance freezes the reviewed rows and updates metadata through the same
 backup/transaction/replay path as alias review. Genre metadata may be corrected;
 changing the destination taxonomy remains outside this gate.
+
+## Program-level genre consistency
+
+Before accepting a cohort with multiple genres for one normalized program,
+review the **complete title cohort**, not only the minority or one extraction
+batch. Use `py/prepare_program_genre_review.py` as a non-applying draft helper;
+see `docs/operations/program-genre-policy.md`. Explicit evidence-backed rules
+win; otherwise use the recorded 3/5 vote share and minimum lead of 2. Close or
+small samples stay listed for review. Unknown votes remain in the denominator.
+Canonical aliases need broadcaster evidence; do not fuzzy-merge similar shows.
+An episode's EPG category is a vote, not a separate program identity.
+
+For an already classified source, a genre-changing proposal additionally needs
+a matching program majority and a checked, non-contradictory official category.
+A per-path explicit owner approval may cover the named exception. Default-root
+sources may use the title-level decision. Keep air_date/episode/subtitle/work
+identity and existing series root/layout unchanged. Movie, Godzilla, L-syllabary
+and zero-file holds are separate from genre consistency. A genre review cannot
+approve their movement.
+
+The helper's output is a draft, **not** a new run artifact or accepted review.
+Merge only eligible path_ids into the exact current run-owned review YAML,
+preserving its source_jsonl/cohort/hints and any independent corrections; then
+use the returned V2 metadata-review action. Do not accept held rows or the old
+relocate plan. Check the fresh plan after metadata acceptance.
+
+Acceptance by an agent is `agent_accepted`, not evidence of human review.
+Use actual human confirmation only with its original confirmer/reference.
+Legacy `human_reviewed` labels alone do not establish who inspected the rows;
+migrate only the explicit evidence-scoped rows using the supported dry-run
+procedure, never all records sharing that source label.

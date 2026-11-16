@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from video_pipeline.domain.review_provenance import is_agent_accepted_metadata
 from db_helpers import latest_path_metadata, metadata_source_flags
 from broadcast_frame_titles import reviewed_title_conflicts_with_filename
 from run_metadata_batches_promptv1 import strip_suffix, _load_hints_with_status, _match_from_known_programs
@@ -153,7 +154,7 @@ def main() -> int:
     ap.add_argument(
         "--allow-unreviewed-metadata",
         default="false",
-        help="Allow non-human_reviewed metadata (e.g. source=llm) to generate relocation plans",
+        help="Allow metadata outside human_reviewed/agent_accepted/llm to generate relocation plans",
     )
     ap.add_argument("--queue-missing-metadata", default="false")
     ap.add_argument("--write-metadata-queue-on-dry-run", default="false")
@@ -373,6 +374,7 @@ def main() -> int:
                 continue
 
             is_human_reviewed, is_llm = metadata_source_flags(md, md_source)
+            is_review_accepted = is_human_reviewed or is_agent_accepted_metadata(md_source, md)
 
             recording_base = strip_suffix(str(sf.name or ""))
             canonical = _match_from_known_programs(recording_base, None, alias_hints)
@@ -386,7 +388,7 @@ def main() -> int:
                                              "name": sf.name, "mtime_utc": sf.mtime_utc})
                 continue
 
-            if not is_human_reviewed and not is_llm and not allow_unreviewed_metadata:
+            if not is_human_reviewed and not is_llm and not is_agent_accepted_metadata(md_source, md) and not allow_unreviewed_metadata:
                 unreviewed_metadata_skipped += 1
                 rows_for_plan.append(
                     {
@@ -407,8 +409,8 @@ def main() -> int:
             vr = validate_move_candidate(
                 sf.win_path, md,
                 allow_needs_review=allow_needs_review,
-                check_swallowed_title=not skip_suspicious_title_check and not is_human_reviewed,
-                check_subtitle_separator=not skip_suspicious_title_check and not is_human_reviewed,
+                check_swallowed_title=not skip_suspicious_title_check and not is_review_accepted,
+                check_subtitle_separator=not skip_suspicious_title_check and not is_review_accepted,
                 routes=routes,
                 dest_root=dest_root_win if not routes else None,
             )
@@ -895,7 +897,7 @@ def main() -> int:
             )
         if unreviewed_metadata_skipped > 0:
             next_actions.append(
-                "Some files were skipped because latest metadata source is neither human_reviewed nor llm; review/apply metadata, or rerun with allowUnreviewedMetadata=true only when intentionally accepting other sources."
+                "Some files were skipped because latest metadata source is not human_reviewed, agent_accepted or llm; review/apply metadata, or rerun with allowUnreviewedMetadata=true only when intentionally accepting other sources."
             )
         if (not args.apply) and unregistered_skipped > 0:
             next_actions.append(

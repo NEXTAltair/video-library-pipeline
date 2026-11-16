@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from video_pipeline.domain.review_provenance import acceptance_provenance
 from backup_mediaops_db import backup_db
 from export_program_yaml import by_program_group_from_path, lower_compact, looks_swallowed_program_title
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
@@ -83,7 +84,8 @@ def _review_overrides(rows, overrides):
     return result
 
 
-def review_rows(rows, hints, row_overrides=None):
+def review_rows(rows, hints, row_overrides=None, *, acceptance="agent_accepted", human_confirmation=None):
+    provenance = acceptance_provenance(acceptance, human_confirmation)
     overrides = _review_overrides(rows, row_overrides)
     aliases = {}
     for hint in hints:
@@ -127,8 +129,13 @@ def review_rows(rows, hints, row_overrides=None):
             raise ValueError("review-risk rows remain; edit the review before applying")
         if not edited.get("path_id"):
             raise ValueError("reviewed metadata requires registered path_id")
-        edited["human_reviewed"] = True
-        edited["human_reviewed_at"] = now_iso()
+        for key in ("human_reviewed_at", "human_reviewed_by", "human_confirmation"):
+            edited.pop(key, None)
+        edited.update(provenance)
+        edited["review_accepted_at"] = now_iso()
+        if provenance["human_reviewed"]:
+            edited["human_reviewed_at"] = edited["review_accepted_at"]
+            edited["human_reviewed_by"] = human_confirmation["confirmed_by"]
         result.append(edited)
     return result
 
@@ -225,7 +232,9 @@ def preflight(store, config):
                        or cohort.get("path_id_count") != len(current_ids)
                        or cohort.get("path_id_set_hash") != cohort_hash):
             raise ValueError("review cohort differs from extraction input")
-        edited = review_rows(rows, body["hints"], body.get('row_overrides'))
+        edited = review_rows(rows, body["hints"], body.get('row_overrides'),
+                             acceptance=getattr(config, 'acceptance', 'agent_accepted'),
+                             human_confirmation=getattr(config, 'human_confirmation', None))
         for row in edited:
             if row["path_id"] in path_ids:
                 raise ValueError("metadata review batches overlap")
@@ -247,6 +256,9 @@ def apply_reviewed_metadata(store, config):
         for index, item in enumerate(prepared):
             _freeze(accepted_dir / f"{index:04d}.yaml", item["draft"])
             _freeze(accepted_dir / f"{index:04d}.jsonl", item["source"])
+        provenance = acceptance_provenance(getattr(config, "acceptance", "agent_accepted"),
+                                           getattr(config, "human_confirmation", None))
+        provenance_bytes = json.dumps(provenance, sort_keys=True).encode()
         con = connect_db(str(db))
         try:
             begin_immediate(con)
@@ -256,7 +268,21 @@ def apply_reviewed_metadata(store, config):
                 if previous["digest"] != fingerprint:
                     raise ValueError("metadata already committed with a different accepted review; reconcile before changing it")
                 con.rollback()
-                return json.loads(previous["summary_json"])
+                summary = json.loads(previous["summary_json"])
+                if "reviewAcceptance" not in summary:
+                    # Pre-provenance commits must not be relabeled or reapplied.
+                    summary["reviewAcceptance"] = "legacy_unverified"
+                    summary["provenanceMigrationRequired"] = True
+                elif summary["reviewAcceptance"] != provenance["review_acceptance"] or summary.get("humanConfirmation") != provenance["human_confirmation"]:
+                    raise ValueError("metadata already committed with different review provenance")
+                else:
+                    _freeze(accepted_dir / "provenance.json", provenance_bytes)
+                return summary
+            _freeze(accepted_dir / "provenance.json", provenance_bytes)
+            # New acceptance must not commit per-episode genre splits. Legacy
+            # receipts above remain replayable under their original contract.
+            from video_pipeline.domain.program_genre_policy import validate_program_genre_consistency
+            validate_program_genre_consistency(row for item in prepared for row in item["rows"])
             # Snapshot while SQLite holds the writer reservation. The source
             # connection is read-only, so no uncommitted work enters the backup.
             ok, backup_path, error = backup_db(str(db), "pre_apply_reviewed_metadata")
@@ -265,8 +291,15 @@ def apply_reviewed_metadata(store, config):
             create_schema_if_needed(con)
             rows = [row for p in prepared for row in p["rows"]]
             reviewed_fields = {key: fields for p in prepared for key, fields in p["reviewedFields"].items()}
-            summary = upsert_records(con, rows, source="human_reviewed", strict=True, reviewed_fields=reviewed_fields)
-            summary.update(ok=True, backupPath=backup_path, acceptedDigest=fingerprint,
+            summary = upsert_records(con, rows, source="human_reviewed" if provenance["human_reviewed"] else "agent_accepted", strict=True, reviewed_fields=reviewed_fields,
+                                     accepted_review_context={"run_id": run.run_id, "accepted_digest": fingerprint})
+            # Merge/resolution can retain an existing genre absent in a draft.
+            # Validate the actual prospective records before committing too.
+            from db_helpers import latest_path_metadata
+            validate_program_genre_consistency(latest_path_metadata(con, str(row["path_id"]))[0] for row in rows)
+            summary.update(ok=True, reviewAcceptance=provenance["review_acceptance"],
+                           humanConfirmation=provenance["human_confirmation"],
+                           backupPath=backup_path, acceptedDigest=fingerprint,
                            acceptedDirectory=str(accepted_dir), artifactIds=[p["artifact"].id for p in prepared])
             con.execute("CREATE TABLE IF NOT EXISTS workflow_metadata_commits (operation_id TEXT PRIMARY KEY, digest TEXT NOT NULL, summary_json TEXT NOT NULL)")
             con.execute("INSERT INTO workflow_metadata_commits VALUES (?,?,?)", (operation, fingerprint, json.dumps(summary)))

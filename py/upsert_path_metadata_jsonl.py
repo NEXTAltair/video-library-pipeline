@@ -29,6 +29,7 @@ from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed
 from path_placement_rules import DB_CONTRACT_REQUIRED
 from pathscan_common import iter_jsonl, now_iso
 from source_history import merge_data
+from video_pipeline.domain.review_provenance import acceptance_provenance
 
 
 def validate_db_contract(rec: dict) -> tuple[bool, str]:
@@ -41,12 +42,12 @@ def validate_db_contract(rec: dict) -> tuple[bool, str]:
 
 
 
-def upsert_records(con, records, *, source="human_reviewed", franchise_rules="", strict=False, reviewed_fields=None):
+def upsert_records(con, records, *, source="agent_accepted", franchise_rules="", strict=False, reviewed_fields=None, accepted_review_context=None):
     """Merge and write under the caller's BEGIN IMMEDIATE; never commit here."""
     if not con.in_transaction:
         raise ValueError("metadata upsert requires an active transaction")
-    if reviewed_fields and (source != "human_reviewed" or not strict):
-        raise ValueError("explicit metadata fields require strict human review")
+    if reviewed_fields and (source not in {"human_reviewed", "agent_accepted"} or not strict):
+        raise ValueError("explicit metadata fields require strict review acceptance")
     updated_at = now_iso()
     to_upsert = []
     missing = 0
@@ -56,6 +57,13 @@ def upsert_records(con, records, *, source="human_reviewed", franchise_rules="",
         ok, reason = validate_db_contract(rec)
         if not ok:
             raise ValueError(f"invalid metadata contract: {reason}")
+        if source == "human_reviewed":
+            # A writer flag/CLI source string is not evidence of who reviewed.
+            acceptance_provenance("human_confirmed", rec.get("human_confirmation"))
+            if rec.get("review_acceptance") != "human_confirmed" or rec.get("human_reviewed") is not True:
+                raise ValueError("human source requires explicit human_confirmed provenance")
+        elif source != "agent_accepted" and (rec.get("human_reviewed") or rec.get("review_acceptance") == "human_confirmed"):
+            raise ValueError("unreviewed source cannot assert human confirmation")
         path_id = rec.get("path_id")
         if not path_id:
             p = rec.get("path")
@@ -88,6 +96,31 @@ def upsert_records(con, records, *, source="human_reviewed", franchise_rules="",
         if prior:
             existing = reconstruct_path_metadata(prior)
 
+        if source == "agent_accepted" and prior and (prior["human_reviewed"] or prior["source"] == "human_reviewed"):
+            # A new, validated run-bound review may supersede the current value
+            # without making a retrospective claim about the old reviewer.
+            context = accepted_review_context
+            if not (strict and isinstance(context, dict) and context.get("run_id")
+                    and isinstance(context.get("accepted_digest"), str)
+                    and len(context["accepted_digest"]) == 64):
+                if strict:
+                    raise ValueError(f"agent acceptance cannot overwrite human-reviewed metadata: {path_id}; use a run-bound re-review or migrate with explicit evidence first")
+                continue
+            history = list(existing.get("source_history") or [])
+            history.append({"source": "review_superseded", "at": updated_at,
+                            "previous_source": prior["source"],
+                            "previous_human_reviewed": bool(prior["human_reviewed"]),
+                            "previous_review_acceptance": existing.get("review_acceptance", "legacy_unverified"),
+                            "previous_human_confirmation": existing.get("human_confirmation"),
+                            "previous_human_reviewed_at": existing.get("human_reviewed_at"),
+                            "review_context": dict(context),
+                            "note": "new agent acceptance; previous reviewer not inferred or migrated"})
+            existing["source_history"] = history
+        if source == "agent_accepted":
+            rec = dict(rec, human_reviewed=False, review_acceptance="agent_accepted")
+            for key in ("human_reviewed_at", "human_reviewed_by", "human_confirmation"):
+                existing.pop(key, None)
+                rec.pop(key, None)
         explicit = (reviewed_fields or {}).get(str(path_id), ())
         merged = merge_data(existing, rec, source, explicit_fields=explicit)
         # Normalize: needs_review=false must not coexist with non-empty needs_review_reason
@@ -126,8 +159,8 @@ def upsert_records(con, records, *, source="human_reviewed", franchise_rules="",
               subtitle=excluded.subtitle,
               broadcaster=excluded.broadcaster,
               human_reviewed=excluded.human_reviewed
-            WHERE path_metadata.human_reviewed IS NOT 1
-               OR excluded.source = 'human_reviewed'
+            WHERE (path_metadata.human_reviewed IS NOT 1 AND path_metadata.source != 'agent_accepted')
+               OR excluded.source IN ('human_reviewed', 'agent_accepted')
             """,
             to_upsert,
         )

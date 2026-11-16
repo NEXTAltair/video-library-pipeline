@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Clear stale needs_review flags for human_reviewed rows.
+"""Clear stale needs_review flags for human-reviewed or agent-accepted rows.
 
 Targets rows where:
-- source = 'human_reviewed'
+- source IN ('human_reviewed', 'agent_accepted')
 - needs_review = 1
 - needs_review_reason contains ONLY title-related reasons
 - program_title passes suspicious-title checks (no separator / swallowed / shortened)
@@ -46,7 +46,7 @@ def find_stale_review_flag_candidates(con) -> list[dict]:
         """SELECT pm.path_id, pm.program_title, pm.needs_review, pm.data_json, p.path
            FROM path_metadata pm
            LEFT JOIN paths p ON p.path_id = pm.path_id
-           WHERE pm.source = 'human_reviewed'
+           WHERE pm.source IN ('human_reviewed', 'agent_accepted')
              AND pm.needs_review = 1"""
     ).fetchall()
 
@@ -90,7 +90,7 @@ def apply_clear_stale_review_flags(con, candidates: list[dict]) -> int:
                ),
                updated_at = datetime('now')
            WHERE path_id = ?
-             AND source = 'human_reviewed'
+             AND source IN ('human_reviewed', 'agent_accepted')
              AND needs_review = 1""",
         path_ids,
     )
