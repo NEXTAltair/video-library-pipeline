@@ -226,6 +226,7 @@ class RelocateWorkflowService:
             config_snapshot={
                 "windowsOpsRoot": config.windows_ops_root,
                 "destRoot": config.dest_root,
+                "tsRoot": config.ts_root,
                 "db": db_path,
                 "roots": list(config.roots or []),
                 "rootsFilePath": config.roots_file_path,
@@ -814,6 +815,8 @@ class RelocateWorkflowService:
             "--skip-suspicious-title-check",
             str(bool(config.skip_suspicious_title_check)).lower(),
         ]
+        if config.ts_root:
+            args.extend(["--ts-root", config.ts_root])
         if config.roots:
             args.extend(["--roots-json", json.dumps(list(config.roots), ensure_ascii=False)])
         elif config.roots_file_path:
@@ -1684,6 +1687,7 @@ class RelocateWorkflowService:
         return RelocateDryRunConfig(
             windows_ops_root=str(snapshot.get("windowsOpsRoot") or ""),
             dest_root=str(snapshot.get("destRoot") or ""),
+            ts_root=str(snapshot.get("tsRoot") or ""),
             db=str(snapshot.get("db") or ""),
             roots=[str(v) for v in snapshot.get("roots") or [] if isinstance(v, str) and v],
             roots_file_path=str(snapshot.get("rootsFilePath") or ""),

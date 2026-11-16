@@ -99,6 +99,8 @@ export function registerToolPrepareRelocateMetadata(api: PluginApi, getCfg: GetC
           String(cfg.windowsOpsRoot || ""),
           "--dest-root",
           String(cfg.destRoot || ""),
+          "--ts-root",
+          String(cfg.tsRoot || ""),
           "--roots-file-path",
           String(params.rootsFilePath || defaultRootsFile),
           "--allow-needs-review",

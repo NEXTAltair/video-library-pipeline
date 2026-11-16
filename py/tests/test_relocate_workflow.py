@@ -207,7 +207,7 @@ def test_relocate_default_scope_and_work_filter_survive_recheck(tmp_path):
     result = harness.dry_run()
     assert result.ok
     snapshot = harness.manifest()["configSnapshot"]
-    assert snapshot["roots"] == [r"B:\Unwatched", r"B:\VideoLibrary", r"D:\Anime", r"J:\TVFile"]
+    assert snapshot["roots"] == [r"B:\Unwatched", r"B:\VideoLibrary", r"D:\Anime"]
     assert snapshot["programTitles"] == ["Show"]
     restored = harness.service()._config_from_run(WorkflowStore(Path(harness.cfg.windows_ops_root)).read_run("run_work_scope"))
     assert restored.roots == snapshot["roots"]
@@ -1014,3 +1014,16 @@ def test_planned_metadata_extract_failure_preserves_review_gate_and_retry(tmp_pa
     retried=harness.service().resume(cfg,action=actions[0].params['resumeAction'])
     assert retried.phase=='review_required'
     assert any(g.type=='metadata_review' and g.status=='open' for g in store.read_run(cfg.run_id).review_gates.values())
+
+
+def test_recording_exclusion_survives_explicit_roots_and_resume(tmp_path):
+    harness = RelocateWorkflowHarness(tmp_path, run_id="recording_exclusion")
+    harness.cfg.ts_root = r"J:\TVFile"
+    harness.cfg.roots = ["J:\\", r"B:\Library"]
+    harness.dry_run()
+    args = next(args for name, args in harness.calls if name == "relocate_existing_files.py")
+    assert args[args.index("--ts-root") + 1] == r"J:\TVFile"
+    run = WorkflowStore(Path(harness.cfg.windows_ops_root)).read_run(harness.cfg.run_id)
+    restored = harness.service()._config_from_run(run)
+    assert restored.ts_root == r"J:\TVFile"
+    assert restored.roots == harness.cfg.roots
