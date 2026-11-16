@@ -12,7 +12,7 @@ import sys
 from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
-from video_pipeline.workflows.relocate import metadata_reextract_action, planned_metadata_action, available_planned_metadata_action, planned_metadata_retry_action
+from video_pipeline.workflows.relocate import metadata_reextract_action, subset_plan_actions, planned_metadata_action, available_planned_metadata_action, planned_metadata_retry_action
 from video_pipeline.workflows import chunked_apply, idle_runs
 from video_pipeline.workflows import (
     NextAction,
@@ -168,7 +168,9 @@ def _existing_next_actions_for_run(run: Any, run_dir: Path | None = None) -> lis
                         },
                         requires_human_input=True,
                     ),
-                    planned_metadata_action(run.run_id, plan_id),
+                    *([planned_metadata_action(run.run_id, plan_id)]
+                      if not run.artifacts[plan_id].metadata.get("subsetSelection") else []),
+                    *subset_plan_actions(run, run.artifacts[plan_id]),
                 ]
     if run.phase != "review_required":
         return []
@@ -449,6 +451,8 @@ def _cmd_resume(args: argparse.Namespace) -> dict[str, Any]:
                 artifact_id=artifact_id or "relocate_plan",
                 db=args.db or None,
                 on_dst_exists=args.on_dst_exists or None,
+                selected_path_ids=json.loads(getattr(args, "selected_path_ids_json", "") or "null"),
+                held_path_ids=json.loads(getattr(args, "held_path_ids_json", "") or "null"),
                 gate_id=getattr(args, "gate_id", ""),
                 artifact_ids=_parse_json_array(getattr(args, "artifact_ids_json", "")),
                 review_yaml_paths=_parse_json_array(getattr(args, "review_yaml_paths_json", "")),
@@ -597,6 +601,8 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--reason", default="")
     resume.add_argument("--idle-days", type=int, default=0)
     resume.add_argument("--gate-id", default="")
+    resume.add_argument("--selected-path-ids-json", default="")
+    resume.add_argument("--held-path-ids-json", default="")
     resume.add_argument("--artifact-ids-json", default="")
     resume.add_argument("--review-yaml-paths-json", default="")
     resume.add_argument("--run-revision", type=int)

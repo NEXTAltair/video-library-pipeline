@@ -153,6 +153,8 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
         resumeAction: { type: "string" },
         artifactId: { type: "string" },
         gateId: { type: "string" },
+        selectedPathIds: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, uniqueItems: true },
+        heldPathIds: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, uniqueItems: true },
         artifactIds: { type: "array", items: { type: "string" } },
         reviewYamlPaths: { type: "array", items: { type: "string" } },
         runRevision: { type: "integer", minimum: 0 },
@@ -191,6 +193,8 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
       if (resumeIdleDays !== null) args.push("--idle-days", String(resumeIdleDays));
       // Returned params are passed verbatim, so every key is forwarded for every action.
       if (typeof params.gateId === "string") args.push("--gate-id", params.gateId);
+      if (params.selectedPathIds !== undefined) args.push("--selected-path-ids-json", JSON.stringify(params.selectedPathIds));
+      if (params.heldPathIds !== undefined) args.push("--held-path-ids-json", JSON.stringify(params.heldPathIds));
       if (Array.isArray(params.artifactIds)) args.push("--artifact-ids-json", JSON.stringify(stringArray(params.artifactIds)));
       if (Array.isArray(params.reviewYamlPaths)) args.push("--review-yaml-paths-json", JSON.stringify(stringArray(params.reviewYamlPaths)));
       const revision = finiteInteger(params.runRevision);

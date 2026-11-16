@@ -109,6 +109,8 @@ class RelocateApplyConfig:
     review_digests: dict[str, str] = field(default_factory=dict)
     acceptance: str = "agent_accepted"
     human_confirmation: dict[str, str] | None = None
+    selected_path_ids: list[str] | None = None
+    held_path_ids: list[str] | None = None
 
 
 def local_path_from_any(path_str: str) -> Path:
@@ -199,6 +201,19 @@ def planned_metadata_action(run_id: str, plan_id: str) -> NextAction:
         label="Re-review metadata of planned candidates before moving",
         tool="video_pipeline_resume", params={"runId": run_id, "artifactId": plan_id,
         "resumeAction": "prepare_planned_metadata"}, requires_human_input=True)
+
+
+def subset_plan_actions(run: Any, plan: ArtifactRef) -> list[NextAction]:
+    if (run.status != "active" or run.phase != "plan_ready"
+            or plan.metadata.get("subsetSelection")
+            or "relocate_internal_move_plan" in run.artifacts
+            or int((plan.metadata.get("summary") or {}).get("plannedMoves") or 0) < 2):
+        return []
+    return [NextAction(action="prepare_relocate_subset",
+        label="Supply explicit selectedPathIds and heldPathIds partition to prepare a non-applying cohort",
+        tool="video_pipeline_resume", params={"runId": run.run_id, "artifactId": plan.id,
+        "runRevision": run.revision, "resumeAction": "prepare_relocate_subset"},
+        requires_human_input=True)]
 
 
 def available_planned_metadata_action(run: Any) -> NextAction | None:
@@ -315,6 +330,8 @@ class RelocateWorkflowService:
     @serialized_workflow
     def resume(self, config: RelocateApplyConfig, *, action: str = "apply_relocate_move_plan") -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        if action == "prepare_relocate_subset":
+            return self._resume_subset(store, config)
         if action == "prepare_planned_metadata":
             return self._resume_planned_metadata(store, config)
         if action == "register_unregistered":
@@ -336,6 +353,51 @@ class RelocateWorkflowService:
             )
             return self._block_apply(store, config.run_id, "relocate_resume_action_unsupported", diagnostic)
         return self.apply(config)
+
+    def _resume_subset(self, store: WorkflowStore, config: RelocateApplyConfig) -> WorkflowResult:
+        """Non-applying partition of a current immutable plan; never change metadata policy."""
+        from video_pipeline.workflows.relocate_subset import partition_plan
+
+        run = store.read_run(config.run_id)
+        try:
+            parent = self._validate_apply_plan(store, config.run_id, config.artifact_id)
+            run_dir = store.run_dir(config.run_id).resolve()
+            if (run.status != "active" or config.run_revision != run.revision
+                    or parent.metadata.get("subsetSelection")
+                    or "relocate_internal_move_plan" in run.artifacts
+                    or (run_dir / "apply/relocate_apply_state.json").exists()
+                    or (run_dir / "apply/receipts").exists()
+                    or not Path(parent.path).resolve().is_relative_to(run_dir)):
+                raise ValueError("subset requires current revision, owned unstarted original plan")
+            rows = read_jsonl_rows(Path(parent.path))
+            chosen = partition_plan(rows, config.selected_path_ids, config.held_path_ids)
+            plan_id = next_artifact_id(run, "relocate_plan")
+            path = run_dir / "plan" / (plan_id + ".jsonl")
+            # Exclusive creation preserves original and makes interrupted preparations fail closed.
+            with path.open("x", encoding="utf-8") as stream:
+                for row in chosen:
+                    stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+            metadata = dict(parent.metadata)
+            metadata["summary"] = {**(parent.metadata.get("summary") or {}), "plannedMoves": len(chosen)}
+            metadata["subsetSelection"] = {"parentArtifactId": parent.id,
+                "parentSha256": parent.sha256, "parentRevision": run.revision,
+                "selectedPathIds": list(config.selected_path_ids),
+                "heldPathIds": list(config.held_path_ids),
+                "originalSummary": parent.metadata.get("summary"),
+                "metadataPolicyUnchanged": True}
+            artifact = store.register_artifact(config.run_id, artifact_type="relocate_plan",
+                path=path, producer="prepare_relocate_subset", artifact_id=plan_id,
+                input_artifact_ids=[parent.id], metadata=metadata)
+            return self._result(ok=True, store=store, run_id=config.run_id,
+                phase=WorkflowPhase.PLAN_READY, outcome="relocate_subset_prepared",
+                next_actions=[NextAction(action="review_plan", label="Review selected relocate cohort",
+                    tool="video_pipeline_resume", params={"runId": config.run_id,
+                    "artifactId": artifact.id, "resumeAction": "apply_relocate_move_plan"},
+                    requires_human_input=True)])
+        except (RelocateApplyRejected, ValueError, OSError) as exc:
+            diagnostic = exc.diagnostic if isinstance(exc, RelocateApplyRejected) else Diagnostic(
+                code="relocate_subset_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc))
+            return self._reject_call(run, "relocate_subset_rejected", diagnostic)
 
     def _powershell(self) -> PowerShellRunner:
         if self.powershell_runner is not None:
@@ -1146,7 +1208,8 @@ class RelocateWorkflowService:
                         },
                         requires_human_input=True,
                     ),
-                    planned_metadata_action(run_id, plan_artifact.id)
+                    planned_metadata_action(run_id, plan_artifact.id),
+                    *subset_plan_actions(store.read_run(run_id), plan_artifact),
                 ],
             )
 
@@ -1415,6 +1478,20 @@ class RelocateWorkflowService:
                     "actualSha256": current_sha,
                 },
             ))
+        selection = plan_artifact.metadata.get("subsetSelection")
+        if selection:
+            from video_pipeline.workflows.relocate_subset import partition_plan
+            parent = run.artifacts.get(selection.get("parentArtifactId"))
+            if (not parent or parent.type != "relocate_plan" or parent.metadata.get("subsetSelection")
+                    or not Path(parent.path).resolve().is_relative_to(store.run_dir(run_id).resolve())
+                    or sha256_file(Path(parent.path)) != selection.get("parentSha256")
+                    or parent.sha256 != selection.get("parentSha256")
+                    or plan_artifact.input_artifact_ids != [parent.id]):
+                raise ValueError("subset parent ownership/checksum changed")
+            expected = partition_plan(read_jsonl_rows(Path(parent.path)),
+                selection.get("selectedPathIds"), selection.get("heldPathIds"))
+            if read_jsonl_rows(plan_path) != expected:
+                raise ValueError("subset rows differ from immutable parent selection")
         return plan_artifact
 
     def _append_summary_diagnostics(self, store: WorkflowStore, run_id: str, summary: dict[str, Any]) -> None:

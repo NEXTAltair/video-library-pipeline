@@ -94,3 +94,24 @@ legacy `by_syllabary` layout deliberately uses category names such as `ア`/`カ
 - `phase == "complete"` after apply means the V2 workflow is complete.
 - `phase == "blocked"` or `phase == "failed"` invokes the shared recovery contract: reconcile partial moves/DB updates, resolve bounded authorized causes and refresh the plan through public V2. Preserve failed-run evidence; never blindly retry apply or weaken guards.
 - Distinguish physical move completion from metadata review, supersession, or DB-only operations.
+
+### Explicit physical subset (non-applying)
+
+`prepare_relocate_subset` is returned for an unstarted, multi-row `plan_ready`
+relocate plan. It does not move files, change metadata, or release a hold.
+Inspect every original row and supply the returned runId/artifactId/runRevision
+with two explicit arrays: `selectedPathIds` (the approved move cohort) and
+`heldPathIds` (every other planned recording, including every user physical hold).
+The arrays must be disjoint, nonempty, duplicate-free, and partition all planned
+path IDs exactly. Never move a user hold into selected merely because its metadata
+review is accepted. Unknown IDs and a companion shared across rows fail closed.
+
+The action writes a new checksum-owned plan with original rows/bundles unchanged
+and parent checksum/partition provenance; the original plan and full-title voting
+sources remain immutable. Inspect the new plan and use only its returned
+`apply_relocate_move_plan` action within the existing physical approval. All
+ordinary physical apply gates still apply. Do not reuse the superseded parent
+plan, repeat subset preparation, or call it after any apply state/receipts exist.
+A stale revision or interrupted preparation is a failure, not an excuse to edit
+state. Scanner roots currently must be directories; exact file roots are rejected
+before Windows scanning, so do not probe them with a new workflow start.
