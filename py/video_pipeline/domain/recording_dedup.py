@@ -154,7 +154,30 @@ def plan_recordings(con, roots, *, probe=probe_video, min_age_seconds=3600,
     historical = {r[0] for r in con.execute("SELECT DISTINCT path_id FROM file_paths")} if "file_paths" in tables else set()
     groups = defaultdict(list)
     excluded = Counter()
-    for row in con.execute("SELECT pm.*,p.path FROM path_metadata pm JOIN paths p USING(path_id) ORDER BY p.path"):
+    metadata_rows = list(con.execute("SELECT pm.*,p.path FROM path_metadata pm JOIN paths p USING(path_id) ORDER BY p.path"))
+    # Historical/unaddressable NTFS paths otherwise launch one PowerShell process
+    # per candidate. Cache only this planning observation; probe/apply recheck fresh.
+    native_paths = []
+    for row in metadata_rows:
+        path = Path(windows_to_wsl_path(row["path"]))
+        if (re.match(r"^/mnt/[a-z]/", str(path))
+                and path.suffix.lower() in {".mp4", ".mkv", ".m4v"}
+                and episode_key(reconstruct_path_metadata(row))
+                and any(path.absolute().is_relative_to(root) for root in root_paths)
+                and "duplicates" not in {p.casefold() for p in path.parts}):
+            # Readable DrvFS paths must keep working without PowerShell. Only
+            # paths needing the existing native fallback belong in this batch.
+            try:
+                path.resolve()
+                path.stat()
+            except OSError:
+                native_paths.append(path)
+    native_cache = {}
+    if native_paths:
+        from video_pipeline.platform.native_file_signatures import read_native_signatures
+        for start in range(0, len(native_paths), 512):
+            native_cache.update(read_native_signatures(native_paths[start:start + 512]))
+    for row in metadata_rows:
         path = Path(windows_to_wsl_path(row["path"]))
         if path.suffix.lower() not in {".mp4", ".mkv", ".m4v"}:
             continue
@@ -163,11 +186,11 @@ def plan_recordings(con, roots, *, probe=probe_video, min_age_seconds=3600,
         if not key:
             excluded["episode_identity_unknown"] += 1
             continue
-        if not within_roots(path, root_paths) or "duplicates" in {p.casefold() for p in path.parts}:
+        if not within_roots(path, root_paths, native_cache=native_cache) or "duplicates" in {p.casefold() for p in path.parts}:
             excluded["outside_roots_or_quarantine"] += 1
             continue
         try:
-            sig = file_signature(path)
+            sig = file_signature(path, native_cache=native_cache)
         except (OSError, ValueError):
             excluded["missing_empty_or_symlink"] += 1
             continue
