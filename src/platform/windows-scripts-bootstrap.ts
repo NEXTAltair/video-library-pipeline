@@ -14,6 +14,7 @@ export const INTERNAL_WINDOWS_SCRIPTS = [
   "normalize_case_dirs.ps1",
   "inspect_move.ps1",
   "settle_interrupted_move.ps1",
+  "reconcile_move_bundle.ps1",
 ] as const;
 
 export const MANAGED_WINDOWS_SCRIPTS = [...REQUIRED_WINDOWS_SCRIPTS, ...INTERNAL_WINDOWS_SCRIPTS] as const;
