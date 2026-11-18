@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path, PureWindowsPath
 
+from video_pipeline.platform.media_extensions import VIDEO_EXTENSIONS
 from db_helpers import latest_path_metadata
 from mediaops_schema import connect_db
 from path_placement_rules import load_drive_routes
@@ -84,6 +85,10 @@ def main() -> int:
                 if not src:
                     continue
                 src = str(src)
+                # Inventory is evidence for all files; only containers are move candidates.
+                # Keep sidecars out of metadata blockers, as the metadata queue does.
+                if PureWindowsPath(src).suffix.lower() not in VIDEO_EXTENSIONS:
+                    continue
                 total += 1
                 root = args.source_root.rstrip("\\")
                 if not (src == root or src.startswith(root + "\\")):

@@ -41,6 +41,8 @@ def test_inventory_ingest_queue_and_source_root_plan_all_video_containers(tmp_pa
         create_schema_if_needed(con)
     rows = [dict(path=rf'B:\Unwatched\Show_2026_11_01_21_00{ext.upper()}',
                  name='Show_2026_11_01_21_00' + ext.upper(), size=12) for ext in VIDEO_EXTENSIONS]
+    rows += [dict(path=rf'B:\Unwatched\Show.MP4{suffix}', size=1)
+             for suffix in ('.program.txt', '.recording.json', '.psc', '.vtt')]
     rows += [dict(path=r'B:\Unwatched\Show.program.txt', name='Show.program.txt', size=1),
              dict(path=r'C:\Other\Outside.mkv', name='Outside.mkv', size=1)]
     inventory = tmp_path / 'inventory.jsonl'
@@ -63,7 +65,13 @@ def test_inventory_ingest_queue_and_source_root_plan_all_video_containers(tmp_pa
     plan = tmp_path / 'plan.jsonl'
     monkeypatch.setattr(sys, 'argv', ['plan', '--db', str(db), '--inventory', str(inventory),
                                     '--source-root', r'B:\Unwatched', '--dest-root', r'D:\Library', '--out', str(plan)])
+    capsys.readouterr()
     assert planner.main() == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary['skipped_no_md'] == 0
+    assert summary['skipped_no_path'] == 0
+    assert summary['total'] == len(VIDEO_EXTENSIONS) + 1
+    assert summary['skipped_outside'] == 1
     planned = [json.loads(s) for s in plan.read_text().splitlines()][1:]
     assert len(planned) == len(VIDEO_EXTENSIONS)
     assert {PureWindowsPath(r['dst']).suffix.lower() for r in planned} == set(VIDEO_EXTENSIONS)
@@ -131,3 +139,27 @@ def test_legacy_relocate_entrypoints_forward_recording_root():
     for tool in ["tool-relocate.ts", "tool-prepare-relocate-metadata.ts"]:
         source = (root / "src/tools" / tool).read_text()
         assert '\n          "--ts-root",\n          String(cfg.tsRoot || ""),' in source
+
+
+def test_sidecars_do_not_hide_real_video_metadata_blockers(tmp_path, monkeypatch, capsys):
+    db = tmp_path / 'db.sqlite'
+    with connect_db(str(db)) as con:
+        create_schema_if_needed(con)
+    inventory = tmp_path / 'inventory.jsonl'
+    rows = [{'_meta': {'kind': 'unwatched_inventory'}}]
+    rows += [{'path': r'B:\Unwatched\Show.mp4' + suffix, 'size': 1}
+             for suffix in ('', '.program.txt', '.recording.json')]
+    inventory.write_text('\n'.join(json.dumps(r) for r in rows) + '\n')
+    monkeypatch.setattr(sys, 'argv', ['ingest', '--db', str(db), '--jsonl', str(inventory)])
+    assert ingest_inventory_jsonl.main() == 0
+    capsys.readouterr()
+    out = tmp_path / 'plan.jsonl'
+    monkeypatch.setattr(sys, 'argv', ['plan', '--db', str(db), '--inventory', str(inventory),
+                                    '--source-root', r'B:\Unwatched', '--dest-root', r'D:\Library',
+                                    '--out', str(out)])
+    assert planner.main() == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary['total'] == 1
+    assert summary['skipped_no_md'] == 1  # Only the video remains a genuine blocker.
+    assert summary['planned'] == 0
+    assert len(out.read_text().splitlines()) == 1
