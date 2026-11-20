@@ -908,7 +908,9 @@ def main() -> int:
             auto_registered_files_out = auto_registered_files_out[:MAX_SUMMARY_AUTOREGISTER_FILES]
             auto_registered_files_truncated = True
 
-        requires_metadata_preparation = metadata_queue_planned_count > 0 or suspicious_program_title_skipped > 0
+        requires_metadata_preparation = (
+            metadata_queue_planned_count > 0 or suspicious_program_title_skipped > 0 or missing_genre_skipped > 0
+        )
         requires_human_review = bool(
             requires_metadata_preparation or needs_review_skipped > 0 or unreviewed_metadata_skipped > 0
         )

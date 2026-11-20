@@ -361,3 +361,13 @@ def test_human_reviewed_default_route_without_genre_is_kept(tmp_path, monkeypatc
     summary, rows, _ = preview.run(monkeypatch, capsys)
     assert summary["missingGenreSkipped"] == 0
     assert summary["alreadyCorrect"] == 1
+
+
+def test_missing_genre_requires_preparation_even_without_queue(tmp_path, monkeypatch, capsys):
+    preview = _genre_routes_preview(tmp_path, monkeypatch, source="llm", genre=None)
+    summary, rows, _ = preview.run(monkeypatch, capsys, "--queue-missing-metadata", "false")
+    assert summary["missingGenreSkipped"] == 1
+    assert summary["metadataQueuePlannedCount"] == 0
+    assert summary["alreadyCorrect"] == 0
+    assert summary["requiresMetadataPreparation"] is True
+    assert summary["outcomeType"] == "metadata_preparation_required"

@@ -197,8 +197,10 @@ export function registerToolRelocate(api: PluginApi, getCfg: GetCfgFn) {
         };
         const plannedMoves = Number(out.plannedMoves || 0);
         const hasSuspiciousTitles = Number(out.suspiciousProgramTitleSkipped || 0) > 0;
+        const metadataMissingCount =
+          Number(out.metadataMissingSkipped || 0) + Number(out.missingGenreSkipped || 0);
         const hasMetadataGap =
-          Number(out.metadataMissingSkipped || 0) > 0 ||
+          metadataMissingCount > 0 ||
           Number(out.metadataQueuePlannedCount || 0) > 0 ||
           Number(out.unreviewedMetadataSkipped || 0) > 0;
 
@@ -221,8 +223,8 @@ export function registerToolRelocate(api: PluginApi, getCfg: GetCfgFn) {
             const skippedParts: string[] = [];
             if (hasSuspiciousTitles)
               skippedParts.push(`${out.suspiciousProgramTitleSkipped} suspicious-title`);
-            if (Number(out.metadataMissingSkipped || 0) > 0)
-              skippedParts.push(`${out.metadataMissingSkipped} metadata-missing`);
+            if (metadataMissingCount > 0)
+              skippedParts.push(`${metadataMissingCount} metadata-missing`);
             out.partialApplyNote =
               `${plannedMoves} files are ready to move. ` +
               `${skippedParts.join(" and ")} file(s) will be individually skipped. ` +
@@ -271,10 +273,10 @@ export function registerToolRelocate(api: PluginApi, getCfg: GetCfgFn) {
 
         // ── Apply routing ──
 
-        if (r.ok && params.apply === true && Number(out.metadataMissingSkipped || 0) > 0) {
+        if (r.ok && params.apply === true && metadataMissingCount > 0) {
           // apply completed but some files were skipped due to missing metadata → extract-review next
           out.nextAction =
-            `${out.metadataMissingSkipped} file(s) could not be moved due to missing metadata. ` +
+            `${metadataMissingCount} file(s) could not be moved due to missing metadata. ` +
             `Run video_pipeline_prepare_relocate_metadata with the same roots to extract metadata, ` +
             `then re-run relocate dry-run and apply for the remaining files. ` +
             `No user action is required to determine this — proceed with video_pipeline_prepare_relocate_metadata now.`;
@@ -314,9 +316,9 @@ export function registerToolRelocate(api: PluginApi, getCfg: GetCfgFn) {
                 "Fix program_title in DB, then run a fresh dry-run for these remaining files."
               );
             }
-            if (Number(out.metadataMissingSkipped || 0) > 0) {
+            if (metadataMissingCount > 0) {
               parts.push(
-                `${out.metadataMissingSkipped} metadata-missing file(s) were skipped. ` +
+                `${metadataMissingCount} metadata-missing file(s) were skipped. ` +
                 "Run video_pipeline_prepare_relocate_metadata for these files."
               );
             }
