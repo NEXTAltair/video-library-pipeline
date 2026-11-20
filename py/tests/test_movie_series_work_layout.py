@@ -48,10 +48,14 @@ def test_alias_maps_to_declared_folder():
 
 
 def test_unlisted_film_stays_flat_and_default_layout_is_unchanged():
-    # Not a declared work: no series membership at all (unchanged behaviour).
+    # Not a declared work and filed outside the series: no series membership.
     name = '[映]シン・ゴジラ[SS][字]2023-11-03-21：00.mp4'
-    md = {'program_title': 'シン・ゴジラ', 'air_date': '2023-11-03', 'genre': '映画'}
-    assert route(md, name)[0] == r'B:\VideoLibrary\シン・ゴジラ\2023\11' + '\\' + name
+    md = {'program_title': 'シン・ゴジラ', 'air_date': '2023-11-03', 'genre': '映画', 'needs_review': False}
+    routes = DriveRoutes(r'B:\VideoLibrary', 'by_program_year_month', [], movie_grouping=grouping())
+    assert build_routed_dest_path(routes, r'B:\未視聴' + '\\' + name, md)[0] == \
+        r'B:\VideoLibrary\シン・ゴジラ\2023\11' + '\\' + name
+    # Already inside the per-work series: stays where it is (#198).
+    assert route(md, name)[0] == SERIES + '\\' + name
     # A series without work_layout keeps the flat series-root placement.
     name = '[映]ゴジラ－１．０[SS][字]2024-07-21-14：05.mp4'
     md = {'program_title': 'ゴジラ-1.0', 'air_date': '2024-07-21', 'genre': '映画'}
@@ -129,3 +133,59 @@ def test_rules_without_requirement_keep_substring_behaviour():
     assert resolve_franchise(md, RULES) == 'シリーズ_ガンダム'
     md = {'program_title': '仮面ライダーガヴ', 'genre': None}
     assert resolve_franchise(md, RULES) == 'シリーズ_仮面ライダー'
+
+
+# ── #198: unlisted films already inside a per-work series stay put ──
+
+
+def frame_grouping(layout='by_work_year_month'):
+    data = {'default_dest_root': 'L:\\', 'frames': ['金曜ロードショー', '日曜ゴジラ劇場'],
+            'series': [{'folder': 'シリーズ_ゴジラ+モンスターバース', 'dest_root': 'N:\\', 'works': ['ゴジラ-1.0']}]}
+    if layout:
+        data['series'][0]['work_layout'] = layout
+    return MovieGrouping(data)
+
+
+def movie_routes(layout='by_work_year_month'):
+    from video_pipeline.domain.path_placement_rules import DriveRoute
+    movie = DriveRoute({'genre': 'movie', 'dest_root': 'L:\\', 'layout': 'by_syllabary', 'epg_genre_match': ['映画 - *']})
+    variety = DriveRoute({'genre': 'variety', 'dest_root': r'E:\Bバラエティ', 'layout': 'by_program_year_month'})
+    return DriveRoutes(r'B:\VideoLibrary', 'by_program_year_month', [movie, variety],
+                       movie_grouping=frame_grouping(layout))
+
+
+@pytest.mark.parametrize('src', [
+    SERIES + r'\ゴジラＶＳビオランテ◆特集2023-10-22-16：30.mp4',
+    SERIES + r'\その他ゴジラ\ゴジラＶＳビオランテ.mp4',
+])
+def test_unlisted_film_inside_work_layout_series_stays(src):
+    md = {'program_title': 'ゴジラVSビオランテ', 'air_date': '2023-10-22', 'needs_review': False, 'genre': '映画'}
+    dst, genre, err = build_routed_dest_path(movie_routes(), src, md)
+    assert (dst, genre, err) == (src, 'movie', None)
+
+
+def test_frame_broadcast_of_unlisted_film_inside_series_stays():
+    src = SERIES + r'\日曜ゴジラ劇場　映画「キングコング対ゴジラ」2023-10-08.mp4'
+    md = {'program_title': 'キングコング対ゴジラ', 'air_date': '2023-10-08', 'needs_review': False}
+    assert build_routed_dest_path(movie_routes(), src, md)[0] == src
+
+
+def test_listed_work_inside_series_still_moves_to_its_work_folder():
+    src = SERIES + r'\金曜ロードショー「ゴジラ-1.0」2024_11_01_21_00.mp4'
+    md = {'program_title': 'ゴジラ-1.0', 'air_date': '2024-11-01', 'needs_review': False, 'genre': '映画'}
+    assert build_routed_dest_path(movie_routes(), src, md)[0] == \
+        SERIES + r'\ゴジラ-1.0\2024\11\金曜ロードショー「ゴジラ-1.0」2024_11_01_21_00.mp4'
+
+
+def test_non_movie_inside_series_leaves_it():
+    src = SERIES + r'\ゴジラ\2026\05\家、ついて行ってイイですか？ゴジラ 2026 05 24 20 50.mp4'
+    md = {'program_title': '家、ついて行ってイイですか？', 'air_date': '2026-05-24', 'needs_review': False,
+          'genre': 'バラエティ'}
+    dst = build_routed_dest_path(movie_routes(), src, md)[0]
+    assert dst == r'E:\Bバラエティ\家、ついて行ってイイですか？\2026\05\家、ついて行ってイイですか？ゴジラ 2026 05 24 20 50.mp4'
+
+
+def test_flat_series_and_outside_sources_keep_previous_routing():
+    md = {'program_title': 'ゴジラVSビオランテ', 'air_date': '2023-10-22', 'needs_review': False, 'genre': '映画'}
+    assert build_routed_dest_path(movie_routes(None), SERIES + r'\v.mp4', md)[0] == r'L:\カ\v.mp4'
+    assert build_routed_dest_path(movie_routes(), r'B:\未視聴\v.mp4', md)[0] == r'L:\カ\v.mp4'
