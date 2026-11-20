@@ -1,6 +1,9 @@
 """Explicit movie storage groups, independent of canonical work identity."""
 import re
 import unicodedata
+from typing import NamedTuple
+
+WORK_LAYOUTS = ("flat", "by_work_year_month")
 
 
 def compact(value):
@@ -20,6 +23,26 @@ def has_movie_evidence(metadata):
     return str(metadata.get('epg_genre') or '').startswith('映画 - ')
 
 
+class MoviePlacement(NamedTuple):
+    """Where a grouped movie belongs.
+
+    ``work_folder`` is set only when the series opts into a per-work layout.
+    """
+    root: str
+    folder: str
+    work_folder: str | None = None
+    layout: str = "flat"
+
+
+def _work_entries(work):
+    """Return (declared title, aliases, explicit folder) of one works entry."""
+    if isinstance(work, str):
+        return work, [work], None
+    title = work["title"]
+    folder = work.get("folder")
+    return title, [title, *work.get("aliases", [])], folder
+
+
 class MovieGrouping:
     def __init__(self, data):
         self.default_dest = str(data.get("default_dest_root") or "").rstrip("\\")
@@ -30,11 +53,30 @@ class MovieGrouping:
         for group in self.series:
             if not group.get("folder") or not group.get("dest_root") or not group.get("works"):
                 raise ValueError("movie series requires folder, dest_root and explicit works")
+            layout = group.get("work_layout", "flat")
+            if layout not in WORK_LAYOUTS:
+                raise ValueError(f"movie series work_layout must be one of {WORK_LAYOUTS}: {layout}")
+            for work in group["works"]:
+                if isinstance(work, str):
+                    if not work.strip():
+                        raise ValueError("movie series work titles must be nonempty")
+                    continue
+                if not isinstance(work, dict) or not str(work.get("title") or "").strip():
+                    raise ValueError("movie series work entries require a title")
+                folder = work.get("folder")
+                if folder is not None and (not isinstance(folder, str) or not folder.strip()
+                                           or re.search(r'[<>:"/\\|?*]', folder) or folder.strip() in (".", "..")):
+                    raise ValueError("movie series work folder must be one safe path component: " + str(folder))
 
     def destinations(self):
         return [root for root in [self.default_dest, *(g['dest_root'] for g in self.series)] if root]
 
     def resolve(self, title, filename, movie_evidence=False, *, allow_frame_fallback=True):
+        """Return (root, folder) of the storage group, or None."""
+        placement = self.resolve_placement(title, filename, movie_evidence, allow_frame_fallback=allow_frame_fallback)
+        return (placement.root, placement.folder) if placement else None
+
+    def resolve_placement(self, title, filename, movie_evidence=False, *, allow_frame_fallback=True):
         raw = unicodedata.normalize("NFKC", str(filename))
         raw = re.sub(r"^(?:\[[^\]]+\])+", "", raw).strip()
         raw = re.sub(r"^CM-アリ\s*", "", raw)
@@ -68,18 +110,29 @@ class MovieGrouping:
         matches = []
         for group in self.series:
             for work in group["works"]:
-                aliases = [work] if isinstance(work, str) else [work["title"], *work.get("aliases", [])]
+                declared, aliases, folder = _work_entries(work)
                 for alias in aliases:
                     key = compact(alias)
                     if matches_work(alias):
-                        matches.append((len(key), group))
+                        matches.append((len(key), group, declared, folder))
         if matches:
-            longest = max(length for length, _ in matches)
-            groups = {g["folder"]: g for length, g in matches if length == longest}
+            longest = max(m[0] for m in matches)
+            best = [m for m in matches if m[0] == longest]
+            groups = {m[1]["folder"]: m[1] for m in best}
             if len(groups) != 1:
                 raise ValueError("ambiguous movie series membership")
             group = next(iter(groups.values()))
-            return str(group["dest_root"]).rstrip("\\"), str(group["folder"])
+            works = {(m[2], m[3]) for m in best}
+            if len(works) != 1:
+                raise ValueError("ambiguous movie work membership")
+            declared, folder = next(iter(works))
+            layout = str(group.get("work_layout", "flat"))
+            work_folder = None
+            if layout == "by_work_year_month":
+                from .path_placement_rules import legacy_safe_dir_name
+                # Same escaping as the folders already curated by hand (／ → ＿).
+                work_folder = folder.strip() if folder else legacy_safe_dir_name(declared, maxlen=80)
+            return MoviePlacement(str(group["dest_root"]).rstrip("\\"), str(group["folder"]), work_folder, layout)
         if allow_frame_fallback and frame and self.default_dest:
-            return self.default_dest, frame
+            return MoviePlacement(self.default_dest, frame)
         return None

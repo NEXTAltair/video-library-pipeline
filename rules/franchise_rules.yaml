@@ -4,8 +4,11 @@ rules:
     title_patterns: ["仮面ライダー"]
   - franchise: "シリーズ_ウルトラマン"
     title_patterns: ["ウルトラマン", "ウルトラQ", "ウルトラセブン"]
+  # 怪獣映画は番組名・説明での言及が多い (おはスタ「ちびゴジラ」、ゴジラ松井 等)。
+  # 映画/特撮の根拠 (genre・EPG・[映]) がない録画はシリーズに入れない。
   - franchise: "シリーズ_ゴジラ+モンスターバース"
     title_patterns: ["ゴジラ", "モスラ", "キングコング"]
+    require_evidence: [movie, tokusatsu]
   - franchise: "シリーズ_スーパー戦隊"
     title_patterns: ["戦隊", "ゴレンジャー"]
   - franchise: "シリーズ_牙狼"
@@ -16,3 +19,4 @@ rules:
     title_patterns: ["ポケモン", "ポケットモンスター"]
   - franchise: "シリーズ_ガメラ"
     title_patterns: ["ガメラ"]
+    require_evidence: [movie, tokusatsu]
