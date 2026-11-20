@@ -1048,3 +1048,19 @@ def test_recording_root_forwarded_during_registration_resume_and_recheck(tmp_pat
     assert len(calls) == 3
     assert any("--register-unregistered-only" in args for args in calls)
     assert all(args[args.index("--ts-root") + 1] == r"J:\TVFile" for args in calls)
+
+
+def test_relocate_missing_genre_counter_routes_to_metadata_preparation(tmp_path) -> None:
+    harness = RelocateWorkflowHarness(tmp_path, run_id="run_missing_genre", scenario="plan_ready")
+    original_runner = harness.python_runner
+
+    def runner(script, args, cwd=None):
+        payload = json.loads(original_runner(script, args, cwd))
+        if script.name == "relocate_existing_files.py":
+            payload["missingGenreSkipped"] = 1
+        return json.dumps(payload)
+
+    harness.python_runner = runner
+    payload = harness.dry_run().to_dict()
+    assert payload["phase"] == "review_required"
+    assert payload["nextActions"][0]["action"] == "prepare_relocate_metadata"

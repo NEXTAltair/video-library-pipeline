@@ -1156,11 +1156,12 @@ class RelocateWorkflowService:
         already_correct = int(summary.get("alreadyCorrect") or 0)
         metadata_queue_count = int(summary.get("metadataQueuePlannedCount") or 0)
         metadata_missing = int(summary.get("metadataMissingSkipped") or 0)
+        missing_genre = int(summary.get("missingGenreSkipped") or 0)
         suspicious = int(summary.get("suspiciousProgramTitleSkipped") or 0)
         needs_review = int(summary.get("needsReviewSkipped") or 0)
         unreviewed = int(summary.get("unreviewedMetadataSkipped") or 0)
         unregistered = int(summary.get("unregisteredSkipped") or 0)
-        has_metadata_gap = metadata_queue_count > 0 or metadata_missing > 0 or unreviewed > 0
+        has_metadata_gap = metadata_queue_count > 0 or metadata_missing > 0 or missing_genre > 0 or unreviewed > 0
         has_review_blocker = suspicious > 0 or needs_review > 0 or unreviewed > 0
 
         if unregistered > 0:
@@ -1503,13 +1504,16 @@ class RelocateWorkflowService:
                 message="some relocate candidates have suspicious program titles",
                 details={"suspiciousProgramTitleSkipped": int(summary.get("suspiciousProgramTitleSkipped") or 0)},
             ))
-        if int(summary.get("metadataMissingSkipped") or 0) > 0 or int(summary.get("metadataQueuePlannedCount") or 0) > 0:
+        if (int(summary.get("metadataMissingSkipped") or 0) > 0
+                or int(summary.get("missingGenreSkipped") or 0) > 0
+                or int(summary.get("metadataQueuePlannedCount") or 0) > 0):
             diagnostics.append(Diagnostic(
                 code="relocate_metadata_preparation_required",
                 severity=DiagnosticSeverity.INFO,
                 message="metadata preparation is required before relocating some files",
                 details={
                     "metadataMissingSkipped": int(summary.get("metadataMissingSkipped") or 0),
+                    "missingGenreSkipped": int(summary.get("missingGenreSkipped") or 0),
                     "metadataQueuePlannedCount": int(summary.get("metadataQueuePlannedCount") or 0),
                 },
             ))

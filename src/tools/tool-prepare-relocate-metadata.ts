@@ -151,7 +151,8 @@ export function registerToolPrepareRelocateMetadata(api: PluginApi, getCfg: GetC
         const runReextract = params.runReextract !== false;
         const relocatePlannedMoves = Number(relocateResult.plannedMoves || 0);
         const relocateAlreadyCorrect = Number(relocateResult.alreadyCorrect || 0);
-        const relocateMetadataMissingSkipped = Number(relocateResult.metadataMissingSkipped || 0);
+        const relocateMetadataMissingSkipped =
+          Number(relocateResult.metadataMissingSkipped || 0) + Number(relocateResult.missingGenreSkipped || 0);
         const relocateUnregisteredSkipped = Number(relocateResult.unregisteredSkipped || 0);
         const relocateOutcomeType =
           typeof relocateResult.outcomeType === "string" ? String(relocateResult.outcomeType) : null;
