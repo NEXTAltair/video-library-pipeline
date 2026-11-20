@@ -73,6 +73,26 @@ def metadata_needs_queue(md: dict[str, Any] | None) -> bool:
     return False
 
 
+def genre_unresolved_default_fallback(routes: Any, md: dict[str, Any], genre_route: str | None) -> bool:
+    """True when routing fell back to the default destination only because genre is unknown.
+
+    With genre routes configured, a missing genre (and no EPG/title/work evidence)
+    makes ``build_routed_dest_path`` fall back to ``default_dest``. That is not a
+    placement decision, so the file must not be judged ``already_correct`` or
+    planned for a move there.
+    """
+    if not routes or not getattr(routes, "routes", None):
+        return False
+    if str(md.get("genre") or "").strip():
+        return False
+    if genre_route != "default":
+        return False
+    title = str(md.get("program_title") or "")
+    if title and routes.resolve_work(title):
+        return False
+    return True
+
+
 def parse_last_json_object(stdout: str) -> dict[str, Any] | None:
     for line in reversed((stdout or "").splitlines()):
         s = line.strip()
@@ -274,6 +294,7 @@ def main() -> int:
     already_correct = 0
     unregistered_skipped = 0
     metadata_missing_skipped = 0
+    missing_genre_skipped = 0
     invalid_contract_skipped = 0
     suspicious_program_title_skipped = 0
     needs_review_skipped = 0
@@ -457,6 +478,25 @@ def main() -> int:
                         queue_candidates.append(
                             {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
                         )
+                continue
+
+            if not is_review_accepted and genre_unresolved_default_fallback(routes, md, vr.genre_route):
+                missing_genre_skipped += 1
+                rows_for_plan.append(
+                    {
+                        "path_id": path_id,
+                        "src": sf.win_path,
+                        "status": "skipped",
+                        "reason": "missing_genre",
+                        "metadata_source": md_source,
+                        "program_title": md.get("program_title"),
+                        "ts": ts_row,
+                    }
+                )
+                if queue_missing_metadata:
+                    queue_candidates.append(
+                        {"path_id": path_id, "path": sf.win_path, "name": sf.name, "mtime_utc": sf.mtime_utc}
+                    )
                 continue
 
             dst = canonicalize_windows_path(vr.dst)
@@ -968,6 +1008,7 @@ def main() -> int:
                 bool(auto_registered_files_truncated) if should_register_unregistered else False
             ),
             "metadataMissingSkipped": metadata_missing_skipped,
+            "missingGenreSkipped": missing_genre_skipped,
             "invalidContractSkipped": invalid_contract_skipped,
             "suspiciousProgramTitleSkipped": suspicious_program_title_skipped,
             "needsReviewSkipped": needs_review_skipped,

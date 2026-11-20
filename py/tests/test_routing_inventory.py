@@ -86,6 +86,7 @@ class Preview:
         self.ops = tmp_path / "ops"
         self.files = []
         self.locations = {}
+        self.routes_yaml = 'default_dest: "N:\\\\"\ndefault_layout: by_title\nroutes: []\n'
         self.con = connect_db(str(self.db))
         create_schema_if_needed(self.con)
         self.con.execute("CREATE TABLE recording_holds(path_id TEXT, reason TEXT, resolved_at TEXT)")
@@ -123,7 +124,7 @@ class Preview:
                                         "--program-titles-json", '["Show"]', "--queue-missing-metadata", "true",
                                         "--write-metadata-queue-on-dry-run", "true", *extra])
         route_file = self.root / "routes.yaml"
-        route_file.write_text('default_dest: "N:\\\\"\ndefault_layout: by_title\nroutes: []\n')
+        route_file.write_text(self.routes_yaml)
         monkeypatch.setattr("sys.argv", [*__import__("sys").argv, "--drive-routes", str(route_file)])
         assert relocate.main() == 0
         summary = json.loads(capsys.readouterr().out)
@@ -316,3 +317,47 @@ def test_recording_root_excluded_before_registration_writes(tmp_path, monkeypatc
     with connect_db(str(preview.db)) as con:
         assert con.execute("SELECT COUNT(*) FROM paths WHERE path=?", (recording.win_path,)).fetchone()[0] == 0
         assert con.execute("SELECT COUNT(*) FROM paths WHERE path=?", (library.win_path,)).fetchone()[0] == 1
+
+
+def _genre_routes_preview(tmp_path, monkeypatch, *, source, genre):
+    preview = Preview(tmp_path, monkeypatch)
+    src = r"N:\Show\Show ep.mp4"
+    preview.add(src, title=None)
+    pid = ensure_location(preview.con, src)
+    data = {"program_title": "Show", "air_date": "2026-01-01", "needs_review": False, "genre": genre}
+    reviewed = 1 if source == "human_reviewed" else 0
+    preview.con.execute(
+        "INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,needs_review,human_reviewed) "
+        "VALUES(?,?,?,'now','Show','2026-01-01',0,?)",
+        (pid, source, json.dumps(data, ensure_ascii=False), reviewed),
+    )
+    preview.routes_yaml = ('default_dest: "N:\\\\"\ndefault_layout: by_title\nroutes:\n'
+                           '  - genre: variety\n    dest_root: "E:\\\\Variety"\n    layout: by_title\n')
+    return preview
+
+
+def test_llm_metadata_without_genre_on_default_route_is_queued_not_already_correct(tmp_path, monkeypatch, capsys):
+    preview = _genre_routes_preview(tmp_path, monkeypatch, source="llm", genre=None)
+    summary, rows, _ = preview.run(monkeypatch, capsys)
+    assert summary["alreadyCorrect"] == 0
+    assert summary["plannedMoves"] == 0
+    assert summary["missingGenreSkipped"] == 1
+    assert summary["metadataQueuePlannedCount"] == 1
+    assert summary["requiresMetadataPreparation"] is True
+    assert rows[0]["reason"] == "missing_genre"
+
+
+def test_llm_metadata_with_genre_still_routes_by_genre(tmp_path, monkeypatch, capsys):
+    preview = _genre_routes_preview(tmp_path, monkeypatch, source="llm", genre="バラエティ")
+    summary, rows, _ = preview.run(monkeypatch, capsys)
+    assert summary["missingGenreSkipped"] == 0
+    assert summary["plannedMoves"] == 1
+    planned = next(r for r in rows if r["status"] == "planned")
+    assert planned["dst"].startswith("E:\\Variety\\")
+
+
+def test_human_reviewed_default_route_without_genre_is_kept(tmp_path, monkeypatch, capsys):
+    preview = _genre_routes_preview(tmp_path, monkeypatch, source="human_reviewed", genre=None)
+    summary, rows, _ = preview.run(monkeypatch, capsys)
+    assert summary["missingGenreSkipped"] == 0
+    assert summary["alreadyCorrect"] == 1
