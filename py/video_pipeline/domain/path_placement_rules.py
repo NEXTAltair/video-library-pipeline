@@ -358,13 +358,19 @@ def build_routed_dest_path(
     animated_work = explicit_genre in ("anime", "アニメ", "アニメ/特撮")
     if routes.movie_grouping and (not non_movie or animated_work):
         from .movie_grouping import has_movie_evidence
-        group = routes.movie_grouping.resolve(str(md["program_title"]), filename,
-                                             movie_evidence=has_movie_evidence(md) or bool(route and route.genre == "movie"),
-                                             allow_frame_fallback=not non_movie)
+        group = routes.movie_grouping.resolve_placement(
+            str(md["program_title"]), filename,
+            movie_evidence=has_movie_evidence(md) or bool(route and route.genre == "movie"),
+            allow_frame_fallback=not non_movie)
         if group:
-            root, folder = group
             group_genre = (route.genre if route else "anime") if non_movie else "movie"
-            return str(PureWindowsPath(root.rstrip("\\") + "\\") / safe_dir_name(folder, maxlen=80) / filename), group_genre, None
+            series_dir = PureWindowsPath(group.root.rstrip("\\") + "\\") / safe_dir_name(group.folder, maxlen=80)
+            if group.work_folder:
+                y, m, err = extract_year_month_from_air_date(md.get("air_date"))
+                if err:
+                    return None, group_genre, err
+                return str(series_dir / group.work_folder / y / m / filename), group_genre, None
+            return str(series_dir / filename), group_genre, None
     dest_root = route.dest_root if route else routes.default_dest
     layout = route.layout if route else routes.default_layout
     genre = route.genre if route else "default"

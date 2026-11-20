@@ -17,8 +17,14 @@ series:
       - 機動戦士ガンダムUC
   - folder: シリーズ_ゴジラ+モンスターバース
     dest_root: 'C:\VideoLibrary\Tokusatsu'
+    # Optional: <series>\<work folder>\<YYYY>\<MM>\<file>. Default "flat" keeps files in the series root.
+    work_layout: by_work_year_month
     works:
       - ゴジラ-1.0
+      - ゴジラ-1.0/C            # folder: ゴジラ-1.0＿C (forbidden characters become ＿)
+      - title: ゴジラxコング 新たなる帝国
+        aliases: [ゴジラxコング]
+        folder: ゴジラxコング   # match a folder that already exists
       - キングコング対ゴジラ
       - title: ゴジラ2000 ―ミレニアム―
         aliases: [ゴジラ2000　―ミレニアム―]

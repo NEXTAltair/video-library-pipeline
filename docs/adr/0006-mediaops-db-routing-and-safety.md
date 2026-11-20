@@ -246,6 +246,19 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 
 `by_series` は後方互換名として受け付けつつ、内部で `by_title` に正規化する。
 
+### 映画のシリーズ配置 (`movie_grouping_path`)
+
+`movie_grouping.yaml` の `series` は、明示した `works` に一致し映画の根拠 (genre・EPG・放送枠) がある録画だけを `<dest_root>\<folder>` へ集める。作品名はメタデータに残し、置き場所だけを決める。
+
+| `work_layout` | フォルダ構成 |
+|---|---|
+| `flat` (既定) | `<dest_root>\<series>\<file>` |
+| `by_work_year_month` | `<dest_root>\<series>\<作品フォルダ>\<YYYY>\<MM>\<file>` |
+
+作品フォルダ名は works の `title` から旧来の置換 (`<>:"/\|?*` → `＿`、例 `ゴジラ-1.0/C` → `ゴジラ-1.0＿C`) で作る。手で作った既存フォルダに合わせる場合は works の項目に `folder` を書く (1階層の安全な名前のみ)。`by_work_year_month` で `air_date` がない録画は `missing_air_date` で保留する。works に一致しない映画はシリーズに入らない。
+
+`franchise_rules.yaml` の `title_patterns` は部分一致なので、番組名での言及 (おはスタ「ちびゴジラ」、ゴジラ松井等) を拾う。`require_evidence: [movie, tokusatsu]` を持つルールは、genre (明示されていればそれが決め手)、EPG、ファイル名の `[映]` のいずれかで映画/特撮と分かる録画にだけ franchise を付ける。`シリーズ_` フォルダに置かれていることだけでは根拠にしない。
+
 ## Safety Mechanisms
 
 ### `apply_reviewed_metadata` の2段ゲート
