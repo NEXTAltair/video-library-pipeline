@@ -319,13 +319,13 @@ def test_recording_root_excluded_before_registration_writes(tmp_path, monkeypatc
         assert con.execute("SELECT COUNT(*) FROM paths WHERE path=?", (library.win_path,)).fetchone()[0] == 1
 
 
-def _genre_routes_preview(tmp_path, monkeypatch, *, source, genre):
+def _genre_routes_preview(tmp_path, monkeypatch, *, source, genre, reviewed=None):
     preview = Preview(tmp_path, monkeypatch)
     src = r"N:\Show\Show ep.mp4"
     preview.add(src, title=None)
     pid = ensure_location(preview.con, src)
     data = {"program_title": "Show", "air_date": "2026-01-01", "needs_review": False, "genre": genre}
-    reviewed = 1 if source == "human_reviewed" else 0
+    reviewed = int(reviewed if reviewed is not None else source == "human_reviewed")
     preview.con.execute(
         "INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,needs_review,human_reviewed) "
         "VALUES(?,?,?,'now','Show','2026-01-01',0,?)",
@@ -356,8 +356,21 @@ def test_llm_metadata_with_genre_still_routes_by_genre(tmp_path, monkeypatch, ca
     assert planned["dst"].startswith("E:\\Variety\\")
 
 
-def test_human_reviewed_default_route_without_genre_is_kept(tmp_path, monkeypatch, capsys):
-    preview = _genre_routes_preview(tmp_path, monkeypatch, source="human_reviewed", genre=None)
+@pytest.mark.parametrize("source", ["human_reviewed", "llm_marked_reviewed"])
+def test_reviewed_metadata_without_genre_on_default_route_is_queued(tmp_path, monkeypatch, capsys, source):
+    # Legacy rows: source=llm with human_reviewed=1 and no genre (issue #194 production case).
+    db_source = "llm" if source == "llm_marked_reviewed" else source
+    preview = _genre_routes_preview(tmp_path, monkeypatch, source=db_source, genre=None, reviewed=True)
+    summary, rows, _ = preview.run(monkeypatch, capsys)
+    assert summary["alreadyCorrect"] == 0
+    assert summary["missingGenreSkipped"] == 1
+    assert summary["metadataQueuePlannedCount"] == 1
+    assert rows[0]["reason"] == "missing_genre"
+
+
+def test_routes_without_genre_routes_keep_default_placement(tmp_path, monkeypatch, capsys):
+    preview = _genre_routes_preview(tmp_path, monkeypatch, source="llm", genre=None)
+    preview.routes_yaml = 'default_dest: "N:\\\\"\ndefault_layout: by_title\nroutes: []\n'
     summary, rows, _ = preview.run(monkeypatch, capsys)
     assert summary["missingGenreSkipped"] == 0
     assert summary["alreadyCorrect"] == 1
