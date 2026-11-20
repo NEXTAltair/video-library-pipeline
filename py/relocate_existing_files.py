@@ -480,7 +480,9 @@ def main() -> int:
                         )
                 continue
 
-            if not is_review_accepted and genre_unresolved_default_fallback(routes, md, vr.genre_route):
+            # Applies to reviewed rows too: legacy human_reviewed rows (e.g. source=llm with
+            # human_reviewed=1) can lack genre, and the default fallback is not a placement decision.
+            if genre_unresolved_default_fallback(routes, md, vr.genre_route):
                 missing_genre_skipped += 1
                 rows_for_plan.append(
                     {
