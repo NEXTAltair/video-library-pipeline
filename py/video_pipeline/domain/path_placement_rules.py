@@ -362,6 +362,13 @@ def build_routed_dest_path(
             str(md["program_title"]), filename,
             movie_evidence=has_movie_evidence(md) or bool(route and route.genre == "movie"),
             allow_frame_fallback=not non_movie)
+        is_series_member = bool(group and not group.frame_fallback)
+        movie_like = not non_movie and (bool(group) or has_movie_evidence(md) or bool(route and route.genre == "movie"))
+        if not is_series_member and movie_like and routes.movie_grouping.work_layout_series_containing(src_path_win):
+            # A per-work series keeps films that match no declared work where
+            # the owner filed them, instead of sending them to the generic
+            # movie route or a broadcast-frame folder.
+            return str(PureWindowsPath(str(src_path_win))), "movie", None
         if group:
             group_genre = (route.genre if route else "anime") if non_movie else "movie"
             series_dir = PureWindowsPath(group.root.rstrip("\\") + "\\") / safe_dir_name(group.folder, maxlen=80)

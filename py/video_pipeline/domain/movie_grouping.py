@@ -32,6 +32,7 @@ class MoviePlacement(NamedTuple):
     folder: str
     work_folder: str | None = None
     layout: str = "flat"
+    frame_fallback: bool = False
 
 
 def _work_entries(work):
@@ -67,6 +68,19 @@ class MovieGrouping:
                 if folder is not None and (not isinstance(folder, str) or not folder.strip()
                                            or re.search(r'[<>:"/\\|?*]', folder) or folder.strip() in (".", "..")):
                     raise ValueError("movie series work folder must be one safe path component: " + str(folder))
+
+    def work_layout_series_containing(self, src_path_win):
+        """Series folder (as a path) holding ``src`` when that series uses a per-work layout."""
+        from pathlib import PureWindowsPath
+        src = PureWindowsPath(str(src_path_win))
+        for group in self.series:
+            if group.get("work_layout", "flat") == "flat":
+                continue
+            from .path_placement_rules import safe_dir_name
+            series_dir = PureWindowsPath(str(group["dest_root"]).rstrip("\\") + "\\") / safe_dir_name(group["folder"], maxlen=80)
+            if src.parent == series_dir or series_dir in src.parents:
+                return series_dir
+        return None
 
     def destinations(self):
         return [root for root in [self.default_dest, *(g['dest_root'] for g in self.series)] if root]
@@ -134,5 +148,5 @@ class MovieGrouping:
                 work_folder = folder.strip() if folder else legacy_safe_dir_name(declared, maxlen=80)
             return MoviePlacement(str(group["dest_root"]).rstrip("\\"), str(group["folder"]), work_folder, layout)
         if allow_frame_fallback and frame and self.default_dest:
-            return MoviePlacement(self.default_dest, frame)
+            return MoviePlacement(self.default_dest, frame, frame_fallback=True)
         return None
