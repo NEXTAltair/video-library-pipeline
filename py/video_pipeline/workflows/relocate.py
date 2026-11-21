@@ -43,7 +43,7 @@ from . import chunked_apply
 from .store import WorkflowStore, sha256_file
 from video_pipeline.platform.writer_lock import serialized_workflow
 from video_pipeline.platform.sqlite_snapshot import check_integrity
-from video_pipeline.application.reviewed_metadata import apply_reviewed_metadata
+from video_pipeline.application.reviewed_metadata import PLACED_REVIEW_GATE_TYPE, apply_reviewed_metadata
 
 PythonRunner = Callable[[Path, list[str], str | None], str]
 PowerShellRunner = Callable[[str, list[str]], dict[str, Any]]
@@ -261,6 +261,101 @@ def planned_metadata_retry_action(run: Any) -> NextAction | None:
         "resumeAction": "prepare_relocate_metadata"}, requires_human_input=False)
 
 
+PLACED_QUEUE_TYPE = "relocate_placed_metadata_queue"
+PLACED_RECHECK_TYPE = "relocate_placed_metadata_recheck"
+
+
+def placed_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [r for r in rows if r.get("status") == "skipped" and r.get("reason") == "already_correct"]
+
+
+def placed_cohort(rows: list[dict[str, Any]], selected: list[str] | None = None) -> tuple[list[dict[str, Any]], str]:
+    """Rows whose metadata may be reviewed without moving them (#209).
+
+    Default: already_correct rows carrying owner series numbering (<略称>#NN inside a
+    series folder); when none carry it, every already_correct row. ``selected``
+    narrows to an explicit subset that must itself be already_correct.
+    """
+    placed = placed_rows(rows)
+    if selected is not None:
+        if (not isinstance(selected, list) or not selected
+                or any(not isinstance(pid, str) or not pid.strip() for pid in selected)
+                or len(selected) != len(set(selected))):
+            raise ValueError("selectedPathIds must be a nonempty list of unique path ids")
+        by_id = {r.get("path_id"): r for r in placed}
+        if any(pid not in by_id for pid in selected):
+            raise ValueError("selectedPathIds contains a path that is not already_correct in the current plan")
+        return [r for r in placed if r.get("path_id") in set(selected)], "selected"
+    numbered = [r for r in placed if r.get("series_order") is not None]
+    return (numbered, "series_order") if numbered else (placed, "already_correct")
+
+
+def placed_metadata_action(run_id: str, plan_id: str) -> NextAction:
+    return NextAction(action="review_placed_metadata",
+        label="Review metadata of already-placed (already_correct) files without moving them",
+        tool="video_pipeline_resume", params={"runId": run_id, "artifactId": plan_id,
+        "resumeAction": "prepare_placed_metadata"}, requires_human_input=True)
+
+
+def _placed_run_live(run: Any) -> bool:
+    return (run.flow == "relocate" and not run.resolution
+            and (run.phase, run.status) in {("plan_ready", "active"), ("review_required", "active"),
+                                            ("complete", "complete")})
+
+
+def available_placed_metadata_action(run: Any) -> NextAction | None:
+    """Read-only preparation for already_correct rows, offered even on complete runs."""
+    if not _placed_run_live(run) or "relocate_internal_move_plan" in run.artifacts:
+        return None
+    plans = [run.artifacts[aid] for aid in run.artifact_ids if run.artifacts[aid].type == "relocate_plan"]
+    if not plans or plans[-1].status != ArtifactStatus.AVAILABLE.value or plans[-1].metadata.get("subsetSelection"):
+        return None
+    plan = plans[-1]
+    if int((plan.metadata.get("summary") or {}).get("alreadyCorrect") or 0) <= 0:
+        return None
+    for gate in run.review_gates.values():
+        if gate.type != PLACED_REVIEW_GATE_TYPE:
+            continue
+        if gate.status == ReviewGateStatus.OPEN.value:
+            return None
+        if gate.status == ReviewGateStatus.APPROVED.value and plan.id in placed_gate_plan_ids(run, gate):
+            return None
+    return placed_metadata_action(run.run_id, plan.id)
+
+
+def placed_gate_plan_ids(run: Any, gate: Any) -> set[str]:
+    plan_ids: set[str] = set()
+    for review_id in gate.artifact_ids:
+        review = run.artifacts.get(review_id)
+        for extract_id in (review.input_artifact_ids if review else []):
+            extract = run.artifacts.get(extract_id)
+            for queue_id in (extract.input_artifact_ids if extract else []):
+                queue = run.artifacts.get(queue_id)
+                if queue is not None and queue.type == PLACED_QUEUE_TYPE:
+                    plan_ids.update(queue.input_artifact_ids)
+    return plan_ids
+
+
+def placed_metadata_review_action(run: Any) -> NextAction | None:
+    if not _placed_run_live(run):
+        return None
+    gate = next((run.review_gates[gid] for gid in reversed(run.review_gate_ids)
+                 if run.review_gates[gid].type == PLACED_REVIEW_GATE_TYPE
+                 and run.review_gates[gid].status == ReviewGateStatus.OPEN.value), None)
+    if gate is None:
+        return None
+    return NextAction(action="review_placed_metadata_yaml",
+        label="Accept reviewed metadata (row_overrides with review_note) for already-placed files; no moves",
+        tool="video_pipeline_resume", params={"runId": run.run_id, "gateId": gate.id,
+        "artifactIds": list(gate.artifact_ids),
+        "reviewYamlPaths": [run.artifacts[aid].path for aid in gate.artifact_ids if aid in run.artifacts],
+        "resumeAction": "apply_placed_metadata"}, requires_human_input=True)
+
+
+def placed_metadata_actions(run: Any) -> list[NextAction]:
+    return [a for a in (placed_metadata_review_action(run), available_placed_metadata_action(run)) if a]
+
+
 class RelocateWorkflowService:
     def __init__(
         self,
@@ -334,6 +429,10 @@ class RelocateWorkflowService:
             return self._resume_subset(store, config)
         if action == "prepare_planned_metadata":
             return self._resume_planned_metadata(store, config)
+        if action == "prepare_placed_metadata":
+            return self._resume_placed_metadata(store, config)
+        if action == "apply_placed_metadata":
+            return self._resume_placed_acceptance(store, config)
         if action == "register_unregistered":
             return self._resume_register_unregistered(store, config.run_id)
         if action in {"prepare_relocate_metadata", "review_relocate_metadata"}:
@@ -1032,22 +1131,9 @@ class RelocateWorkflowService:
             details={"mode": mode, "src": row["src"], "dst": row["dst"], "action": done.get("action")}))
         return self._apply_result(store, run_id, ok=True, outcome="relocate_apply_settled")
 
-    def _dry_run_existing(
-        self,
-        run_id: str,
-        config: RelocateDryRunConfig,
-        store: WorkflowStore,
-        db_path: str,
-    ) -> WorkflowResult:
-        run_dir = store.run_dir(run_id)
-        plan_dir = run_dir / "plan"
-        metadata_dir = run_dir / "metadata"
-        logs_dir = run_dir / "logs"
-        run = store.read_run(run_id)
-        diagnostics_id = next_artifact_id(run, "relocate_diagnostics")
-        diagnostics_suffix = "" if diagnostics_id == "relocate_diagnostics" else diagnostics_id.removeprefix("relocate_diagnostics")
-        summary_path = logs_dir / f"relocate_summary{diagnostics_suffix}.json"
-
+    @staticmethod
+    def _planner_args(config: RelocateDryRunConfig, db_path: str) -> list[str]:
+        """Read-only planner arguments (never ``--apply``)."""
         args = [
             "--db",
             db_path,
@@ -1089,6 +1175,25 @@ class RelocateWorkflowService:
         if config.program_titles:
             args.extend(["--program-titles-json", json.dumps(config.program_titles, ensure_ascii=False)])
 
+        return args
+
+    def _dry_run_existing(
+        self,
+        run_id: str,
+        config: RelocateDryRunConfig,
+        store: WorkflowStore,
+        db_path: str,
+    ) -> WorkflowResult:
+        run_dir = store.run_dir(run_id)
+        plan_dir = run_dir / "plan"
+        metadata_dir = run_dir / "metadata"
+        logs_dir = run_dir / "logs"
+        run = store.read_run(run_id)
+        diagnostics_id = next_artifact_id(run, "relocate_diagnostics")
+        diagnostics_suffix = "" if diagnostics_id == "relocate_diagnostics" else diagnostics_id.removeprefix("relocate_diagnostics")
+        summary_path = logs_dir / f"relocate_summary{diagnostics_suffix}.json"
+
+        args = self._planner_args(config, db_path)
         raw = self.python_runner(self.py_root / "relocate_existing_files.py", args, str(self.py_root))
         summary = parse_last_json_object_line(raw)
         if not summary:
@@ -1402,6 +1507,8 @@ class RelocateWorkflowService:
             for gate in run.review_gates.values()
             if gate.requires_human_review
             and gate.status in {ReviewGateStatus.OPEN.value, ReviewGateStatus.REJECTED.value}
+            # Placed-metadata review covers only already_correct rows, which apply never moves.
+            and gate.type != PLACED_REVIEW_GATE_TYPE
         ]
         if blocking_gates:
             raise RelocateApplyRejected(Diagnostic(
@@ -1678,6 +1785,132 @@ class RelocateWorkflowService:
             return self._reject_call(store.read_run(config.run_id), "planned_metadata_rejected", Diagnostic(
                 code="planned_metadata_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc)))
 
+    def _resume_placed_metadata(self, store: WorkflowStore, config: RelocateApplyConfig) -> WorkflowResult:
+        """Read-only review of already_correct rows (#209); never moves files or changes phase."""
+        run = store.read_run(config.run_id)
+        try:
+            action = available_placed_metadata_action(run)
+            if action is None or action.params["artifactId"] != config.artifact_id:
+                raise ValueError("placed metadata preparation is unavailable, already open or already accepted")
+            if chunked_apply.state_path(store.run_dir(config.run_id)).exists():
+                raise ValueError("placed metadata preparation cannot follow a started apply")
+            plan = self._validate_owned_plan_artifact(store, config.run_id, config.artifact_id)
+            run_dir = store.run_dir(config.run_id).resolve()
+            path = local_path_from_any(plan.path)
+            if not path.resolve().is_relative_to(run_dir):
+                raise ValueError("placed metadata input escaped its run")
+            rows, scope = placed_cohort(read_jsonl_rows(path), config.selected_path_ids)
+            if not rows or any(not isinstance(row.get("path_id"), str) or not row["path_id"].strip()
+                               or not isinstance(row.get("src"), str) or not row["src"].strip() for row in rows):
+                raise ValueError("placed metadata review requires registered already_correct rows")
+            ids = [row["path_id"] for row in rows]
+            if len(ids) != len(set(ids)):
+                raise ValueError("placed metadata cohort has duplicate path identities")
+            # Earlier preparations of this plan that never opened a gate (failed extraction).
+            for artifact in run.artifacts.values():
+                if (artifact.type == PLACED_QUEUE_TYPE and plan.id in artifact.input_artifact_ids
+                        and artifact.status == ArtifactStatus.AVAILABLE.value):
+                    artifact.status = ArtifactStatus.SUPERSEDED.value
+            store.write_run(run)
+            artifact_id = next_artifact_id(store.read_run(config.run_id), PLACED_QUEUE_TYPE)
+            queue_path = store.run_dir(config.run_id) / "metadata" / f"{artifact_id}.jsonl"
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            with queue_path.open("x", encoding="utf-8") as stream:
+                for row in rows:
+                    stream.write(json.dumps({"path_id": row["path_id"], "path": row["src"],
+                        "name": PureWindowsPath(row["src"]).name,
+                        "mtime_utc": (row.get("precondition") or {}).get("mtime_utc") or row.get("mtimeUtc")},
+                        ensure_ascii=False) + "\n")
+            suggestions = {row["path_id"]: {"series_abbr": row.get("series_abbr"), "series_order": row.get("series_order")}
+                           for row in rows if row.get("series_order") is not None}
+            queue = store.register_artifact(config.run_id, artifact_type=PLACED_QUEUE_TYPE,
+                path=queue_path, producer="RelocateWorkflowService.review_placed_metadata",
+                artifact_id=artifact_id, input_artifact_ids=[plan.id],
+                metadata={"placedReview": True, "rows": len(rows), "scope": scope,
+                          "seriesOrderSuggestions": suggestions})
+            review_artifacts = self._extract_review_artifacts(
+                store, config.run_id, queue, ignore_human_reviewed=False, immutable=True)
+            gate = store.create_review_gate(config.run_id, gate_type=PLACED_REVIEW_GATE_TYPE,
+                artifact_ids=[artifact.id for artifact in review_artifacts],
+                gate_id=next_gate_id(store.read_run(config.run_id), PLACED_REVIEW_GATE_TYPE))
+            current = store.read_run(config.run_id)
+            return self._result(ok=False, store=store, run_id=config.run_id, phase=current.phase,
+                                outcome="relocate_placed_metadata_review_required",
+                                next_actions=[a for a in [placed_metadata_review_action(current)] if a])
+        except RelocateApplyRejected as exc:
+            return self._reject_call(store.read_run(config.run_id), "placed_metadata_rejected", exc.diagnostic)
+        except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+            return self._reject_call(store.read_run(config.run_id), "placed_metadata_rejected", Diagnostic(
+                code="placed_metadata_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc)))
+
+    def _resume_placed_acceptance(self, store: WorkflowStore, config: RelocateApplyConfig) -> WorkflowResult:
+        """Commit reviewed metadata of already-placed rows, then re-plan read-only to prove 0 moves."""
+        run = store.read_run(config.run_id)
+        try:
+            if placed_metadata_review_action(run) is None:
+                raise ValueError("open placed_metadata_review gate is missing")
+            gates = [g for g in run.review_gates.values()
+                     if g.type == PLACED_REVIEW_GATE_TYPE and g.status == ReviewGateStatus.OPEN.value]
+            summary = apply_reviewed_metadata(store, config, gate_type=PLACED_REVIEW_GATE_TYPE)
+        except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+            return self._reject_call(store.read_run(config.run_id), "placed_metadata_rejected", Diagnostic(
+                code="placed_metadata_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc)))
+        for gate in gates:
+            store.update_review_gate(config.run_id, gate.id, status=ReviewGateStatus.APPROVED,
+                                     resolution={"action": "apply_placed_metadata", "metadataApply": summary})
+        cohort = {row["path_id"] for gate in gates for review_id in gate.artifact_ids
+                  for extract_id in run.artifacts[review_id].input_artifact_ids
+                  for row in read_jsonl_rows(local_path_from_any(run.artifacts[extract_id].path))
+                  if "_meta" not in row and isinstance(row.get("path_id"), str)}
+        try:
+            recheck = self._placed_recheck(store, config.run_id, cohort)
+        except Exception as exc:  # metadata is committed; report, never move
+            current = store.read_run(config.run_id)
+            current.diagnostics.append(Diagnostic(
+                code="relocate_placed_recheck_failed", severity=DiagnosticSeverity.WARNING,
+                message=f"metadata accepted; read-only re-plan failed: {exc}",
+                details={"metadataCommitted": True, "metadataApply": summary}))
+            store.write_run(current)
+            return self._result(ok=False, store=store, run_id=config.run_id, phase=current.phase,
+                                outcome="relocate_placed_metadata_accepted_recheck_failed")
+        current = store.read_run(config.run_id)
+        moved = recheck["cohortNotAlreadyCorrect"]
+        current.diagnostics.append(Diagnostic(
+            code="relocate_placed_metadata_accepted",
+            severity=DiagnosticSeverity.INFO if not moved else DiagnosticSeverity.WARNING,
+            message=(f"accepted metadata for {len(cohort)} already-placed files; re-plan keeps them in place"
+                     if not moved else
+                     f"accepted metadata; {len(moved)} files would now move — start a new relocate run to review"),
+            details={"metadataApply": summary, "recheck": recheck}))
+        store.write_run(current)
+        return self._result(ok=not moved, store=store, run_id=config.run_id, phase=current.phase,
+                            outcome="relocate_placed_metadata_accepted" if not moved
+                            else "relocate_placed_metadata_accepted_moves_pending")
+
+    def _placed_recheck(self, store: WorkflowStore, run_id: str, cohort: set[str]) -> dict[str, Any]:
+        run = store.read_run(run_id)
+        db_path = str(local_path_from_any(str(run.config_snapshot.get("db") or "")))
+        raw = self.python_runner(self.py_root / "relocate_existing_files.py",
+                                 self._planner_args(self._config_from_run(run), db_path), str(self.py_root))
+        summary = parse_last_json_object_line(raw)
+        if not summary or not isinstance(summary.get("planPath"), str) or not summary["planPath"]:
+            raise RuntimeError("relocate_existing_files.py did not emit a plan for the recheck")
+        artifact_id = next_artifact_id(run, PLACED_RECHECK_TYPE)
+        target = store.run_dir(run_id) / "plan" / f"{artifact_id}.jsonl"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(local_path_from_any(summary["planPath"]), target)
+        statuses = {row.get("path_id"): (row.get("status"), row.get("reason"))
+                    for row in read_jsonl_rows(target) if "_meta" not in row}
+        not_placed = sorted(pid for pid in cohort if statuses.get(pid) != ("skipped", "already_correct"))
+        result = {"cohort": len(cohort), "cohortAlreadyCorrect": len(cohort) - len(not_placed),
+                  "cohortNotAlreadyCorrect": not_placed,
+                  "cohortStatuses": {pid: list(statuses[pid]) for pid in not_placed if pid in statuses},
+                  "plannedMovesTotal": int(summary.get("plannedMoves") or 0), "artifactId": artifact_id}
+        store.register_artifact(run_id, artifact_type=PLACED_RECHECK_TYPE, path=target,
+                                producer="relocate_existing_files.py", artifact_id=artifact_id,
+                                metadata={"summary": summary, "recheck": result})
+        return result
+
     def _resume_reextract_metadata(self, store: WorkflowStore, run_id: str) -> WorkflowResult:
         run = store.read_run(run_id)
         if run.flow != WorkflowFlow.RELOCATE.value or run.phase != WorkflowPhase.REVIEW_REQUIRED.value:
@@ -1728,35 +1961,21 @@ class RelocateWorkflowService:
                 outcome="relocate_metadata_reextract_failed",
             )
 
-    def _prepare_metadata_review(
+    def _extract_review_artifacts(
         self,
         store: WorkflowStore,
         run_id: str,
         queue_artifact: ArtifactRef,
-    ) -> WorkflowResult:
+        *,
+        ignore_human_reviewed: bool,
+        immutable: bool,
+    ) -> list[ArtifactRef]:
+        """Output-only extraction of a run-owned queue plus review YAML export."""
         run = store.read_run(run_id)
         db_path = str(local_path_from_any(str(run.config_snapshot.get("db") or "")))
         run_dir = store.run_dir(run_id)
         metadata_dir = run_dir / "metadata"
         review_dir = run_dir / "review"
-        if queue_artifact.metadata.get("refreshReviewed"):
-            queue_path = local_path_from_any(queue_artifact.path)
-            if (not queue_path.resolve().is_relative_to(run_dir.resolve())
-                    or sha256_file(queue_path) != queue_artifact.sha256):
-                raise ValueError("planned metadata queue ownership/checksum mismatch")
-            if (len(queue_artifact.input_artifact_ids) != 1
-                    or "relocate_internal_move_plan" in run.artifacts
-                    or chunked_apply.state_path(run_dir).exists()):
-                raise ValueError("planned metadata queue lineage/apply state is invalid")
-            plan = self._validate_owned_plan_artifact(store, run_id, queue_artifact.input_artifact_ids[0])
-            if not local_path_from_any(plan.path).resolve().is_relative_to(run_dir.resolve()):
-                raise ValueError("planned metadata parent plan escaped its run")
-            planned_rows = [r for r in iter_jsonl(local_path_from_any(plan.path)) if r.get("status") == "planned"]
-            expected_rows = [{"path_id": r.get("path_id"), "path": r.get("src")} for r in planned_rows]
-            queued_rows = [{"path_id": r.get("path_id"), "path": r.get("path")}
-                           for r in iter_jsonl(queue_path) if "_meta" not in r]
-            if not expected_rows or queued_rows != expected_rows:
-                raise ValueError("planned metadata queue differs from its owned plan cohort")
         preparation_id = next_artifact_id(run, "metadata_extract_output")
         preparation_dir = metadata_dir / preparation_id
 
@@ -1776,7 +1995,7 @@ class RelocateWorkflowService:
                 "--start-batch",
                 "1",
                 "--output-only",
-                *(["--ignore-human-reviewed"] if queue_artifact.metadata.get("refreshReviewed") is True else []),
+                *(["--ignore-human-reviewed"] if ignore_human_reviewed else []),
                 *(["--drive-routes", str(run.config_snapshot["driveRoutes"])]
                   if run.config_snapshot.get("driveRoutes") else []),
             ],
@@ -1794,7 +2013,7 @@ class RelocateWorkflowService:
                 f"relocate metadata extraction produced no output JSONL: {extract_summary or extract_raw}"
             )
 
-        if queue_artifact.metadata.get("refreshReviewed"):
+        if immutable:
             expected = {row["path_id"]: canonicalize_windows_path(row["path"])
                         for row in iter_jsonl(local_path_from_any(queue_artifact.path)) if "_meta" not in row}
             observed: dict[str, str] = {}
@@ -1872,6 +2091,40 @@ class RelocateWorkflowService:
                     },
                 )
             )
+
+        return review_artifacts
+
+    def _prepare_metadata_review(
+        self,
+        store: WorkflowStore,
+        run_id: str,
+        queue_artifact: ArtifactRef,
+    ) -> WorkflowResult:
+        run = store.read_run(run_id)
+        run_dir = store.run_dir(run_id)
+        if queue_artifact.metadata.get("refreshReviewed"):
+            queue_path = local_path_from_any(queue_artifact.path)
+            if (not queue_path.resolve().is_relative_to(run_dir.resolve())
+                    or sha256_file(queue_path) != queue_artifact.sha256):
+                raise ValueError("planned metadata queue ownership/checksum mismatch")
+            if (len(queue_artifact.input_artifact_ids) != 1
+                    or "relocate_internal_move_plan" in run.artifacts
+                    or chunked_apply.state_path(run_dir).exists()):
+                raise ValueError("planned metadata queue lineage/apply state is invalid")
+            plan = self._validate_owned_plan_artifact(store, run_id, queue_artifact.input_artifact_ids[0])
+            if not local_path_from_any(plan.path).resolve().is_relative_to(run_dir.resolve()):
+                raise ValueError("planned metadata parent plan escaped its run")
+            planned_rows = [r for r in iter_jsonl(local_path_from_any(plan.path)) if r.get("status") == "planned"]
+            expected_rows = [{"path_id": r.get("path_id"), "path": r.get("src")} for r in planned_rows]
+            queued_rows = [{"path_id": r.get("path_id"), "path": r.get("path")}
+                           for r in iter_jsonl(queue_path) if "_meta" not in r]
+            if not expected_rows or queued_rows != expected_rows:
+                raise ValueError("planned metadata queue differs from its owned plan cohort")
+        review_artifacts = self._extract_review_artifacts(
+            store, run_id, queue_artifact,
+            ignore_human_reviewed=queue_artifact.metadata.get("refreshReviewed") is True,
+            immutable=bool(queue_artifact.metadata.get("refreshReviewed")),
+        )
 
         if queue_artifact.metadata.get("refreshReviewed"):
             for gate in store.read_run(run_id).review_gates.values():
@@ -2189,6 +2442,9 @@ class RelocateWorkflowService:
             planned = available_planned_metadata_action(run)
             if planned is not None and not any(a.action == planned.action for a in actions):
                 actions.append(planned)
+        for placed in placed_metadata_actions(run):
+            if not any(a.action == placed.action for a in actions):
+                actions.append(placed)
         return WorkflowResult(
             ok=ok,
             run_id=run_id,

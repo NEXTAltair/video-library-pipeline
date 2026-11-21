@@ -92,3 +92,42 @@ reviewed metadata. It does not accept them or change the DB. Inspect and edit
 the returned review YAML through `video-library-pipeline-extract-review`, accept
 only supported corrections, and inspect the newly generated plan before moving.
 Never reuse the old plan after the metadata acceptance or edit its JSONL.
+
+## Review metadata of already-placed files (#209)
+
+Files that are already in their correct folder (`already_correct` plan rows) are
+never moved, so they never reach `review_planned_metadata`. When the current plan
+has `alreadyCorrect > 0`, the run returns `review_placed_metadata` — also when
+the run is `plan_ready`, `review_required`, or ended `complete` with outcome
+`relocate_already_correct` (but not after a move apply started, and not on
+blocked/failed/superseded runs):
+
+```json
+video_pipeline_resume {
+  "runId": "<runId>",
+  "artifactId": "<current relocate_plan id>",
+  "resumeAction": "prepare_placed_metadata"
+}
+```
+
+- Cohort: `already_correct` rows carrying owner series numbering
+  (`<略称>#NN` inside a series folder) when any exist, otherwise every
+  `already_correct` row. Optional `"selectedPathIds": [...]` narrows to an
+  explicit subset; every id must be an `already_correct` row of the current plan.
+- Preparation is read-only: an immutable `relocate_placed_metadata_queue`,
+  output-only extraction (existing reviewed metadata is preserved), review YAML,
+  and an open `placed_metadata_review` gate. The run phase does not change and the
+  gate does not block a move apply of other rows. The queue artifact metadata
+  `seriesOrderSuggestions` lists the parsed `series_abbr` / `series_order`.
+- Edit the YAML `row_overrides` (`series_order`, `series_abbr`, and other review
+  fields; each override needs a nonempty `review_note`), then accept with the
+  returned `review_placed_metadata_yaml` action's exact params
+  (`runId`, `gateId`, `artifactIds`, `reviewYamlPaths`,
+  `"resumeAction": "apply_placed_metadata"`, optional `acceptance` /
+  `humanConfirmation`).
+- Acceptance commits only that cohort, then re-runs the planner read-only and
+  records a `relocate_placed_metadata_recheck` artifact. Outcome
+  `relocate_placed_metadata_accepted` means every cohort row is still
+  `already_correct` (0 moves). `relocate_placed_metadata_accepted_moves_pending`
+  lists rows that would now move; review them in a new relocate run. No file is
+  moved by either action.
