@@ -12,7 +12,7 @@ import sys
 from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
-from video_pipeline.workflows.relocate import metadata_reextract_action, subset_plan_actions, planned_metadata_action, available_planned_metadata_action, planned_metadata_retry_action
+from video_pipeline.workflows.relocate import metadata_reextract_action, subset_plan_actions, planned_metadata_action, available_planned_metadata_action, planned_metadata_retry_action, placed_metadata_actions
 from video_pipeline.workflows import chunked_apply, idle_runs
 from video_pipeline.workflows import (
     NextAction,
@@ -114,6 +114,9 @@ def _next_actions_for_run(run: Any, run_dir: Path | None = None) -> list[NextAct
         retry = planned_metadata_retry_action(run)
         if retry is not None and not any(a.to_dict() == retry.to_dict() for a in actions):
             actions.append(retry)
+    if run.flow == "relocate":
+        # Already-placed rows (#209): offered on plan_ready/review_required and complete runs.
+        actions.extend(a for a in placed_metadata_actions(run) if not any(x.action == a.action for x in actions))
     return actions
 
 
@@ -501,7 +504,10 @@ def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
         review_gates = run.get("reviewGates") if isinstance(run.get("reviewGates"), dict) else {}
         for gate in review_gates.values():
             if isinstance(gate, dict) and gate.get("status") == "open":
-                if run.get("status") == "active":
+                # A placed-metadata review (#209) stays actionable on a complete relocate run.
+                placed_live = (gate.get("type") == "placed_metadata_review" and run.get("status") == "complete"
+                               and not run.get("resolution"))
+                if run.get("status") == "active" or placed_live:
                     open_gates_total += 1
                     # Newest runs first; the rest is only counted so the response stays bounded.
                     if len(open_gates) < args.limit:

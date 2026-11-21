@@ -382,6 +382,25 @@ describe("V2 workflow tools", () => {
     ]), "/ext/py");
   });
 
+  it("forwards placed-metadata review actions with an optional path-id selection (#209)", async () => {
+    vi.mocked(runCmdAsync).mockResolvedValue(cmdResult({
+      ok: false, runId: "run_placed", flow: "relocate", phase: "complete",
+      outcome: "relocate_placed_metadata_review_required", artifacts: [], gates: [],
+      nextActions: [], diagnostics: [],
+    }));
+    const api = createMockApi();
+    registerWorkflowTools(api as never, () => cfg());
+    await getRegisteredTool(api, "video_pipeline_resume").execute("placed", {
+      runId: "run_placed", artifactId: "relocate_plan", resumeAction: "prepare_placed_metadata",
+      selectedPathIds: ["g05"],
+    });
+    expect(mocks.applyReviewedExecute).not.toHaveBeenCalled();
+    expect(runCmdAsync).toHaveBeenCalledWith("uv", expect.arrayContaining([
+      "resume", "--run-id", "run_placed", "--action", "prepare_placed_metadata",
+      "--artifact-id", "relocate_plan", "--selected-path-ids-json", JSON.stringify(["g05"]),
+    ]), "/ext/py");
+  });
+
   it("forwards returned params verbatim for non-apply actions (#136)", async () => {
     const params = {
       runId: "run_register", artifactIds: ["relocate_diagnostics"], gateId: "relocate_metadata_review",

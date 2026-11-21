@@ -150,10 +150,18 @@ function registerResume(api: PluginApi, getCfg: GetCfgFn) {
       properties: {
         runId: { type: "string" },
         action: { type: "string" },
-        resumeAction: { type: "string" },
+        resumeAction: {
+          type: "string",
+          description: "Exact resumeAction from nextActions. Relocate metadata actions include prepare_planned_metadata " +
+            "(planned rows) and prepare_placed_metadata / apply_placed_metadata (already_correct rows: read-only review " +
+            "and row_overrides acceptance such as series_order/series_abbr with review_note; no file moves, also on complete runs).",
+        },
         artifactId: { type: "string" },
         gateId: { type: "string" },
-        selectedPathIds: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, uniqueItems: true },
+        selectedPathIds: {
+          type: "array", items: { type: "string", minLength: 1 }, minItems: 1, uniqueItems: true,
+          description: "prepare_relocate_subset: rows to keep. prepare_placed_metadata: optional already_correct path ids to review.",
+        },
         heldPathIds: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, uniqueItems: true },
         artifactIds: { type: "array", items: { type: "string" } },
         reviewYamlPaths: { type: "array", items: { type: "string" } },

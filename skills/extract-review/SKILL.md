@@ -66,6 +66,17 @@ Out of scope:
    }
    ```
 
+## Already-placed files (placed_metadata_review)
+
+An open `placed_metadata_review` gate comes from `prepare_placed_metadata`
+(see `relocate-review`): metadata of `already_correct` files, with no moves. It
+can be open on a `complete` relocate run. Inspect it like any review YAML, put
+corrections such as `series_order` / `series_abbr` in `row_overrides` with a
+nonempty `review_note`, and accept with the returned
+`review_placed_metadata_yaml` params (`"resumeAction": "apply_placed_metadata"`).
+The result keeps the run phase; read `outcome` instead
+(`relocate_placed_metadata_accepted` = re-plan still moves 0 files).
+
 ## Required Behavior
 
 - Use params exactly as returned by `followUpToolCalls` or `nextActions.params`.

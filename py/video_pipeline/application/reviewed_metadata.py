@@ -158,16 +158,27 @@ def _freeze(path, content):
             raise ValueError("accepted review snapshot was modified")
 
 
-def preflight(store, config):
+# Already-placed rows (#209) are reviewed beside the move lifecycle: no file
+# moves, so the run may still be plan_ready/review_required or even complete.
+PLACED_REVIEW_GATE_TYPE = "placed_metadata_review"
+PLACED_REVIEW_PHASES = {("plan_ready", "active"), ("review_required", "active"), ("complete", "complete")}
+
+
+def preflight(store, config, *, gate_type="metadata_review"):
     run = store.read_run(config.run_id)
     if run.flow not in {"source_root", "relocate"}:
         raise ValueError(f"unsupported metadata review flow: {run.flow}")
-    if run.phase != "review_required" or run.status != "active":
+    if gate_type == PLACED_REVIEW_GATE_TYPE:
+        if run.flow != "relocate" or (run.phase, run.status) not in PLACED_REVIEW_PHASES or getattr(run, "resolution", None):
+            raise ValueError(f"placed metadata review requires a live relocate run, got {run.phase}/{run.status}")
+    elif gate_type != "metadata_review":
+        raise ValueError(f"unsupported metadata review gate type: {gate_type}")
+    elif run.phase != "review_required" or run.status != "active":
         raise ValueError(f"metadata review requires active review_required run, got {run.phase}/{run.status}")
     if config.run_revision is not None and config.run_revision != run.revision:
         raise ValueError("metadata review run revision conflict")
     gates = [run.review_gates[gid] for gid in run.review_gate_ids
-             if run.review_gates[gid].type == "metadata_review" and run.review_gates[gid].status == "open"]
+             if run.review_gates[gid].type == gate_type and run.review_gates[gid].status == "open"]
     if not gates:
         raise ValueError("open metadata_review gate is missing")
     if config.gate_id and config.gate_id not in {gate.id for gate in gates}:
@@ -250,9 +261,9 @@ def preflight(store, config):
     return run, gates, db, prepared
 
 
-def apply_reviewed_metadata(store, config):
+def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
     with store.writer_scope():
-        run, gates, db, prepared = preflight(store, config)
+        run, gates, db, prepared = preflight(store, config, gate_type=gate_type)
         fingerprint = hashlib.sha256(json.dumps([
             [p["artifact"].id, p["digest"], p["sourceDigest"]] for p in prepared], sort_keys=True).encode()).hexdigest()
         operation = hashlib.sha256(json.dumps([str(store.run_dir(run.run_id).resolve()),
