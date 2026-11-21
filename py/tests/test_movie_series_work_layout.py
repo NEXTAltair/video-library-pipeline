@@ -215,11 +215,51 @@ def test_by_work_lifts_film_out_of_year_month_folder():
     assert build_routed_dest_path(routes, src, md)[0] == SERIES + r'\ゴジラ対ヘドラ' + '\\' + name
 
 
-def test_by_work_keeps_alias_folder_and_unlisted_films_in_place():
+def test_by_work_keeps_alias_folder_and_moves_unlisted_films_to_title_folder():
     name = 'ゴジラxコング_新たなる帝国(吹替版)2025_02_08_21_00.mp4'
     dst, _, _ = route({'program_title': 'ゴジラxコング', 'air_date': '2025-02-08', 'genre': '映画'}, name,
                       layout='by_work')
     assert dst == SERIES + r'\ゴジラxコング' + '\\' + name
     src = SERIES + r'\その他ゴジラ\ゴジラＶＳビオランテ.mp4'
     md = {'program_title': 'ゴジラVSビオランテ', 'air_date': '2023-10-22', 'needs_review': False, 'genre': '映画'}
+    assert build_routed_dest_path(movie_routes('by_work'), src, md)[0] == \
+        SERIES + r'\ゴジラVSビオランテ\ゴジラＶＳビオランテ.mp4'
+
+
+# ── #207: by_work places reviewed films outside the works list in their own work folder ──
+
+
+@pytest.mark.parametrize('src', [
+    SERIES + r'\ゴジラ＃05 [映]ゴジラＶＳビオランテ[SS]2023-10-22.mp4',
+    SERIES + r'\ゴジラ\2025\08\シネマ「ゴジラ」2025-08-10.mp4',
+])
+def test_by_work_unlisted_reviewed_film_gets_title_folder(src):
+    md = {'program_title': 'ゴジラVSビオランテ', 'air_date': '2023-10-22', 'needs_review': False, 'genre': '映画'}
+    name = PureWindowsPath(src).name
+    dst, genre, err = build_routed_dest_path(movie_routes('by_work'), src, md)
+    assert (dst, genre, err) == (SERIES + r'\ゴジラVSビオランテ' + '\\' + name, 'movie', None)
+
+
+def test_by_work_unlisted_title_folder_uses_existing_replacement():
+    src = SERIES + r'\x.mp4'
+    md = {'program_title': 'メカゴジラの逆襲/特別版', 'air_date': '2023-10-22', 'needs_review': False, 'genre': '映画'}
+    assert build_routed_dest_path(movie_routes('by_work'), src, md)[0] == SERIES + r'\メカゴジラの逆襲＿特別版\x.mp4'
+
+
+@pytest.mark.parametrize('md', [
+    # Movie evidence from EPG/frame only, no accepted genre.
+    {'program_title': 'キングコング対ゴジラ', 'epg_genre': '映画 - 邦画'},
+    # Accepted genre but a frame name as the title.
+    {'program_title': '日曜ゴジラ劇場', 'genre': '映画'},
+    {'program_title': 'Unknown', 'genre': '映画'},
+])
+def test_by_work_without_usable_reviewed_title_stays(md):
+    src = SERIES + r'\日曜ゴジラ劇場　映画「キングコング対ゴジラ」2023-10-08.mp4'
+    md = {'air_date': '2023-10-08', 'needs_review': False, **md}
     assert build_routed_dest_path(movie_routes('by_work'), src, md)[0] == src
+
+
+def test_by_work_year_month_series_keeps_unlisted_films_in_place():
+    src = SERIES + r'\ゴジラＶＳビオランテ.mp4'
+    md = {'program_title': 'ゴジラVSビオランテ', 'air_date': '2023-10-22', 'needs_review': False, 'genre': '映画'}
+    assert build_routed_dest_path(movie_routes('by_work_year_month'), src, md)[0] == src

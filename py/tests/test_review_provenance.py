@@ -344,3 +344,28 @@ def test_policy_alias_only_review_keeps_existing_franchise_identity(tmp_path):
         upsert_records(con,[row],source='agent_accepted',strict=True,reviewed_fields={'p0':list(edit)})
         md,_=latest_path_metadata(con,'p0')
         assert md['program_title']=='Newsモーニングサテライト' and md['franchise']=='シリーズ_保持'
+
+
+@pytest.mark.parametrize('with_routes,preserved', [(True, 1), (False, 0)])
+def test_output_only_recheck_ignores_owner_series_order_inside_series(tmp_path, monkeypatch, capsys, with_routes, preserved):
+    # ゴジラ#05 [映]… inside a series folder: the prefix is the owner's order, not a title (#207).
+    import run_metadata_batches_promptv1 as mod
+    store, db, cfg = fixture(tmp_path)
+    apply_reviewed_metadata(store, cfg)
+    hints = tmp_path / 'hints.yaml'
+    hints.write_text('hints:\n- canonical_title: Other\n  aliases: [Other]\n', encoding='utf-8')
+    (tmp_path / 'movie_grouping.yaml').write_text(
+        "series:\n- folder: S\n  dest_root: 'N:\\'\n  works: [X]\n", encoding='utf-8')
+    routes = tmp_path / 'drive_routes.yaml'
+    routes.write_text('default_dest: B:\\Lib\nmovie_grouping_path: movie_grouping.yaml\n', encoding='utf-8')
+    name = 'Other#05 After.mp4'
+    queue = tmp_path / 'queue.jsonl'
+    queue.write_text(json.dumps({'path_id': 'p0', 'path': 'N:\\S\\' + name, 'name': name}) + '\n')
+    argv = ['extract', '--db', str(db), '--queue', str(queue), '--outdir', str(tmp_path / 'out'),
+            '--output-only', '--hints', str(hints)]
+    if with_routes:
+        argv += ['--drive-routes', str(routes)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    assert mod.main() == 0
+    summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert summary['preservedAgentAccepted'] == preserved

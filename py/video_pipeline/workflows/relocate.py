@@ -1777,6 +1777,8 @@ class RelocateWorkflowService:
                 "1",
                 "--output-only",
                 *(["--ignore-human-reviewed"] if queue_artifact.metadata.get("refreshReviewed") is True else []),
+                *(["--drive-routes", str(run.config_snapshot["driveRoutes"])]
+                  if run.config_snapshot.get("driveRoutes") else []),
             ],
             str(self.py_root),
         )
