@@ -20,7 +20,8 @@ series:
       - 機動戦士ガンダムUC
   - folder: シリーズ_ゴジラ+モンスターバース
     dest_root: 'C:\VideoLibrary\Tokusatsu'
-    # Optional: <series>\<work folder>\<YYYY>\<MM>\<file>. Default "flat" keeps files in the series root.
+    # Optional: by_work = <series>\<work folder>\<file> (films); by_work_year_month adds <YYYY>\<MM>.
+    # Default "flat" keeps files in the series root.
     work_layout: by_work_year_month
     works:
       - ゴジラ-1.0
