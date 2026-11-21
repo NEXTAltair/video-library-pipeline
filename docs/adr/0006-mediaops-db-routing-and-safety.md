@@ -231,7 +231,7 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | アニメ | `D:\Anime` | `by_title` |
 | 映画 | `L:\` | `by_syllabary` |
 | ドラマ | `E:\Dドラマ` | `by_title` |
-| ドキュメンタリー・情報 | `E:\Dドキュメンタリー･情報` | `by_program_year_month` |
+| ドキュメンタリー・情報 | `E:\Dドキュメンタリー･情報` | 番組別: ドキュメンタリーは `by_title`、情報/ワイドショーの帯番組は `by_program_year_month` (`layout_rules`) |
 | バラエティ | `E:\Bバラエティ` | `by_program_year_month` |
 | ニュース・報道 | `E:\Nニュース・報道` | `by_program_year_month` |
 | 放送大学 | `B:\放送大学` | `by_program_year_month` |
@@ -245,6 +245,21 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | `flat` | `<root>/<file>` | 現在未使用 |
 
 `by_series` は後方互換名として受け付けつつ、内部で `by_title` に正規化する。
+
+年月の階層はニュース・バラエティのような帯番組向けで、1本ごとに完結する番組には使わない (本人方針 2026-11-22)。1つのルートに両方が入る場合は `layout_rules` でルート内の layout を分ける。保存先とジャンル判定は変えない。
+
+```yaml
+- genre: documentary
+  layout: by_program_year_month      # どれにも当たらない番組
+  layout_rules:
+  - layout: by_title
+    programs: [NHKスペシャル]          # 番組名の完全一致 (NFKC + casefold)
+    epg_genre_match: [ドキュメンタリー/教養 - *]
+  - layout: by_program_year_month
+    programs: [きょうの料理]
+```
+
+判定順は「どこかの `programs` に載った番組 → EPG の第1ジャンルが当たる最初の rule → ルートの `layout`」。回ごとのEPGの揺れで同じ番組が2つの layout に分かれないよう、番組名の明示を優先し、EPG は第1ジャンルだけを見る。同じ番組を別 layout の `programs` に重複して書くと読み込みでエラーになる。
 
 ### 映画のシリーズ配置 (`movie_grouping_path`)
 
