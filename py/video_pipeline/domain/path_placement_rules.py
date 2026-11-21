@@ -137,6 +137,89 @@ class DriveRoute:
         self.layout: str = normalize_layout_name(str(data.get("layout") or "by_program_year_month"))
         self.epg_genre_match: list[str] = data.get("epg_genre_match") or []
         self.title_patterns: list[str] = data.get("title_patterns") or []
+        self.layout_rules: list[LayoutRule] = _parse_layout_rules(data.get("layout_rules"), self.genre)
+        self._layout_by_program: dict[str, str] = {}
+        for rule in self.layout_rules:
+            for program in rule.programs:
+                key = normalize_title_for_comparison(program)
+                existing = self._layout_by_program.get(key)
+                if existing is not None and existing != rule.layout:
+                    raise ValueError(f"route {self.genre}: program listed under two layouts: {program}")
+                self._layout_by_program[key] = rule.layout
+
+    def layout_for(self, md: dict[str, Any]) -> str:
+        """Layout inside this route's dest_root.
+
+        An explicit program list wins so one program never splits across
+        layouts when its per-episode EPG genre drifts. Otherwise only the
+        primary (first) EPG genre is consulted; secondary genres are too noisy.
+        """
+        if not self.layout_rules:
+            return self.layout
+        title = normalize_title_for_comparison(str(md.get("program_title") or ""))
+        listed = self._layout_by_program.get(title)
+        if listed:
+            return listed
+        primary = _primary_epg_genre(md)
+        if primary:
+            for rule in self.layout_rules:
+                if any(_epg_genre_matches(primary, pattern) for pattern in rule.epg_genre_match):
+                    return rule.layout
+        return self.layout
+
+
+KNOWN_LAYOUTS = {"by_program_year_month", "by_syllabary", "by_title", "flat"}
+
+
+class LayoutRule:
+    """Per-program / per-primary-EPG-genre layout inside one genre route."""
+
+    def __init__(self, layout: str, programs: tuple[str, ...], epg_genre_match: tuple[str, ...]):
+        self.layout = layout
+        self.programs = programs
+        self.epg_genre_match = epg_genre_match
+
+
+def _string_list(value: Any, field: str, where: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or any(not isinstance(v, str) or not v.strip() for v in value):
+        raise ValueError(f"{where}: {field} must be a list of nonempty strings")
+    return tuple(v.strip() for v in value)
+
+
+def _parse_layout_rules(raw: Any, genre: str) -> list[LayoutRule]:
+    if raw is None:
+        return []
+    where = f"route {genre} layout_rules"
+    if not isinstance(raw, list):
+        raise ValueError(f"{where} must be a list")
+    rules: list[LayoutRule] = []
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("layout"), str):
+            raise ValueError(f"{where}: each rule needs a layout")
+        layout = normalize_layout_name(item["layout"])
+        if layout not in KNOWN_LAYOUTS:
+            raise ValueError(f"{where}: unknown layout {item['layout']}")
+        programs = _string_list(item.get("programs"), "programs", where)
+        patterns = _string_list(item.get("epg_genre_match"), "epg_genre_match", where)
+        if not programs and not patterns:
+            raise ValueError(f"{where}: rule for {layout} needs programs or epg_genre_match")
+        rules.append(LayoutRule(layout, programs, patterns))
+    return rules
+
+
+def _primary_epg_genre(md: dict[str, Any]) -> str:
+    epg_genres = md.get("epg_genres")
+    if isinstance(epg_genres, list) and epg_genres:
+        g = epg_genres[0]
+        if isinstance(g, dict):
+            cat = str(g.get("category") or "")
+            sub = str(g.get("subcategory") or "")
+            return f"{cat} - {sub}" if cat and sub else cat
+        if isinstance(g, str):
+            return g
+    return str(md.get("epg_genre") or "")
 
 
 class WorkRoute(DriveRoute):
@@ -381,7 +464,7 @@ def build_routed_dest_path(
                 return str(series_dir / group.work_folder / y / m / filename), group_genre, None
             return str(series_dir / filename), group_genre, None
     dest_root = route.dest_root if route else routes.default_dest
-    layout = route.layout if route else routes.default_layout
+    layout = route.layout_for(md) if route else routes.default_layout
     genre = route.genre if route else "default"
 
     if not dest_root:

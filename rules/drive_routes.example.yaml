@@ -19,3 +19,16 @@ routes:
     layout: by_title
     epg_genre_match: ["映画 - *"]
     title_patterns: []
+  - genre: documentary
+    dest_root: "C:\\VideoLibrary\\Documentary"
+    # Year/month folders suit daily/weekly shows; self-contained documentaries
+    # go straight under the program folder. Listed programs win over EPG.
+    layout: by_program_year_month
+    epg_genre_match: ["ドキュメンタリー/教養 - *", "情報/ワイドショー - *"]
+    layout_rules:
+      - layout: by_title
+        programs: ["Example Documentary"]
+        epg_genre_match: ["ドキュメンタリー/教養 - *"]
+      - layout: by_program_year_month
+        programs: ["Example Morning Show"]
+    title_patterns: []
