@@ -447,7 +447,18 @@ def build_routed_dest_path(
             allow_frame_fallback=not non_movie)
         is_series_member = bool(group and not group.frame_fallback)
         movie_like = not non_movie and (bool(group) or has_movie_evidence(md) or bool(route and route.genre == "movie"))
-        if not is_series_member and movie_like and routes.movie_grouping.work_layout_series_containing(src_path_win):
+        containing = (routes.movie_grouping.series_group_containing(src_path_win, per_work_only=True)
+                      if not is_series_member and movie_like else None)
+        if containing and containing[1].get("work_layout") == "by_work" and explicit_genre in ("movie", "映画"):
+            # by_work series: a reviewed film outside the declared works still gets
+            # its own work folder named after its accepted program title (#207).
+            from .movie_grouping import compact
+            title_key = compact(md["program_title"])
+            frame_title = any(title_key.startswith(compact(f)) for f in routes.movie_grouping.frames)
+            work_dir = legacy_safe_dir_name(str(md["program_title"]), maxlen=80)
+            if not frame_title and work_dir.casefold() not in ("unknown", ".", ".."):
+                return str(containing[0] / work_dir / filename), "movie", None
+        if containing:
             # A per-work series keeps films that match no declared work where
             # the owner filed them, instead of sending them to the generic
             # movie route or a broadcast-frame folder.

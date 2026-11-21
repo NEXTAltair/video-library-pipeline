@@ -758,6 +758,8 @@ def main() -> int:
     ap.add_argument("--hints", default="")
     ap.add_argument("--franchise-rules", default="")
     ap.add_argument("--ignore-human-reviewed", action="store_true")
+    ap.add_argument("--drive-routes", default="",
+                    help="drive_routes.yaml; inside its movie series folders a leading <abbr>#<n> is the owner's order, not the title.")
     ap.add_argument("--prepare-only", action="store_true",
                     help="Write input JSONL batches and exit without running extraction or upserting to DB.")
     ap.add_argument("--output-only", action="store_true",
@@ -787,6 +789,24 @@ def main() -> int:
     )
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    series_grouping = None
+    if args.drive_routes:
+        from path_placement_rules import load_drive_routes
+        from pathscan_common import windows_to_wsl_path
+        # Same normalization as relocate_existing_files: a Windows-form path is valid there.
+        series_grouping = load_drive_routes(windows_to_wsl_path(args.drive_routes)).movie_grouping
+
+    def title_check_base(rec: dict) -> str:
+        """Recording name used for title checks; drops owner series numbering (#201/#207)."""
+        base = strip_suffix(str(rec.get("name") or ""))
+        path = str(rec.get("path") or "")
+        if series_grouping and path and series_grouping.series_containing(path):
+            from video_pipeline.domain.series_order import parse_series_order
+            order = parse_series_order(base)
+            if order:
+                return order.rest
+        return base
+
     batch: list[dict] = []
     batch_idx = 0
     processed = 0
@@ -828,10 +848,11 @@ def main() -> int:
                 existing = _get_latest_llm_metadata(db_con, str(pid))
                 # Only review candidates may replace a deterministic frame/work
                 # or curated alias mismatch. Normal extraction still preserves human decisions.
+                check_base = title_check_base(rec)
                 recheck = (args.output_only and isinstance(existing, dict)
                            and reviewed_title_conflicts_with_filename(
-                               str(existing.get("program_title") or ""), strip_suffix(str(rec.get("name") or "")),
-                               _match_from_known_programs(strip_suffix(str(rec.get("name") or "")), None, alias_hints)))
+                               str(existing.get("program_title") or ""), check_base,
+                               _match_from_known_programs(check_base, None, alias_hints)))
                 if isinstance(existing, dict) and (existing.get("human_reviewed") is True or existing.get("review_acceptance") == "agent_accepted") and not recheck:
                     locked_row = _build_locked_row(existing, rec, args.model, args.extraction_version)
                     enforce_db_contract(locked_row)
