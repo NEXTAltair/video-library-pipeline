@@ -253,9 +253,10 @@ DB_CONTRACT_REQUIRED = {"program_title", "air_date", "needs_review"}
 | `work_layout` | フォルダ構成 |
 |---|---|
 | `flat` (既定) | `<dest_root>\<series>\<file>` |
+| `by_work` | `<dest_root>\<series>\<作品フォルダ>\<file>` (映画向け。年月階層を作らない。#203) |
 | `by_work_year_month` | `<dest_root>\<series>\<作品フォルダ>\<YYYY>\<MM>\<file>` |
 
-作品フォルダ名は works の `title` から旧来の置換 (`<>:"/\|?*` → `＿`、例 `ゴジラ-1.0/C` → `ゴジラ-1.0＿C`) で作る。手で作った既存フォルダに合わせる場合は works の項目に `folder` を書く (1階層の安全な名前のみ)。`by_work_year_month` で `air_date` がない録画は `missing_air_date` で保留する。works に一致しない映画はシリーズに入らない。ただし `work_layout` を有効にしたシリーズのフォルダ内に既にある映画 (genre・EPG・放送枠の根拠あり) は、作品外でもその場に残す (`already_correct`)。映画の根拠がない番組は通常のジャンルルートへ出す。
+作品フォルダ名は works の `title` から旧来の置換 (`<>:"/\|?*` → `＿`、例 `ゴジラ-1.0/C` → `ゴジラ-1.0＿C`) で作る。手で作った既存フォルダに合わせる場合は works の項目に `folder` を書く (1階層の安全な名前のみ)。`by_work_year_month` で `air_date` がない録画は `missing_air_date` で保留する (`by_work` は air_date を使わない)。works に一致しない映画はシリーズに入らない。ただし `work_layout` を有効 (`flat` 以外) にしたシリーズのフォルダ内に既にある映画 (genre・EPG・放送枠の根拠あり) は、作品外でもその場に残す (`already_correct`)。映画の根拠がない番組は通常のジャンルルートへ出す。
 
 `franchise_rules.yaml` の `title_patterns` は部分一致なので、番組名での言及 (おはスタ「ちびゴジラ」、ゴジラ松井等) を拾う。`require_evidence: [movie, tokusatsu]` を持つルールは、genre (明示されていればそれが決め手)、EPG、ファイル名の `[映]` のいずれかで映画/特撮と分かる録画にだけ franchise を付ける。`シリーズ_` フォルダに置かれていることだけでは根拠にしない。
 

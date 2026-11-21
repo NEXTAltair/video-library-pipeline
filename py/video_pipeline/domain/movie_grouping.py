@@ -3,7 +3,7 @@ import re
 import unicodedata
 from typing import NamedTuple
 
-WORK_LAYOUTS = ("flat", "by_work_year_month")
+WORK_LAYOUTS = ("flat", "by_work", "by_work_year_month")
 
 
 def compact(value):
@@ -146,7 +146,7 @@ class MovieGrouping:
             declared, folder = next(iter(works))
             layout = str(group.get("work_layout", "flat"))
             work_folder = None
-            if layout == "by_work_year_month":
+            if layout in ("by_work", "by_work_year_month"):
                 from .path_placement_rules import legacy_safe_dir_name
                 # Same escaping as the folders already curated by hand (／ → ＿).
                 work_folder = folder.strip() if folder else legacy_safe_dir_name(declared, maxlen=80)

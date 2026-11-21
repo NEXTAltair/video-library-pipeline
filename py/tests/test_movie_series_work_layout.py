@@ -189,3 +189,37 @@ def test_flat_series_and_outside_sources_keep_previous_routing():
     md = {'program_title': 'ゴジラVSビオランテ', 'air_date': '2023-10-22', 'needs_review': False, 'genre': '映画'}
     assert build_routed_dest_path(movie_routes(None), SERIES + r'\v.mp4', md)[0] == r'L:\カ\v.mp4'
     assert build_routed_dest_path(movie_routes(), r'B:\未視聴\v.mp4', md)[0] == r'L:\カ\v.mp4'
+
+
+# ── #203: by_work places films directly under the work folder (no year/month) ──
+
+
+def test_by_work_layout_omits_year_month():
+    name = '金曜ロードショー「ゴジラ-1.0」★早くも地上波初放送2024_11_01_21_00.mp4'
+    dst, genre, err = route({'program_title': 'ゴジラ-1.0', 'air_date': '2024-11-01', 'genre': '映画'}, name,
+                            layout='by_work')
+    assert (dst, genre, err) == (SERIES + r'\ゴジラ-1.0' + '\\' + name, 'movie', None)
+
+
+def test_by_work_layout_does_not_require_air_date():
+    dst, _, err = route({'program_title': 'ゴジラ対ヘドラ', 'air_date': None, 'genre': '映画'}, 'x.mp4',
+                        layout='by_work')
+    assert err is None and dst == SERIES + r'\ゴジラ対ヘドラ\x.mp4'
+
+
+def test_by_work_lifts_film_out_of_year_month_folder():
+    name = '[映]ゴジラ対ヘドラ[SS]2022-09-04.mp4'
+    src = SERIES + r'\ゴジラ対ヘドラ\2022\09' + '\\' + name
+    md = {'program_title': 'ゴジラ対ヘドラ', 'air_date': '2022-09-04', 'needs_review': False, 'genre': '映画'}
+    routes = DriveRoutes(r'B:\VideoLibrary', 'by_program_year_month', [], movie_grouping=grouping('by_work'))
+    assert build_routed_dest_path(routes, src, md)[0] == SERIES + r'\ゴジラ対ヘドラ' + '\\' + name
+
+
+def test_by_work_keeps_alias_folder_and_unlisted_films_in_place():
+    name = 'ゴジラxコング_新たなる帝国(吹替版)2025_02_08_21_00.mp4'
+    dst, _, _ = route({'program_title': 'ゴジラxコング', 'air_date': '2025-02-08', 'genre': '映画'}, name,
+                      layout='by_work')
+    assert dst == SERIES + r'\ゴジラxコング' + '\\' + name
+    src = SERIES + r'\その他ゴジラ\ゴジラＶＳビオランテ.mp4'
+    md = {'program_title': 'ゴジラVSビオランテ', 'air_date': '2023-10-22', 'needs_review': False, 'genre': '映画'}
+    assert build_routed_dest_path(movie_routes('by_work'), src, md)[0] == src

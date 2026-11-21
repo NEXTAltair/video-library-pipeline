@@ -372,6 +372,8 @@ def build_routed_dest_path(
         if group:
             group_genre = (route.genre if route else "anime") if non_movie else "movie"
             series_dir = PureWindowsPath(group.root.rstrip("\\") + "\\") / safe_dir_name(group.folder, maxlen=80)
+            if group.work_folder and group.layout == "by_work":
+                return str(series_dir / group.work_folder / filename), group_genre, None
             if group.work_folder:
                 y, m, err = extract_year_month_from_air_date(md.get("air_date"))
                 if err:
