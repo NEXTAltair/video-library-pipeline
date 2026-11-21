@@ -792,7 +792,9 @@ def main() -> int:
     series_grouping = None
     if args.drive_routes:
         from path_placement_rules import load_drive_routes
-        series_grouping = load_drive_routes(args.drive_routes).movie_grouping
+        from pathscan_common import windows_to_wsl_path
+        # Same normalization as relocate_existing_files: a Windows-form path is valid there.
+        series_grouping = load_drive_routes(windows_to_wsl_path(args.drive_routes)).movie_grouping
 
     def title_check_base(rec: dict) -> str:
         """Recording name used for title checks; drops owner series numbering (#201/#207)."""
