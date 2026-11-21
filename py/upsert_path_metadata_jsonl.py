@@ -27,7 +27,7 @@ from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from path_placement_rules import DB_CONTRACT_REQUIRED
-from pathscan_common import iter_jsonl, now_iso
+from pathscan_common import iter_jsonl, normalize_win_for_id, now_iso
 from source_history import merge_data
 from video_pipeline.domain.review_provenance import acceptance_provenance
 
@@ -80,7 +80,12 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
             continue
         if strict:
             actual = fetchone(con, "SELECT path FROM paths WHERE path_id=?", (path_id,))
-            if actual is None or (rec.get("path") and rec["path"] != actual["path"]):
+            # Windows paths are case-insensitive; path_id is derived from the
+            # lower-cased path, so compare the same normalized form (#211).
+            if actual is None or (
+                rec.get("path")
+                and normalize_win_for_id(str(rec["path"])) != normalize_win_for_id(str(actual["path"]))
+            ):
                 raise ValueError(f"metadata path identity mismatch: {path_id}")
 
         prior = fetchone(
