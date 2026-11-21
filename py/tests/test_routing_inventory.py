@@ -2,7 +2,7 @@
 import hashlib
 import json
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -384,3 +384,64 @@ def test_missing_genre_requires_preparation_even_without_queue(tmp_path, monkeyp
     assert summary["alreadyCorrect"] == 0
     assert summary["requiresMetadataPreparation"] is True
     assert summary["outcomeType"] == "metadata_preparation_required"
+
+
+# Owner series numbering (ゴジラ#03 …) inside curated series folders. #201
+SERIES_YAML = """version: 1
+series:
+- folder: シリーズ_ゴジラ
+  dest_root: N:\\
+  work_layout: by_work_year_month
+  works:
+  - キングコング対ゴジラ
+  - ゴジラvsコング
+"""
+SERIES_NAME = "ゴジラ#03 [映][字]キングコング対ゴジラゴジラシリーズ第３弾にして最大のヒット作。2022-09-05-23：40.m4v"
+
+
+def series_preview(tmp_path, monkeypatch):
+    preview = Preview(tmp_path, monkeypatch)
+    (tmp_path / "movies.yaml").write_text(SERIES_YAML, encoding="utf-8")
+    preview.routes_yaml = 'default_dest: "N:\\\\"\ndefault_layout: by_title\nmovie_grouping_path: movies.yaml\nroutes: []\n'
+    aliases = tmp_path / "aliases.yaml"
+    # Production aliases resolve a leading ゴジラ to the program ゴジラ.
+    aliases.write_text('hints:\n  - canonical_title: "ゴジラ"\n    aliases: [ゴジラ]\n', encoding="utf-8")
+    monkeypatch.setattr(relocate, "default_program_aliases", lambda root: aliases)
+    return preview
+
+
+def add_movie(preview, src, title):
+    sf = preview.add(src, title=title)
+    preview.con.execute("UPDATE path_metadata SET data_json='{\"genre\": \"映画\"}' WHERE program_title=? "
+                        "AND path_id=(SELECT path_id FROM paths WHERE path=?)", (title, src))
+    return sf
+
+
+def test_series_numbered_file_is_planned_with_order_and_unchanged_name(tmp_path, monkeypatch, capsys):
+    preview = series_preview(tmp_path, monkeypatch)
+    add_movie(preview, "N:\\シリーズ_ゴジラ\\" + SERIES_NAME, "キングコング対ゴジラ")
+    full_width = "レジェゴジ＃03 [映]ゴジラｖｓコング（吹替版）2022-07-02-16：45-1.m4v"
+    add_movie(preview, "N:\\シリーズ_ゴジラ\\" + full_width, "ゴジラvsコング")
+    summary, rows, _ = preview.run(monkeypatch, capsys, "--program-titles-json", '["キングコング対ゴジラ","ゴジラvsコング"]')
+    assert summary["suspiciousProgramTitleSkipped"] == 0
+    assert summary["plannedMoves"] == 2
+    king = next(r for r in rows if r["series_abbr"] == "ゴジラ")
+    assert king["series_order"] == 3
+    assert king["status"] == "planned"
+    assert king["dst"] == "N:\\シリーズ_ゴジラ\\キングコング対ゴジラ\\2026\\01\\" + SERIES_NAME
+    # The owner's number lives in the file name; relocate never renames.
+    for row in rows:
+        assert PureWindowsPath(row["dst"]).name == PureWindowsPath(row["src"]).name
+    assert king["program_title"] == "キングコング対ゴジラ"
+    legend = next(r for r in rows if r["series_abbr"] == "レジェゴジ")
+    assert legend["status"] == "planned"
+    assert legend["dst"].endswith("\\ゴジラvsコング\\2026\\01\\" + full_width)
+
+
+def test_episode_marker_outside_series_folder_keeps_title_check(tmp_path, monkeypatch, capsys):
+    preview = series_preview(tmp_path, monkeypatch)
+    add_movie(preview, "B:\\Library\\" + SERIES_NAME, "キングコング対ゴジラ")
+    summary, rows, _ = preview.run(monkeypatch, capsys, "--program-titles-json", '["キングコング対ゴジラ"]')
+    assert summary["plannedMoves"] == 0
+    assert rows[0]["reason"] == "suspicious_program_title"
+    assert "series_order" not in rows[0]

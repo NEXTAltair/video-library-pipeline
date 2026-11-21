@@ -1,6 +1,9 @@
 # Optional policy: movie_grouping_path: movie_grouping.example.yaml in drive routes.
 # Work identity is retained in metadata. This file selects storage groups only.
 # Single films use their broadcast-frame folder. Series use explicit work lists.
+# Inside a series folder a leading "<abbr>#<number>" (e.g. ゴジラ#03, レジェゴジ＃01) is the owner's
+# series order: relocate skips it when checking titles, reports series_abbr/series_order
+# in plan rows, and keeps the file name unchanged. Outside series folders #03 stays an episode marker.
 version: 1
 default_dest_root: 'C:\VideoLibrary\Movies'
 frames: [金曜ロードショー, 日曜アニメ劇場, 日曜ゴジラ劇場, 日曜邦画劇場]

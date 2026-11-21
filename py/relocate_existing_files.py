@@ -19,6 +19,7 @@ from typing import Any
 from video_pipeline.domain.review_provenance import is_agent_accepted_metadata
 from db_helpers import latest_path_metadata, metadata_source_flags
 from broadcast_frame_titles import reviewed_title_conflicts_with_filename
+from video_pipeline.domain.series_order import parse_series_order
 from run_metadata_batches_promptv1 import strip_suffix, _load_hints_with_status, _match_from_known_programs
 from mediaops_schema import begin_immediate, connect_db, create_schema_if_needed, fetchone
 from move_apply_stats import aggregate_move_apply
@@ -323,6 +324,13 @@ def main() -> int:
             selected_files += 1
             candidate_info[normalize_win_for_id(sf.win_path)] = {"size_bytes": sf.size, "mtimeUtc": sf.mtime_utc,
                                                                "program_title": title or None}
+            # Owner numbering (ゴジラ#03 …) is recognized only inside a curated series folder,
+            # so an ordinary episode marker elsewhere is never mistaken for it.
+            series_order = None
+            if routes and routes.movie_grouping and routes.movie_grouping.series_containing(sf.win_path):
+                series_order = parse_series_order(strip_suffix(str(sf.name or "")))
+            if series_order:
+                candidate_info[normalize_win_for_id(sf.win_path)].update(series_order.metadata_fields())
             ts_row = now_iso()
             pid = str(path_row["path_id"]) if path_row else None
             if pid in holds:
@@ -398,7 +406,7 @@ def main() -> int:
             is_human_reviewed, is_llm = metadata_source_flags(md, md_source)
             is_review_accepted = is_human_reviewed or is_agent_accepted_metadata(md_source, md)
 
-            recording_base = strip_suffix(str(sf.name or ""))
+            recording_base = series_order.rest if series_order else strip_suffix(str(sf.name or ""))
             canonical = _match_from_known_programs(recording_base, None, alias_hints)
             if reviewed_title_conflicts_with_filename(str(md.get("program_title") or ""), recording_base, canonical):
                 suspicious_program_title_skipped += 1
