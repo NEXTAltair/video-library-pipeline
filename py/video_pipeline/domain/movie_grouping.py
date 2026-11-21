@@ -69,18 +69,22 @@ class MovieGrouping:
                                            or re.search(r'[<>:"/\\|?*]', folder) or folder.strip() in (".", "..")):
                     raise ValueError("movie series work folder must be one safe path component: " + str(folder))
 
-    def work_layout_series_containing(self, src_path_win):
-        """Series folder (as a path) holding ``src`` when that series uses a per-work layout."""
+    def series_containing(self, src_path_win, *, per_work_only=False):
+        """Series folder (as a path) holding ``src``, at any depth below it."""
         from pathlib import PureWindowsPath
+        from .path_placement_rules import safe_dir_name
         src = PureWindowsPath(str(src_path_win))
         for group in self.series:
-            if group.get("work_layout", "flat") == "flat":
+            if per_work_only and group.get("work_layout", "flat") == "flat":
                 continue
-            from .path_placement_rules import safe_dir_name
             series_dir = PureWindowsPath(str(group["dest_root"]).rstrip("\\") + "\\") / safe_dir_name(group["folder"], maxlen=80)
             if src.parent == series_dir or series_dir in src.parents:
                 return series_dir
         return None
+
+    def work_layout_series_containing(self, src_path_win):
+        """Series folder (as a path) holding ``src`` when that series uses a per-work layout."""
+        return self.series_containing(src_path_win, per_work_only=True)
 
     def destinations(self):
         return [root for root in [self.default_dest, *(g['dest_root'] for g in self.series)] if root]

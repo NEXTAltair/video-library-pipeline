@@ -40,7 +40,9 @@ def suspicious(row, *, explicit_title_review=False):
 
 REVIEW_FIELDS = {'program_title', 'air_date', 'episode_no', 'subtitle', 'genre', 'franchise',
                  'broadcaster', 'channel', 'epg_genres', 'epg_genre', 'epg_description',
-                 'needs_review', 'needs_review_reason', 'review_note'}
+                 'needs_review', 'needs_review_reason', 'review_note',
+                 # Owner-assigned order inside a series folder (ゴジラ#03 → ゴジラ / 3).
+                 'series_order', 'series_abbr'}
 
 
 def _review_overrides(rows, overrides):
@@ -65,7 +67,10 @@ def _review_overrides(rows, overrides):
             if not isinstance(value, str) or date.fromisoformat(value).isoformat() != value:
                 raise ValueError('reviewed air_date must be an ISO calendar date')
             edited['air_date'] = value
-        for key in REVIEW_FIELDS - {'air_date', 'episode_no', 'epg_genres', 'needs_review'}:
+        if 'series_order' in edited and edited['series_order'] is not None and not (
+                type(edited['series_order']) is int and edited['series_order'] >= 0):
+            raise ValueError('reviewed series_order must be a non-negative integer or null')
+        for key in REVIEW_FIELDS - {'air_date', 'episode_no', 'epg_genres', 'needs_review', 'series_order'}:
             if key in edited and edited[key] is not None and not isinstance(edited[key], str):
                 raise ValueError(f'reviewed {key} must be a string or null')
         if 'needs_review' in edited and type(edited['needs_review']) is not bool:
