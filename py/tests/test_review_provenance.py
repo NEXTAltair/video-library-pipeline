@@ -369,3 +369,18 @@ def test_output_only_recheck_ignores_owner_series_order_inside_series(tmp_path, 
     assert mod.main() == 0
     summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert summary['preservedAgentAccepted'] == preserved
+
+
+def test_strict_identity_ignores_windows_path_case_but_rejects_other_file(tmp_path):
+    # #211: DB holds NHKスペシャル\..., the scan sees Nhkスペシャル\... (NTFS is case-insensitive).
+    _, db, _ = fixture(tmp_path)
+    with closing(sqlite3.connect(db)) as con:
+        con.row_factory = sqlite3.Row
+        con.execute('BEGIN IMMEDIATE')
+        row = review_rows([dict(sample(), path=r'b:\unwatched\SHOW0.mp4')], [])[0]
+        upsert_records(con, [row], source='agent_accepted', strict=True)
+        md, _ = latest_path_metadata(con, 'p0')
+        assert md['program_title'] == 'Example Show'
+        other = review_rows([dict(sample(), path=r'B:\Unwatched\show1.mp4')], [])[0]
+        with pytest.raises(ValueError, match='identity mismatch'):
+            upsert_records(con, [other], source='agent_accepted', strict=True)
