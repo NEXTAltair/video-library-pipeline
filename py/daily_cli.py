@@ -13,7 +13,10 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from video_pipeline.platform.writer_lock import workflow_writer
+from video_pipeline.platform.writer_lock import WriterBusy, workflow_writer
+
+# Scheduled runs wait for a long relocate/dedup to finish, then yield to the next schedule.
+SCHEDULED_LOCK_WAIT_SECONDS = 1800.0
 from video_pipeline.platform.sqlite_snapshot import online_snapshot
 from video_pipeline.workflows.source_root import (
     SourceRootWorkflowService, SourceRootDryRunConfig, SourceRootApplyConfig,
@@ -93,7 +96,7 @@ def _execute(args, *, preview_workspace=None):
     db = local_path_from_any(args.db)
     ops.mkdir(parents=True,exist_ok=True)
     # A single owner across CLI, scheduled and preview invocations.
-    with workflow_writer(ops):
+    with workflow_writer(ops, timeout=SCHEDULED_LOCK_WAIT_SECONDS if args.scheduled else 30.0):
         if not Path(args.drive_routes).is_file():
             raise ValueError("振り分け設定が存在しません: " + args.drive_routes)
         import shutil
@@ -153,12 +156,17 @@ def main():
         missing = [key for key in ("db","windows_ops_root","source_root","dest_root","ts_root","drive_routes") if not getattr(args,key)]
         if missing: raise ValueError("設定不足: " + ", ".join(missing))
         payload, code = execute(args)
+    except WriterBusy as exc:
+        # Not a failure for the schedule: the next run sees the same source files.
+        payload,code = ({"ok":True,"skipped":"writer_busy","detail":str(exc)},0) if args.scheduled else ({"ok":False,"error":str(exc)},1)
     except Exception as exc:
         payload,code = {"ok":False,"error":str(exc)},1
     if args.scheduled:
         ops = local_path_from_any(args.windows_ops_root) if args.windows_ops_root else Path(args.config or ".").resolve().parent
         write_json(ops / "daily_result.json",payload)
-        if not payload.get("ok"):
+        if payload.get("skipped"):
+            print("未視聴整理: 他の録画整理が実行中のため今回は見送りました。次回の定期実行で処理します。")
+        elif not payload.get("ok"):
             print("未視聴整理: 停止\n" + str(payload.get("error") or payload.get("blockers") or payload.get("outcome")) + "\n詳細: " + str(ops / "daily_result.json"))
         else:
             from hashlib import sha256
