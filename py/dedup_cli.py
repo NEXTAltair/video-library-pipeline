@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from video_pipeline.platform.writer_lock import workflow_writer
+from video_pipeline.platform.writer_lock import WriterBusy, workflow_writer
+
+# Stays inside the scheduler's 20 minute limit together with a normal run.
+SCHEDULED_LOCK_WAIT_SECONDS = 600.0
 from video_pipeline.platform.sqlite_snapshot import online_snapshot
 import shutil
 import sys
@@ -58,7 +61,7 @@ def execute(args):
     ops = Path(windows_to_wsl_path(args.windows_ops_root)).resolve()
     db = Path(windows_to_wsl_path(args.db)).resolve()
     ops.mkdir(parents=True, exist_ok=True)
-    with workflow_writer(ops):
+    with workflow_writer(ops, timeout=SCHEDULED_LOCK_WAIT_SECONDS if args.scheduled else 30.0):
         # Share ownership with daily_cli.py, including previews and restoration.
         recovered = recover_quarantines(db, ops) if args.apply else []
         if args.restore_run:
@@ -137,6 +140,9 @@ def main():
         if missing:
             raise ValueError("missing config: " + ", ".join(missing))
         result = execute(args)
+    except WriterBusy as exc:
+        # Not a failure for the schedule: the next run plans the same duplicates again.
+        result = {"ok": True, "skipped": "writer_busy", "detail": str(exc)} if args.scheduled else {"ok": False, "error": str(exc)}
     except Exception as exc:
         result = {"ok": False, "error": str(exc)}
     if args.scheduled:
@@ -145,7 +151,9 @@ def main():
             return 1
         ops = Path(windows_to_wsl_path(args.windows_ops_root))
         write_json(ops / "duplicates" / "last_result.json", result)
-        if not result["ok"]:
+        if result.get("skipped"):
+            print("重複番組整理: 他の録画整理が実行中のため今回は見送りました。次回の定期実行で処理します。")
+        elif not result["ok"]:
             print("重複番組整理: 停止\n" + str(result.get("error") or result.get("apply")))
         else:
             import hashlib

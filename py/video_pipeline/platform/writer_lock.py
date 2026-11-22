@@ -15,6 +15,10 @@ from pathlib import Path
 
 from .pathscan_common import windows_to_wsl_path
 
+class WriterBusy(TimeoutError):
+    """Another writer still owns the scope after the wait; nothing was changed."""
+
+
 _registry_guard = threading.Lock()
 _registry = {}
 
@@ -26,7 +30,7 @@ def writer_lock(path, *, timeout=30.0):
         entry = _registry.setdefault(key, {"mutex": threading.RLock(), "depth": 0})
     deadline = time.monotonic() + timeout
     if not entry["mutex"].acquire(timeout=timeout):
-        raise TimeoutError(f"writer scope busy: {key}")
+        raise WriterBusy(f"writer scope busy: {key}")
     handle = None
     try:
         if entry["depth"] == 0:
@@ -49,7 +53,7 @@ def writer_lock(path, *, timeout=30.0):
                     break
                 except (BlockingIOError, PermissionError):
                     if time.monotonic() >= deadline:
-                        raise TimeoutError(f"writer scope busy: {key}")
+                        raise WriterBusy(f"writer scope busy: {key}")
                     time.sleep(min(0.05, max(0, deadline - time.monotonic())))
         entry["depth"] += 1
         try:
