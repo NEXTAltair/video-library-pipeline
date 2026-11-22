@@ -208,6 +208,8 @@ def _existing_next_actions_for_run(run: Any, run_dir: Path | None = None) -> lis
             )
         ]
     if run.flow == "relocate":
+        plan_id = _latest_artifact_id(run, "relocate_plan")
+        subset_actions = subset_plan_actions(run, run.artifacts[plan_id]) if plan_id else []
         metadata_gate = next((gate for gate in open_gates if gate.type == "metadata_review"), None)
         if metadata_gate is not None:
             review_yaml_paths = [
@@ -271,7 +273,7 @@ def _existing_next_actions_for_run(run: Any, run_dir: Path | None = None) -> lis
                 )
             ]
         if queue_id:
-            return [
+            return [*subset_actions,
                 NextAction(
                     action="prepare_relocate_metadata",
                     label="Prepare missing or blocked relocate metadata",
@@ -285,7 +287,7 @@ def _existing_next_actions_for_run(run: Any, run_dir: Path | None = None) -> lis
                 )
             ]
         if diagnostics_id:
-            return [
+            return [*subset_actions,
                 NextAction(
                     action="prepare_relocate_metadata",
                     label="Prepare missing or blocked relocate metadata",

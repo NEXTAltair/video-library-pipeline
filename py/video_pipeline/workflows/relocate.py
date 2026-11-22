@@ -204,10 +204,14 @@ def planned_metadata_action(run_id: str, plan_id: str) -> NextAction:
 
 
 def subset_plan_actions(run: Any, plan: ArtifactRef) -> list[NextAction]:
-    if (run.status != "active" or run.phase != "plan_ready"
+    # Metadata gaps may hold other rows, but unresolved review gates remain global blockers.
+    if (run.flow != "relocate" or run.status != "active"
+            or run.phase not in {"plan_ready", "review_required"}
+            or any(g.requires_human_review and g.status in {"open", "rejected"}
+                   and g.type != PLACED_REVIEW_GATE_TYPE for g in run.review_gates.values())
             or plan.metadata.get("subsetSelection")
             or "relocate_internal_move_plan" in run.artifacts
-            or int((plan.metadata.get("summary") or {}).get("plannedMoves") or 0) < 2):
+            or int((plan.metadata.get("summary") or {}).get("plannedMoves") or 0) < (2 if run.phase == "plan_ready" else 1)):
         return []
     return [NextAction(action="prepare_relocate_subset",
         label="Supply explicit selectedPathIds and heldPathIds partition to prepare a non-applying cohort",
@@ -459,7 +463,9 @@ class RelocateWorkflowService:
 
         run = store.read_run(config.run_id)
         try:
-            parent = self._validate_apply_plan(store, config.run_id, config.artifact_id)
+            parent = self._validate_owned_plan_artifact(store, config.run_id, config.artifact_id)
+            if not subset_plan_actions(run, parent):
+                raise ValueError("subset requires an eligible plan with no blocking review gates")
             run_dir = store.run_dir(config.run_id).resolve()
             if (run.status != "active" or config.run_revision != run.revision
                     or parent.metadata.get("subsetSelection")
@@ -487,6 +493,7 @@ class RelocateWorkflowService:
             artifact = store.register_artifact(config.run_id, artifact_type="relocate_plan",
                 path=path, producer="prepare_relocate_subset", artifact_id=plan_id,
                 input_artifact_ids=[parent.id], metadata=metadata)
+            self._advance_to_phase(store, config.run_id, WorkflowPhase.PLAN_READY)
             return self._result(ok=True, store=store, run_id=config.run_id,
                 phase=WorkflowPhase.PLAN_READY, outcome="relocate_subset_prepared",
                 next_actions=[NextAction(action="review_plan", label="Review selected relocate cohort",
@@ -1347,7 +1354,8 @@ class RelocateWorkflowService:
                             "resumeAction": "prepare_relocate_metadata",
                         },
                         requires_human_input=has_review_blocker,
-                    )
+                    ),
+                    *(subset_plan_actions(store.read_run(run_id), plan_artifact) if plan_artifact else []),
                 ],
             )
 
