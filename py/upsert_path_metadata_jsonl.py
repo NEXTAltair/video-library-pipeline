@@ -111,7 +111,8 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
                           and set((reviewed_fields or {}).get(str(path_id), ())) == {'genre', 'review_note'})
         if genre_only:
             # Use current database identity, not an extraction snapshot, for genre-only edits.
-            rec = dict(existing or rec, genre=rec.get('genre'), review_note=rec.get('review_note'))
+            note = '; '.join(filter(None, [str(existing.get('review_note') or ''), str(rec.get('review_note') or '')]))
+            rec = dict(existing or rec, genre=rec.get('genre'), review_note=note)
             rec.pop('source_history', None)
         if not genre_only and source == "agent_accepted" and prior and (prior["human_reviewed"] or prior["source"] == "human_reviewed"):
             # A new, validated run-bound review may supersede the current value
@@ -139,12 +140,12 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
         explicit = (reviewed_fields or {}).get(str(path_id), ())
         merged = merge_data(existing, rec, source, explicit_fields=explicit)
         # Normalize: needs_review=false must not coexist with non-empty needs_review_reason
-        if not merged.get("needs_review"):
+        if not genre_only and not merged.get("needs_review"):
             merged["needs_review_reason"] = ""
         merged["genre"] = resolve_genre(merged)
         preserve_reviewed_identity = (strict and source in {"agent_accepted", "human_reviewed"}
                                       and ({"genre", "program_title"} & set(explicit)) and "franchise" in merged)
-        if "franchise" not in explicit and not preserve_reviewed_identity:
+        if not genre_only and "franchise" not in explicit and not preserve_reviewed_identity:
             merged["franchise"] = resolve_franchise(merged, franchise_rules or None)
 
         promoted, data_json = split_path_metadata(merged)

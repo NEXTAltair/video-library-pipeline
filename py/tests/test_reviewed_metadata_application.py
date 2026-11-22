@@ -347,7 +347,7 @@ def test_mixed_artifacts_preserve_program_genre_identity(tmp_path):
     draft.write_text(yaml.safe_dump(body))
     with closing(connect_db(str(db))) as con:
         con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,human_reviewed) VALUES (?,?,?,?,?,?,?)",
-                    ('p0', 'human_reviewed', json.dumps({'human_reviewed_at': 'original'}), 'before', 'Current Identity', '2026-09-09', 1))
+                    ('p0', 'human_reviewed', json.dumps({'human_reviewed_at': 'original', 'review_note': 'current DB note'}), 'before', 'Current Identity', '2026-09-09', 1))
         con.commit()
     result = apply_reviewed_metadata(store, cfg)
     assert result['rows'] == 2
@@ -355,3 +355,8 @@ def test_mixed_artifacts_preserve_program_genre_identity(tmp_path):
         first = con.execute("SELECT source,program_title,air_date,human_reviewed FROM path_metadata WHERE path_id='p0'").fetchone()
         assert first == ('human_reviewed', 'Current Identity', '2026-09-09', 1)
         assert con.execute("SELECT program_title FROM path_metadata WHERE path_id='p1'").fetchone()[0] == 'After'
+
+    with closing(sqlite3.connect(db)) as con:
+        data = json.loads(con.execute("SELECT data_json FROM path_metadata WHERE path_id='p0'").fetchone()[0])
+        assert data['review_note'] == 'current DB note; category checked'
+        assert 'franchise' not in data

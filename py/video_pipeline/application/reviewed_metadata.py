@@ -157,7 +157,7 @@ def review_rows(rows, hints, row_overrides=None, *, acceptance="agent_accepted",
             raise ValueError("reviewed metadata requires registered path_id")
         if preserve_genre_history and set(row_edit) <= {'genre', 'review_note'}:
             # Genre-only review appends a note without replacing identity acceptance.
-            edited['review_note'] = '; '.join(filter(None, [str(row.get('review_note') or ''), str(row_edit.get('review_note') or '')]))
+            edited['review_note'] = row_edit.get('review_note')
             result.append(edited)
             continue
         for key in ("human_reviewed_at", "human_reviewed_by", "human_confirmation"):
