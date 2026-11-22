@@ -14,7 +14,8 @@ def partition_plan(rows: list[dict[str, Any]], selected: Any, held: Any) -> list
         raise ValueError("held path ID cannot be selected")
     candidates = [r for r in rows if "_meta" not in r]
     planned = [r for r in candidates if r.get("status") == "planned"]
-    plan_ids = [r.get("path_id") for r in candidates]
+    plan_ids = [r.get("path_id") for r in candidates
+                if not (r.get("status") == "error" and r.get("path_id") is None)]
     if (any(not isinstance(v, str) or not v.strip() for v in plan_ids)
             or len(set(plan_ids)) != len(plan_ids)):
         raise ValueError("plan has missing or duplicate path IDs")
@@ -37,8 +38,9 @@ def partition_plan(rows: list[dict[str, Any]], selected: Any, held: Any) -> list
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError("invalid member path")
                 normalized = value.replace("/", "\\").casefold().rstrip("\\")
-                owner = paths.setdefault(normalized, row["path_id"])
-                if owner != row["path_id"]:
+                identity = row.get("path_id") or ("error:" + str(row.get("src")))
+                owner = paths.setdefault(normalized, identity)
+                if owner != identity:
                     raise ValueError("plan rows share a physical member path")
     chosen = []
     for row in planned:

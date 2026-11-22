@@ -183,3 +183,21 @@ def test_mixed_partition_fails_closed(bad):
         rows[1]['src'] = 'safe.mp4'
     with pytest.raises(ValueError):
         partition_plan(rows, selected, held)
+
+
+def test_subset_preserves_unidentified_corrupt_errors_in_parent(tmp_path):
+    h, store, cfg, rows = setup(tmp_path)
+    run = store.read_run('subset')
+    artifact = run.artifacts['relocate_plan']
+    rows.append({'src': r'B:\Library\corrupt.mp4', 'status': 'error', 'reason': 'corrupt_candidate:size_zero'})
+    path = Path(artifact.path)
+    path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+    artifact.sha256 = sha256_file(path)
+    store.write_run(run)
+    original = path.read_bytes()
+    cfg.run_revision = store.read_run('subset').revision
+    result = h.service().resume(cfg, action='prepare_relocate_subset')
+    assert result.ok, result.to_dict()
+    assert path.read_bytes() == original
+    child = store.read_run('subset').artifacts[result.next_actions[0].params['artifactId']]
+    assert [row['path_id'] for row in map(json.loads, Path(child.path).read_text().splitlines())] == ['a', 'b']
