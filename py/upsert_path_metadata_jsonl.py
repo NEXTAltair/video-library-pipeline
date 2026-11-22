@@ -142,7 +142,9 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
         # Normalize: needs_review=false must not coexist with non-empty needs_review_reason
         if not genre_only and not merged.get("needs_review"):
             merged["needs_review_reason"] = ""
-        merged["genre"] = resolve_genre(merged)
+        # Explicit review values, including null (unknown), outrank inference.
+        if "genre" not in explicit:
+            merged["genre"] = resolve_genre(merged)
         preserve_reviewed_identity = (strict and source in {"agent_accepted", "human_reviewed"}
                                       and ({"genre", "program_title"} & set(explicit)) and "franchise" in merged)
         if not genre_only and "franchise" not in explicit and not preserve_reviewed_identity:

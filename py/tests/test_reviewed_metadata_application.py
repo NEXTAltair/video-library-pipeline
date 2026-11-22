@@ -382,3 +382,36 @@ def test_partial_program_selection_across_artifacts_rejects_genre_split(tmp_path
     with pytest.raises(ValueError, match='genre split'):
         apply_reviewed_metadata(store, cfg)
     assert db_state(db) == before
+
+
+def test_reviewed_null_genre_survives_epg_inference_and_requires_preparation(tmp_path):
+    from relocate_existing_files import genre_unresolved_default_fallback
+    from video_pipeline.domain.path_placement_rules import DriveRoute, DriveRoutes
+
+    store, db, cfg = fixture(tmp_path, count=1)
+    with closing(connect_db(str(db))) as con:
+        con.execute(
+            "INSERT INTO path_metadata(path_id,source,data_json,updated_at) VALUES(?,?,?,?)",
+            ('p0', 'rule_based', json.dumps({'genre': 'news', 'epg_genres': [
+                {'category': 'ニュース'}]}), 'before'),
+        )
+        con.commit()
+    draft = Path(cfg.review_yaml_paths[0])
+    body = yaml.safe_load(draft.read_text())
+    body['row_overrides'] = {'p0': {
+        'genre': None, 'review_note': 'Reviewed genre remains unknown; retain EPG as evidence.',
+    }}
+    draft.write_text(yaml.safe_dump(body))
+
+    assert apply_reviewed_metadata(store, cfg)['rows'] == 1
+    with closing(sqlite3.connect(db)) as con:
+        raw = con.execute("SELECT data_json FROM path_metadata WHERE path_id='p0'").fetchone()[0]
+    stored = json.loads(raw)
+    assert 'genre' in stored and stored['genre'] is None
+    assert stored['epg_genres'] == [{'category': 'ニュース'}]
+    routes = DriveRoutes(r'B:\Library', 'by_title', [DriveRoute({
+        'genre': 'news', 'dest_root': r'N:\News', 'layout': 'by_title',
+    })])
+    route, _ = routes.resolve(stored)
+    assert route is None
+    assert genre_unresolved_default_fallback(routes, stored, 'default')
