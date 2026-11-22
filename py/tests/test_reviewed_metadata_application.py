@@ -415,3 +415,25 @@ def test_reviewed_null_genre_survives_epg_inference_and_requires_preparation(tmp
     route, _ = routes.resolve(stored)
     assert route is None
     assert genre_unresolved_default_fallback(routes, stored, 'default')
+@pytest.mark.parametrize('source,human', [('human_reviewed', 1), ('agent_accepted', 0), ('rule_based', 0)])
+@pytest.mark.parametrize('replacement', [None, [], [{'category': 'ドラマ', 'subcategory': '国内ドラマ'}]])
+def test_explicit_run_review_corrects_accepted_genre_and_epg(tmp_path, source, human, replacement):
+    store, db, cfg = fixture(tmp_path, count=1)
+    with sqlite3.connect(db) as con:
+        con.execute('INSERT INTO path_metadata(path_id,source,data_json,updated_at,human_reviewed) VALUES(?,?,?,?,?)',
+                    ('p0', source, json.dumps({'genre': 'ドキュメンタリー・情報',
+                     'epg_genres': [{'category': '情報', 'subcategory': 'グルメ'}]}), 'before', human))
+    draft = Path(cfg.review_yaml_paths[0])
+    body = yaml.safe_load(draft.read_text())
+    body['row_overrides'] = {'p0': {'genre': 'ドラマ', 'epg_genres': replacement,
+                                   'needs_review': False, 'needs_review_reason': '',
+                                   'review_note': 'Independent synthetic program evidence checked; foreign EPG discarded.'}}
+    before = db_state(db)
+    draft.write_text(yaml.safe_dump(body))
+    assert db_state(db) == before  # drafting is not acceptance
+    apply_reviewed_metadata(store, cfg)
+    with closing(sqlite3.connect(db)) as con:
+        data = json.loads(con.execute("SELECT data_json FROM path_metadata WHERE path_id='p0'").fetchone()[0])
+        assert data['genre'] == 'ドラマ'
+        assert data['epg_genres'] == replacement
+        assert any('epg_genres' in h.get('fields', []) for h in data['source_history'])
