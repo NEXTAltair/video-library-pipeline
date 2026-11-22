@@ -50,7 +50,7 @@ READMEは入口だけを保持し、詳細な設計判断はADRへ分割して�
 ```mermaid
 flowchart LR
     TS["EDCB録画<br>.ts + .program.txt"]
-    MP4["エンコード済<br>.mp4"]
+    MP4["エンコード済<br>.mp4 + 対応する .mp4.program.txt"]
     EPG["ingest_epg"]
     S1["Stage 1<br>inventory-review"]
     S2["Stage 2<br>extract-review"]
@@ -65,6 +65,8 @@ flowchart LR
     DB -.-> S3
     DST -.-> RELOC -.-> S2
 ```
+
+メタデータ再抽出では、MP4と同じベース名に続く`.mp4.program.txt`が存在し解析できる場合、その番組情報を候補ヒントとEPG補完に優先する。該当するファイルがない場合だけ、DB内EPGとファイル名による照合に進む。曖昧なDB/日時候補で別録画の情報を採用しない。
 
 V2 の公開 OpenClaw tool surface は次の4つ。
 

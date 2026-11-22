@@ -13,6 +13,7 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from edcb_program_parser import match_key_from_filename, datetime_key_from_filename, recording_stem_from_program_info
+from edcb_program_parser import parse_program_txt
 from db_helpers import latest_path_metadata, reconstruct_broadcast_data
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
@@ -643,6 +644,18 @@ def _to_epg_hint_payload(epg_candidates: list[dict]) -> dict:
     }
 
 
+def _paired_program_info(path_or_name: str) -> dict | None:
+    """Parse only the program.txt paired with this exact MP4."""
+    raw = str(path_or_name or "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.name.lower().endswith(".mp4"):
+        return None
+    sidecar = Path(str(path) + ".program.txt")
+    return parse_program_txt(sidecar) if sidecar.is_file() else None
+
+
 def recording_filename_stem(path_or_name: str) -> str | None:
     """Resolve Windows and POSIX basenames identically on either host."""
     return PurePath(str(path_or_name).replace("\\", "/")).stem or None
@@ -712,7 +725,11 @@ def _build_llm_input_rows(batch: list[dict], epg_cache: _EpgCache) -> list[dict]
         mk = match_key_from_filename(str(rec.get("name") or ""))
         dk = datetime_key_from_filename(str(rec.get("name") or ""))
         epg_candidates = epg_cache.candidates(mk, dk)
-        rec_out.update(_to_epg_hint_payload(epg_candidates))
+        hints = _to_epg_hint_payload(epg_candidates)
+        paired = _paired_program_info(str(rec.get("path") or ""))
+        if paired and paired.get("official_title"):
+            hints["epg_hint_titles"] = [paired["official_title"], *[t for t in hints["epg_hint_titles"] if t != paired["official_title"]]][:5]
+        rec_out.update(hints)
         rows.append(rec_out)
     return rows
 
@@ -955,7 +972,9 @@ def main() -> int:
             # EPG enrichment: look up ingested program.txt data
             # ファイル名ステムで 1:1 照合（タイトル+日時によるあいまいマッチより優先）
             _fs = recording_filename_stem(str(rec.get("name") or rec.get("path") or ""))
-            epg = epg_cache.lookup(mk, dk, filename_stem=_fs, broadcaster=rec.get("broadcaster"))
+            epg = _paired_program_info(str(rec.get("path") or ""))
+            if epg is None:
+                epg = epg_cache.lookup(mk, dk, filename_stem=_fs, broadcaster=rec.get("broadcaster"))
             _enrich_with_epg(row, epg)
             unresolved_epg = epg is None and bool(epg_candidates)
             if unresolved_epg:
