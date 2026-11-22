@@ -329,3 +329,29 @@ def test_explicit_title_review_keeps_other_risk_guards(case):
     if case == 'no_title_override': fields.pop('program_title')
     with pytest.raises(ValueError):
         review_rows([row], [], {'a-studio': fields})
+
+
+def test_mixed_artifacts_preserve_program_genre_identity(tmp_path):
+    store, db, cfg = fixture(tmp_path)
+    source = store.run_dir(cfg.run_id) / 'metadata/0.jsonl'
+    row = json.loads(source.read_text())
+    row.update(needs_review=False, needs_review_reason='', human_reviewed=True)
+    source.write_text(json.dumps(row) + '\n')
+    run = store.read_run(cfg.run_id)
+    run.artifacts['extract_0'].sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    store.write_run(run)
+    draft = Path(cfg.review_yaml_paths[0])
+    body = yaml.safe_load(draft.read_text())
+    body['hints'] = []
+    body['program_genre_overrides'] = {'Before': {'genre': 'news', 'review_note': 'category checked'}}
+    draft.write_text(yaml.safe_dump(body))
+    with closing(connect_db(str(db))) as con:
+        con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,human_reviewed) VALUES (?,?,?,?,?,?,?)",
+                    ('p0', 'human_reviewed', json.dumps({'human_reviewed_at': 'original'}), 'before', 'Current Identity', '2026-09-09', 1))
+        con.commit()
+    result = apply_reviewed_metadata(store, cfg)
+    assert result['rows'] == 2
+    with closing(sqlite3.connect(db)) as con:
+        first = con.execute("SELECT source,program_title,air_date,human_reviewed FROM path_metadata WHERE path_id='p0'").fetchone()
+        assert first == ('human_reviewed', 'Current Identity', '2026-09-09', 1)
+        assert con.execute("SELECT program_title FROM path_metadata WHERE path_id='p1'").fetchone()[0] == 'After'

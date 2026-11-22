@@ -340,8 +340,15 @@ def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
             create_schema_if_needed(con)
             rows = [row for p in prepared for row in p["rows"]]
             reviewed_fields = {key: fields for p in prepared for key, fields in p["reviewedFields"].items()}
-            summary = upsert_records(con, rows, source="human_reviewed" if provenance["human_reviewed"] and not all(p["genreOnly"] for p in prepared) else "agent_accepted", strict=True, reviewed_fields=reviewed_fields,
-                                     accepted_review_context={"run_id": run.run_id, "accepted_digest": fingerprint, "genre_only": all(p["genreOnly"] for p in prepared)})
+            summary = {'rows': 0, 'missing': 0}
+            for item in prepared:
+                part = upsert_records(con, item['rows'],
+                    source='human_reviewed' if provenance['human_reviewed'] and not item['genreOnly'] else 'agent_accepted',
+                    strict=True, reviewed_fields=item['reviewedFields'],
+                    accepted_review_context={'run_id': run.run_id, 'accepted_digest': fingerprint,
+                                             'genre_only': item['genreOnly']})
+                for key in summary:
+                    summary[key] += part[key]
             # Merge/resolution can retain an existing genre absent in a draft.
             # Validate the actual prospective records before committing too.
             from db_helpers import latest_path_metadata
