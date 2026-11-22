@@ -112,6 +112,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
         if genre_only:
             # Use current database identity, not an extraction snapshot, for genre-only edits.
             rec = dict(existing or rec, genre=rec.get('genre'), review_note=rec.get('review_note'))
+            rec.pop('source_history', None)
         if not genre_only and source == "agent_accepted" and prior and (prior["human_reviewed"] or prior["source"] == "human_reviewed"):
             # A new, validated run-bound review may supersede the current value
             # without making a retrospective claim about the old reviewer.

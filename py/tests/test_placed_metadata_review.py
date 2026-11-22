@@ -233,7 +233,8 @@ def test_placed_review_not_offered_on_dead_or_applied_runs(tmp_path, state):
     assert not rejected.ok and len(h.calls) == n
 
 
-def test_program_genre_yaml_accepts_through_resume_without_identity_changes(tmp_path):
+@pytest.mark.parametrize('human', [False, True])
+def test_program_genre_yaml_accepts_through_resume_without_identity_changes(tmp_path, human):
     h = PlacedHarness(tmp_path)
     h.seed_db()
     start = h.dry_run()
@@ -249,6 +250,13 @@ def test_program_genre_yaml_accepts_through_resume_without_identity_changes(tmp_
         body['row_overrides'] = {}
         body['program_genre_overrides'] = {title: {'genre': 'movie', 'review_note': 'program reviewed'} for title in titles}
         draft.write_text(yaml.safe_dump(body, allow_unicode=True))
+    if human:
+        review.params['acceptance'] = 'human_confirmed'
+        review.params['humanConfirmation'] = {'confirmed_by': 'owner', 'evidence': 'explicit fixture review'}
+    con = sqlite3.connect(h.cfg.db)
+    con.execute("UPDATE path_metadata SET data_json=json_set(data_json, '$.source_history', json('[{\"source\":\"original\"}]'))")
+    con.commit()
+    con.close()
     accepted = h.resume(review.params)
     assert accepted.ok, accepted.to_dict()
     con = sqlite3.connect(h.cfg.db)
@@ -256,4 +264,5 @@ def test_program_genre_yaml_accepts_through_resume_without_identity_changes(tmp_
     assert len(records) == 2
     assert all(r[0] == 1 for r in records)
     assert all(json.loads(r[1])['genre'] == '映画' for r in records)
+    assert all(sum(item.get('source') == 'original' for item in json.loads(r[1]).get('source_history', [])) == 1 for r in records)
     con.close()

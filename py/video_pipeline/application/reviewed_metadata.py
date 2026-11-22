@@ -128,6 +128,8 @@ def review_rows(rows, hints, row_overrides=None, *, acceptance="agent_accepted",
     canonicals = sorted(set(aliases.values()), key=lambda s: len(lower_compact(s)), reverse=True)
     result = []
     for row in rows:
+        if preserve_genre_history and str(row.get('path_id') or '') not in overrides:
+            continue
         edited = dict(row)
         row_edit = overrides.get(str(row.get('path_id') or ''), {})
         edited.update(row_edit)
@@ -338,7 +340,7 @@ def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
             create_schema_if_needed(con)
             rows = [row for p in prepared for row in p["rows"]]
             reviewed_fields = {key: fields for p in prepared for key, fields in p["reviewedFields"].items()}
-            summary = upsert_records(con, rows, source="human_reviewed" if provenance["human_reviewed"] else "agent_accepted", strict=True, reviewed_fields=reviewed_fields,
+            summary = upsert_records(con, rows, source="human_reviewed" if provenance["human_reviewed"] and not all(p["genreOnly"] for p in prepared) else "agent_accepted", strict=True, reviewed_fields=reviewed_fields,
                                      accepted_review_context={"run_id": run.run_id, "accepted_digest": fingerprint, "genre_only": all(p["genreOnly"] for p in prepared)})
             # Merge/resolution can retain an existing genre absent in a draft.
             # Validate the actual prospective records before committing too.

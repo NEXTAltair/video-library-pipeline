@@ -251,3 +251,13 @@ def test_noncanonical_genre_is_a_normalization_candidate():
     rows = cohort(['movie', 'movie'])
     report = prepare_program_genre_review(rows)
     assert report['normalization_candidates'][0]['genre'] == '映画'
+
+
+def test_program_genre_review_omits_unselected_programs():
+    from video_pipeline.application.reviewed_metadata import review_rows, expand_program_genres
+    rows = [dict(path_id=str(i), program_title=title, air_date='2026-11-01',
+                 needs_review=False, genre=None, human_reviewed=True)
+            for i, title in enumerate(['Selected', 'Untouched'])]
+    edits = expand_program_genres(rows, {'Selected': {'genre': 'news', 'review_note': 'checked'}})
+    accepted = review_rows(rows, [], edits, preserve_genre_history=True)
+    assert [r['path_id'] for r in accepted] == ['0']
