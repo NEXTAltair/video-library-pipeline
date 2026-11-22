@@ -231,3 +231,29 @@ def test_placed_review_not_offered_on_dead_or_applied_runs(tmp_path, state):
     rejected = h.resume({"runId": h.cfg.run_id, "artifactId": "relocate_plan",
                          "resumeAction": "prepare_placed_metadata"})
     assert not rejected.ok and len(h.calls) == n
+
+
+def test_program_genre_yaml_accepts_through_resume_without_identity_changes(tmp_path):
+    h = PlacedHarness(tmp_path)
+    h.seed_db()
+    start = h.dry_run()
+    prepared = h.resume(action(start, 'review_placed_metadata').params)
+    review = action(prepared, 'review_placed_metadata_yaml')
+    for path in review.params['reviewYamlPaths']:
+        draft = Path(path)
+        body = yaml.safe_load(draft.read_text())
+        source = Path(body['source_jsonl'])
+        rows = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
+        titles = {r['program_title'] for r in rows if '_meta' not in r}
+        body['hints'] = []
+        body['row_overrides'] = {}
+        body['program_genre_overrides'] = {title: {'genre': 'movie', 'review_note': 'program reviewed'} for title in titles}
+        draft.write_text(yaml.safe_dump(body, allow_unicode=True))
+    accepted = h.resume(review.params)
+    assert accepted.ok, accepted.to_dict()
+    con = sqlite3.connect(h.cfg.db)
+    records = con.execute("SELECT human_reviewed, data_json FROM path_metadata WHERE path_id IN ('g05', 'g14')").fetchall()
+    assert len(records) == 2
+    assert all(r[0] == 1 for r in records)
+    assert all(json.loads(r[1])['genre'] == '映画' for r in records)
+    con.close()

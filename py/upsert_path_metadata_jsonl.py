@@ -106,7 +106,13 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
                 continue
             if rec.get("human_reviewed") or rec.get("review_acceptance") == "human_confirmed":
                 raise ValueError("unreviewed source cannot assert human confirmation")
-        if source == "agent_accepted" and prior and (prior["human_reviewed"] or prior["source"] == "human_reviewed"):
+        genre_only = bool(strict and accepted_review_context
+                          and accepted_review_context.get('genre_only')
+                          and set((reviewed_fields or {}).get(str(path_id), ())) == {'genre', 'review_note'})
+        if genre_only:
+            # Use current database identity, not an extraction snapshot, for genre-only edits.
+            rec = dict(existing or rec, genre=rec.get('genre'), review_note=rec.get('review_note'))
+        if not genre_only and source == "agent_accepted" and prior and (prior["human_reviewed"] or prior["source"] == "human_reviewed"):
             # A new, validated run-bound review may supersede the current value
             # without making a retrospective claim about the old reviewer.
             context = accepted_review_context
@@ -124,7 +130,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
                             "review_context": dict(context),
                             "note": "new agent acceptance; previous reviewer not inferred or migrated"})
             existing["source_history"] = history
-        if source == "agent_accepted":
+        if source == "agent_accepted" and not genre_only:
             rec = dict(rec, human_reviewed=False, review_acceptance="agent_accepted")
             for key in ("human_reviewed_at", "human_reviewed_by", "human_confirmation"):
                 existing.pop(key, None)
@@ -142,7 +148,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
 
         promoted, data_json = split_path_metadata(merged)
         to_upsert.append((
-            path_id, source, data_json, updated_at,
+            path_id, prior["source"] if genre_only and prior else source, data_json, updated_at,
             promoted.get("program_title"),
             promoted.get("air_date"),
             promoted.get("needs_review", 0),

@@ -215,3 +215,39 @@ def test_single_record_jsonl_cli_does_not_assume_report_shape(tmp_path):
         '--report',str(report),'--review-yaml',str(review)],capture_output=True)
     assert result.returncode == 0, result.stderr
     assert json.loads(report.read_text())['rows'] == 1
+
+
+def test_bulk_program_acceptance_preserves_identity_and_history_at_scale():
+    from video_pipeline.application.reviewed_metadata import review_rows, expand_program_genres
+    rows = []
+    decisions = {}
+    for p in range(300):
+        title = f'Program {p}'
+        decisions[title] = {'genre': 'news', 'review_note': 'reviewed program category'}
+        for n in range(20):
+            rows.append({'path_id': f'{p}-{n}', 'program_title': title, 'air_date': '2026-11-01',
+                         'genre': None, 'needs_review': False, 'human_reviewed': True, 'human_reviewed_at': 'original',
+                         'human_reviewed_by': 'owner', 'subtitle': str(n)})
+    edits = expand_program_genres(rows, decisions)
+    accepted = review_rows(rows, [], edits, preserve_genre_history=True)
+    assert len(accepted) == 6000
+    for before, after in zip(rows, accepted):
+        assert after['genre'] == 'ニュース・報道'
+        for key, value in before.items():
+            if key != 'genre':
+                assert after[key] == value
+
+
+def test_bulk_program_genres_reject_conflicts_and_unknown_titles():
+    from video_pipeline.application.reviewed_metadata import expand_program_genres
+    rows = cohort([None])
+    with pytest.raises(ValueError):
+        expand_program_genres(rows, {'missing': evidence('news')})
+    with pytest.raises(ValueError):
+        expand_program_genres(rows, {'番組': {'genre': 'news'}})
+
+
+def test_noncanonical_genre_is_a_normalization_candidate():
+    rows = cohort(['movie', 'movie'])
+    report = prepare_program_genre_review(rows)
+    assert report['normalization_candidates'][0]['genre'] == '映画'
