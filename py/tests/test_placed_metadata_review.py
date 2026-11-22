@@ -233,8 +233,9 @@ def test_placed_review_not_offered_on_dead_or_applied_runs(tmp_path, state):
     assert not rejected.ok and len(h.calls) == n
 
 
+@pytest.mark.parametrize('legacy_source', ['human_reviewed', 'rule_based'])
 @pytest.mark.parametrize('human', [False, True])
-def test_program_genre_yaml_accepts_through_resume_without_identity_changes(tmp_path, human):
+def test_program_genre_yaml_accepts_through_resume_without_identity_changes(tmp_path, human, legacy_source):
     h = PlacedHarness(tmp_path)
     h.seed_db()
     start = h.dry_run()
@@ -254,6 +255,7 @@ def test_program_genre_yaml_accepts_through_resume_without_identity_changes(tmp_
         review.params['acceptance'] = 'human_confirmed'
         review.params['humanConfirmation'] = {'confirmed_by': 'owner', 'evidence': 'explicit fixture review'}
     con = sqlite3.connect(h.cfg.db)
+    con.execute('UPDATE path_metadata SET source=?', (legacy_source,))
     con.execute("UPDATE path_metadata SET data_json=json_set(data_json, '$.source_history', json('[{\"source\":\"original\"}]'))")
     con.commit()
     con.close()

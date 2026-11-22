@@ -289,7 +289,7 @@ def preflight(store, config, *, gate_type="metadata_review"):
             path_ids.add(row["path_id"])
         prepared.append({"artifact": artifact, "draft": draft_bytes, "digest": digest,
                          "source": source_bytes, "sourceDigest": source_digest, "rows": edited,
-                         "genreOnly": bool(program_edits),
+                         "genreOnly": bool(program_edits), "cohortRows": rows,
                          "reviewedFields": {str(key): list(fields) for key, fields in edits.items()}})
     return run, gates, db, prepared
 
@@ -352,7 +352,9 @@ def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
             # Merge/resolution can retain an existing genre absent in a draft.
             # Validate the actual prospective records before committing too.
             from db_helpers import latest_path_metadata
-            validate_program_genre_consistency(latest_path_metadata(con, str(row["path_id"]))[0] for row in rows)
+            validate_program_genre_consistency(
+                latest_path_metadata(con, str(row["path_id"]))[0] or row
+                for item in prepared for row in item["cohortRows"])
             summary.update(ok=True, reviewAcceptance=provenance["review_acceptance"],
                            humanConfirmation=provenance["human_confirmation"],
                            backupPath=backup_path, acceptedDigest=fingerprint,

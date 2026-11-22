@@ -158,6 +158,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
             promoted.get("subtitle"),
             promoted.get("broadcaster"),
             promoted.get("human_reviewed", 0),
+            int(genre_only),
         ))
     if to_upsert:
         con.executemany(
@@ -178,7 +179,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
               broadcaster=excluded.broadcaster,
               human_reviewed=excluded.human_reviewed
             WHERE (path_metadata.human_reviewed IS NOT 1 AND path_metadata.source != 'agent_accepted')
-               OR excluded.source IN ('human_reviewed', 'agent_accepted')
+               OR excluded.source IN ('human_reviewed', 'agent_accepted') OR ?
             """,
             to_upsert,
         )
