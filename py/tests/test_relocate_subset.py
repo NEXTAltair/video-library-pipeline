@@ -201,3 +201,15 @@ def test_subset_preserves_unidentified_corrupt_errors_in_parent(tmp_path):
     assert path.read_bytes() == original
     child = store.read_run('subset').artifacts[result.next_actions[0].params['artifactId']]
     assert [row['path_id'] for row in map(json.loads, Path(child.path).read_text().splitlines())] == ['a', 'b']
+
+
+@pytest.mark.parametrize('shared_with_selected', [False, True])
+def test_held_destination_collisions_do_not_block_safe_selection(shared_with_selected):
+    rows = [dict(path_id='h1', src='held1.mp4', dst='collision.mp4', status='skipped'),
+            dict(path_id='h2', src='held2.mp4', dst='collision.mp4', status='skipped'),
+            dict(path_id='safe', src='safe.mp4', dst='collision.mp4' if shared_with_selected else 'new.mp4', status='planned')]
+    if shared_with_selected:
+        with pytest.raises(ValueError, match='physical member path'):
+            partition_plan(rows, ['safe'], ['h1', 'h2'])
+    else:
+        assert partition_plan(rows, ['safe'], ['h1', 'h2']) == [rows[2]]

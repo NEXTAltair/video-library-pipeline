@@ -25,7 +25,7 @@ def partition_plan(rows: list[dict[str, Any]], selected: Any, held: Any) -> list
         raise ValueError("only planned rows may be selected")
     # A held row may share a companion with another recording. Such a partition
     # must not make that held member movable through its selected neighbour.
-    paths: dict[str, str] = {}
+    paths: dict[str, set[str]] = {}
     for row in candidates:
         members = row.get("members") or [{"src": row.get("src"), "dst": row.get("dst")}]
         if not isinstance(members, list) or any(not isinstance(m, dict) for m in members):
@@ -39,9 +39,10 @@ def partition_plan(rows: list[dict[str, Any]], selected: Any, held: Any) -> list
                     raise ValueError("invalid member path")
                 normalized = value.replace("/", "\\").casefold().rstrip("\\")
                 identity = row.get("path_id") or ("error:" + str(row.get("src")))
-                owner = paths.setdefault(normalized, identity)
-                if owner != identity:
+                owners = paths.setdefault(normalized, set())
+                if owners - {identity} and (identity in selected_set or owners & selected_set):
                     raise ValueError("plan rows share a physical member path")
+                owners.add(identity)
     chosen = []
     for row in planned:
         if row["path_id"] not in selected_set:
