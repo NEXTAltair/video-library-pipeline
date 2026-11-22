@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -20,7 +21,7 @@ from genre_resolver import resolve_genre
 from path_placement_rules import DB_CONTRACT_REQUIRED, SUBTITLE_SEPARATORS
 from plan_validation import detect_swallowed_program_title
 from source_history import make_entry
-from pathscan_common import now_iso
+from pathscan_common import now_iso, windows_to_wsl_path
 from title_resolution import load_canonical_title_sources, suggest_canonical_title
 from broadcast_frame_titles import canonical_from_known_program_prefix, is_contaminated_program_title, reviewed_title_conflicts_with_filename
 from video_pipeline.domain.title_text import clean_title_edges
@@ -649,11 +650,18 @@ def _paired_program_info(path_or_name: str) -> dict | None:
     raw = str(path_or_name or "").strip()
     if not raw:
         return None
-    path = Path(raw)
+    path = Path(windows_to_wsl_path(raw))
     if not path.name.lower().endswith(".mp4"):
         return None
     sidecar = Path(str(path) + ".program.txt")
-    return parse_program_txt(sidecar) if sidecar.is_file() else None
+    try:
+        return parse_program_txt(sidecar) if sidecar.is_file() else None
+    except OSError as exc:
+        # WSL can report EIO for unavailable Windows-mounted files. Treat it as
+        # missing local evidence; do not let optional enrichment abort a batch.
+        if exc.errno == errno.EIO:
+            return None
+        raise
 
 
 def recording_filename_stem(path_or_name: str) -> str | None:
