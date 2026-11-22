@@ -110,3 +110,106 @@ def test_public_cli_partition_returns_only_reviewed_subset_apply_action(tmp_path
     assert result['nextActions'][0]['params']['resumeAction']=='apply_relocate_move_plan'
     assert result['nextActions'][0]['params']['artifactId']!='relocate_plan'
     assert result['nextActions'][0]['requiresHumanInput']
+
+
+def test_mixed_missing_genre_explicit_subset_applies_only_safe_31(tmp_path):
+    import sqlite3
+    h = RelocateWorkflowHarness(tmp_path, run_id='mixed')
+    original = h.python_runner
+    rows = [dict(path_id=f'p{i}', src=str(tmp_path / f'{i}.mp4'),
+                 dst=str(tmp_path / f'{i}-new.mp4'), status='planned') for i in range(31)]
+    held = [dict(path_id=f'h{i}', src=str(tmp_path / f'held{i}.mp4'),
+                 status='skipped', reason='missing_genre') for i in range(3)]
+    for row in rows + held:
+        Path(row['src']).write_text(row['path_id'])
+    def runner(script, args, cwd=None):
+        if script.name == 'backup_mediaops_db.py' and 'backup' in args:
+            path = tmp_path / 'backup.sqlite'
+            with sqlite3.connect(path) as con:
+                con.execute('CREATE TABLE fixture (id INTEGER)')
+            return json.dumps({'ok': True, 'backup_path': str(path)})
+        payload = json.loads(original(script, args, cwd))
+        if script.name == 'relocate_existing_files.py':
+            Path(payload['planPath']).write_text(''.join(json.dumps(r)+'\n' for r in rows + held))
+            payload.update(plannedMoves=31, missingGenreSkipped=3)
+        return json.dumps(payload)
+    h.python_runner = runner
+    result = h.dry_run()
+    assert result.phase == 'review_required'
+    assert any(a.action == 'prepare_relocate_subset' for a in result.next_actions)
+    store = WorkflowStore(Path(h.cfg.windows_ops_root))
+    run = store.read_run('mixed')
+    assert any(a.action == 'prepare_relocate_subset' for a in _next_actions_for_run(run))
+    cfg = RelocateApplyConfig(windows_ops_root=h.cfg.windows_ops_root, run_id='mixed',
+        run_revision=run.revision, selected_path_ids=[r['path_id'] for r in rows],
+        held_path_ids=[r['path_id'] for r in held])
+    prepared = h.service().resume(cfg, action='prepare_relocate_subset')
+    assert prepared.ok, prepared.to_dict()
+    def move(script, args):
+        plan = Path(args[args.index('-PlanJsonl') + 1])
+        moves = [json.loads(line) for line in plan.read_text().splitlines() if line.strip()]
+        moves = [r for r in moves if '_meta' not in r]
+        assert all(r['path_id'].startswith('p') for r in moves)
+        for r in moves:
+            Path(r['src']).rename(r['dst'])
+        out = Path(args[args.index('-OutJsonl') + 1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(''.join(json.dumps(dict(r, ok=True, op='move'))+'\n' for r in moves))
+        return {'out_jsonl': str(out), 'run_id': 'test'}
+    service = h.service()
+    service.powershell_runner = move
+    cfg.artifact_id = prepared.next_actions[0].params['artifactId']
+    applied = service.resume(cfg, action='apply_relocate_move_plan')
+    assert applied.ok, applied.to_dict()
+    assert all(Path(r['dst']).exists() and not Path(r['src']).exists() for r in rows)
+    assert all(Path(r['src']).exists() for r in held)
+    parent = store.read_run('mixed').artifacts['relocate_plan']
+    assert [json.loads(line) for line in Path(parent.path).read_text().splitlines()][31:] == held
+    assert parent.metadata['summary']['missingGenreSkipped'] == 3
+
+
+@pytest.mark.parametrize('bad', ['select_skipped', 'omit_held', 'shared_source'])
+def test_mixed_partition_fails_closed(bad):
+    rows = [
+        dict(path_id='safe', src='safe.mp4', dst='new.mp4', status='planned'),
+        dict(path_id='held', src='held.mp4', status='skipped', reason='missing_genre'),
+    ]
+    selected, held = ['safe'], ['held']
+    if bad == 'select_skipped':
+        selected, held = ['held'], ['safe']
+    elif bad == 'omit_held':
+        held = ['unknown']
+    else:
+        rows[1]['src'] = 'safe.mp4'
+    with pytest.raises(ValueError):
+        partition_plan(rows, selected, held)
+
+
+def test_subset_preserves_unidentified_corrupt_errors_in_parent(tmp_path):
+    h, store, cfg, rows = setup(tmp_path)
+    run = store.read_run('subset')
+    artifact = run.artifacts['relocate_plan']
+    rows.append({'src': r'B:\Library\corrupt.mp4', 'status': 'error', 'reason': 'corrupt_candidate:size_zero'})
+    path = Path(artifact.path)
+    path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+    artifact.sha256 = sha256_file(path)
+    store.write_run(run)
+    original = path.read_bytes()
+    cfg.run_revision = store.read_run('subset').revision
+    result = h.service().resume(cfg, action='prepare_relocate_subset')
+    assert result.ok, result.to_dict()
+    assert path.read_bytes() == original
+    child = store.read_run('subset').artifacts[result.next_actions[0].params['artifactId']]
+    assert [row['path_id'] for row in map(json.loads, Path(child.path).read_text().splitlines())] == ['a', 'b']
+
+
+@pytest.mark.parametrize('shared_with_selected', [False, True])
+def test_held_destination_collisions_do_not_block_safe_selection(shared_with_selected):
+    rows = [dict(path_id='h1', src='held1.mp4', dst='collision.mp4', status='skipped'),
+            dict(path_id='h2', src='held2.mp4', dst='collision.mp4', status='skipped'),
+            dict(path_id='safe', src='safe.mp4', dst='collision.mp4' if shared_with_selected else 'new.mp4', status='planned')]
+    if shared_with_selected:
+        with pytest.raises(ValueError, match='physical member path'):
+            partition_plan(rows, ['safe'], ['h1', 'h2'])
+    else:
+        assert partition_plan(rows, ['safe'], ['h1', 'h2']) == [rows[2]]
