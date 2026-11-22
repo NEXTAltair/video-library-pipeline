@@ -329,3 +329,56 @@ def test_explicit_title_review_keeps_other_risk_guards(case):
     if case == 'no_title_override': fields.pop('program_title')
     with pytest.raises(ValueError):
         review_rows([row], [], {'a-studio': fields})
+
+
+def test_mixed_artifacts_preserve_program_genre_identity(tmp_path):
+    store, db, cfg = fixture(tmp_path)
+    source = store.run_dir(cfg.run_id) / 'metadata/0.jsonl'
+    row = json.loads(source.read_text())
+    row.update(needs_review=False, needs_review_reason='', human_reviewed=True)
+    source.write_text(json.dumps(row) + '\n')
+    run = store.read_run(cfg.run_id)
+    run.artifacts['extract_0'].sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    store.write_run(run)
+    draft = Path(cfg.review_yaml_paths[0])
+    body = yaml.safe_load(draft.read_text())
+    body['hints'] = []
+    body['program_genre_overrides'] = {'Before': {'genre': 'news', 'review_note': 'category checked'}}
+    draft.write_text(yaml.safe_dump(body))
+    with closing(connect_db(str(db))) as con:
+        con.execute("INSERT INTO path_metadata(path_id,source,data_json,updated_at,program_title,air_date,human_reviewed) VALUES (?,?,?,?,?,?,?)",
+                    ('p0', 'human_reviewed', json.dumps({'human_reviewed_at': 'original', 'review_note': 'current DB note'}), 'before', 'Current Identity', '2026-09-09', 1))
+        con.commit()
+    result = apply_reviewed_metadata(store, cfg)
+    assert result['rows'] == 2
+    with closing(sqlite3.connect(db)) as con:
+        first = con.execute("SELECT source,program_title,air_date,human_reviewed FROM path_metadata WHERE path_id='p0'").fetchone()
+        assert first == ('human_reviewed', 'Current Identity', '2026-09-09', 1)
+        assert con.execute("SELECT program_title FROM path_metadata WHERE path_id='p1'").fetchone()[0] == 'After'
+
+    with closing(sqlite3.connect(db)) as con:
+        data = json.loads(con.execute("SELECT data_json FROM path_metadata WHERE path_id='p0'").fetchone()[0])
+        assert data['review_note'] == 'current DB note; category checked'
+        assert 'franchise' not in data
+
+
+def test_partial_program_selection_across_artifacts_rejects_genre_split(tmp_path):
+    store, db, cfg = fixture(tmp_path)
+    run = store.read_run(cfg.run_id)
+    for i, path in enumerate(cfg.review_yaml_paths):
+        source = store.run_dir(cfg.run_id) / f'metadata/{i}.jsonl'
+        row = json.loads(source.read_text())
+        row.update(needs_review=False, needs_review_reason='', genre='ニュース・報道')
+        source.write_text(json.dumps(row) + '\n')
+        run.artifacts[f'extract_{i}'].sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+        draft = Path(path)
+        body = yaml.safe_load(draft.read_text())
+        body['hints'] = []
+        if i == 0:
+            body['program_genre_overrides'] = {'Before': {'genre': 'movie', 'review_note': 'checked'}}
+        draft.write_text(yaml.safe_dump(body))
+    store.write_run(run)
+    before = db_state(db)
+    with pytest.raises(ValueError, match='genre split'):
+        apply_reviewed_metadata(store, cfg)
+    assert db_state(db) == before

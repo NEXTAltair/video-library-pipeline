@@ -332,3 +332,26 @@ openclaw video-pipeline-dedup --apply-run <exact-run-id> --apply
 ```
 
 既存のsource checkoutからの保守は`python3 py/dedup_cli.py --config <openclaw.json>`に同じ引数を指定する。未完了/適用済みplanの再適用は拒否し、receiptを照合してから復旧する。一挙録画は全話の同等以上の保持録画があり、実測尺の整合も取れた場合だけ各話に置き換える。保持対象すべてをnative read lockで保護し、dry-runでも検査する。NTFSに存在するがDrvFSでEIOになる長い日本語名はWindows nativeの署名をまとめて取得し、欠落と誤認しない。
+
+### 番組単位のジャンル再受理 (#229)
+
+V2 の `prepare_placed_metadata` (配置済み) または通常のメタデータレビューで
+生成した run 所有の review YAML に、行ごとではなく番組名ごとの指定を書けます。
+`prepare_program_genre_review.py` の report は番組別件数・現在の投票分布・提案を含み、
+`normalization_candidates` は英語キー等の非正規ラベルも列挙します。
+配置先は既存の relocate preview で確認してください。ジャンル再受理自体は移動しません。
+
+```yaml
+hints: []
+program_genre_overrides:
+  Example Program:
+    genre: ニュース・報道
+    review_note: 番組全体の分類を確認
+```
+
+`source_jsonl` と `cohort` は生成されたものを維持し、`row_overrides` は空にします。
+番組名は当該 cohort 内の完全一致で、指定した番組の全行へ genre だけを適用します。
+未知の番組名・ジャンル・空の確認メモ、別の行編集との混用は拒否します。
+編集後の YAML の digest を指定し、既存の `apply_placed_metadata` /
+`apply_reviewed_metadata` で受理します。元の番組名・放送日・話数・人の確認履歴は保持し、
+現在の DB の identity を基準に更新します。既存のバックアップ・run 所有権・再実行ガードも適用されます。

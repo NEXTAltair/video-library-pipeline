@@ -89,7 +89,26 @@ def _review_overrides(rows, overrides):
     return result
 
 
-def review_rows(rows, hints, row_overrides=None, *, acceptance="agent_accepted", human_confirmation=None):
+def expand_program_genres(rows, decisions):
+    """Expand exact program-title decisions; never change episode identity."""
+    from video_pipeline.domain.program_genre_policy import genre_key, LABELS
+    if not isinstance(decisions, dict):
+        raise ValueError('program_genre_overrides must be a title mapping')
+    titles = {r.get('program_title') for r in rows}
+    edits = {}
+    for title, fields in decisions.items():
+        if title not in titles or not isinstance(fields, dict) or set(fields) != {'genre', 'review_note'}:
+            raise ValueError('program decision requires an exact cohort title, genre and review_note')
+        genre = genre_key(fields['genre'])
+        if not genre or not isinstance(fields['review_note'], str) or not fields['review_note'].strip():
+            raise ValueError('program decision requires known genre and nonempty review_note')
+        for row in rows:
+            if row.get('program_title') == title:
+                edits[str(row['path_id'])] = {'genre': LABELS[genre], 'review_note': fields['review_note']}
+    return edits
+
+
+def review_rows(rows, hints, row_overrides=None, *, acceptance="agent_accepted", human_confirmation=None, preserve_genre_history=False):
     provenance = acceptance_provenance(acceptance, human_confirmation)
     overrides = _review_overrides(rows, row_overrides)
     aliases = {}
@@ -109,6 +128,8 @@ def review_rows(rows, hints, row_overrides=None, *, acceptance="agent_accepted",
     canonicals = sorted(set(aliases.values()), key=lambda s: len(lower_compact(s)), reverse=True)
     result = []
     for row in rows:
+        if preserve_genre_history and str(row.get('path_id') or '') not in overrides:
+            continue
         edited = dict(row)
         row_edit = overrides.get(str(row.get('path_id') or ''), {})
         edited.update(row_edit)
@@ -134,6 +155,11 @@ def review_rows(rows, hints, row_overrides=None, *, acceptance="agent_accepted",
             raise ValueError("review-risk rows remain; edit the review before applying")
         if not edited.get("path_id"):
             raise ValueError("reviewed metadata requires registered path_id")
+        if preserve_genre_history and set(row_edit) <= {'genre', 'review_note'}:
+            # Genre-only review appends a note without replacing identity acceptance.
+            edited['review_note'] = row_edit.get('review_note')
+            result.append(edited)
+            continue
         for key in ("human_reviewed_at", "human_reviewed_by", "human_confirmation"):
             edited.pop(key, None)
         edited.update(provenance)
@@ -248,7 +274,13 @@ def preflight(store, config, *, gate_type="metadata_review"):
                        or cohort.get("path_id_count") != len(current_ids)
                        or cohort.get("path_id_set_hash") != cohort_hash):
             raise ValueError("review cohort differs from extraction input")
-        edited = review_rows(rows, body["hints"], body.get('row_overrides'),
+        program_edits = expand_program_genres(rows, body.get('program_genre_overrides', {}))
+        row_edits = body.get('row_overrides') or {}
+        if program_edits and (body['hints'] or row_edits):
+            raise ValueError('program genre review cannot be combined with identity/row edits')
+        edits = program_edits or row_edits
+        edited = review_rows(rows, body["hints"], edits,
+                             preserve_genre_history=bool(program_edits),
                              acceptance=getattr(config, 'acceptance', 'agent_accepted'),
                              human_confirmation=getattr(config, 'human_confirmation', None))
         for row in edited:
@@ -257,7 +289,8 @@ def preflight(store, config, *, gate_type="metadata_review"):
             path_ids.add(row["path_id"])
         prepared.append({"artifact": artifact, "draft": draft_bytes, "digest": digest,
                          "source": source_bytes, "sourceDigest": source_digest, "rows": edited,
-                         "reviewedFields": {str(key): list(fields) for key, fields in (body.get("row_overrides") or {}).items()}})
+                         "genreOnly": bool(program_edits), "cohortRows": rows,
+                         "reviewedFields": {str(key): list(fields) for key, fields in edits.items()}})
     return run, gates, db, prepared
 
 
@@ -307,12 +340,21 @@ def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
             create_schema_if_needed(con)
             rows = [row for p in prepared for row in p["rows"]]
             reviewed_fields = {key: fields for p in prepared for key, fields in p["reviewedFields"].items()}
-            summary = upsert_records(con, rows, source="human_reviewed" if provenance["human_reviewed"] else "agent_accepted", strict=True, reviewed_fields=reviewed_fields,
-                                     accepted_review_context={"run_id": run.run_id, "accepted_digest": fingerprint})
+            summary = {'rows': 0, 'missing': 0}
+            for item in prepared:
+                part = upsert_records(con, item['rows'],
+                    source='human_reviewed' if provenance['human_reviewed'] and not item['genreOnly'] else 'agent_accepted',
+                    strict=True, reviewed_fields=item['reviewedFields'],
+                    accepted_review_context={'run_id': run.run_id, 'accepted_digest': fingerprint,
+                                             'genre_only': item['genreOnly']})
+                for key in summary:
+                    summary[key] += part[key]
             # Merge/resolution can retain an existing genre absent in a draft.
             # Validate the actual prospective records before committing too.
             from db_helpers import latest_path_metadata
-            validate_program_genre_consistency(latest_path_metadata(con, str(row["path_id"]))[0] for row in rows)
+            validate_program_genre_consistency(
+                latest_path_metadata(con, str(row["path_id"]))[0] or row
+                for item in prepared for row in item["cohortRows"])
             summary.update(ok=True, reviewAcceptance=provenance["review_acceptance"],
                            humanConfirmation=provenance["human_confirmation"],
                            backupPath=backup_path, acceptedDigest=fingerprint,

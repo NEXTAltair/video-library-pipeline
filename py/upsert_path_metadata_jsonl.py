@@ -106,7 +106,15 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
                 continue
             if rec.get("human_reviewed") or rec.get("review_acceptance") == "human_confirmed":
                 raise ValueError("unreviewed source cannot assert human confirmation")
-        if source == "agent_accepted" and prior and (prior["human_reviewed"] or prior["source"] == "human_reviewed"):
+        genre_only = bool(strict and accepted_review_context
+                          and accepted_review_context.get('genre_only')
+                          and set((reviewed_fields or {}).get(str(path_id), ())) == {'genre', 'review_note'})
+        if genre_only:
+            # Use current database identity, not an extraction snapshot, for genre-only edits.
+            note = '; '.join(filter(None, [str(existing.get('review_note') or ''), str(rec.get('review_note') or '')]))
+            rec = dict(existing or rec, genre=rec.get('genre'), review_note=note)
+            rec.pop('source_history', None)
+        if not genre_only and source == "agent_accepted" and prior and (prior["human_reviewed"] or prior["source"] == "human_reviewed"):
             # A new, validated run-bound review may supersede the current value
             # without making a retrospective claim about the old reviewer.
             context = accepted_review_context
@@ -124,7 +132,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
                             "review_context": dict(context),
                             "note": "new agent acceptance; previous reviewer not inferred or migrated"})
             existing["source_history"] = history
-        if source == "agent_accepted":
+        if source == "agent_accepted" and not genre_only:
             rec = dict(rec, human_reviewed=False, review_acceptance="agent_accepted")
             for key in ("human_reviewed_at", "human_reviewed_by", "human_confirmation"):
                 existing.pop(key, None)
@@ -132,17 +140,17 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
         explicit = (reviewed_fields or {}).get(str(path_id), ())
         merged = merge_data(existing, rec, source, explicit_fields=explicit)
         # Normalize: needs_review=false must not coexist with non-empty needs_review_reason
-        if not merged.get("needs_review"):
+        if not genre_only and not merged.get("needs_review"):
             merged["needs_review_reason"] = ""
         merged["genre"] = resolve_genre(merged)
         preserve_reviewed_identity = (strict and source in {"agent_accepted", "human_reviewed"}
                                       and ({"genre", "program_title"} & set(explicit)) and "franchise" in merged)
-        if "franchise" not in explicit and not preserve_reviewed_identity:
+        if not genre_only and "franchise" not in explicit and not preserve_reviewed_identity:
             merged["franchise"] = resolve_franchise(merged, franchise_rules or None)
 
         promoted, data_json = split_path_metadata(merged)
         to_upsert.append((
-            path_id, source, data_json, updated_at,
+            path_id, prior["source"] if genre_only and prior else source, data_json, updated_at,
             promoted.get("program_title"),
             promoted.get("air_date"),
             promoted.get("needs_review", 0),
@@ -150,6 +158,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
             promoted.get("subtitle"),
             promoted.get("broadcaster"),
             promoted.get("human_reviewed", 0),
+            int(genre_only),
         ))
     if to_upsert:
         con.executemany(
@@ -170,7 +179,7 @@ def upsert_records(con, records, *, source="agent_accepted", franchise_rules="",
               broadcaster=excluded.broadcaster,
               human_reviewed=excluded.human_reviewed
             WHERE (path_metadata.human_reviewed IS NOT 1 AND path_metadata.source != 'agent_accepted')
-               OR excluded.source IN ('human_reviewed', 'agent_accepted')
+               OR excluded.source IN ('human_reviewed', 'agent_accepted') OR ?
             """,
             to_upsert,
         )

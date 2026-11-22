@@ -14,7 +14,7 @@ from .genre_resolver import resolve_genre
 GENRES = {
     'アニメ': 'anime', '特撮': 'tokusatsu', '映画': 'movie', 'ドラマ': 'drama',
     'ドキュメンタリー・情報': 'documentary', 'ドキュメンタリー･情報': 'documentary',
-    'ドキュメンタリー': 'documentary', '情報': 'documentary',
+    'ドキュメンタリー': 'documentary', '情報': 'documentary', '情報/ワイドショー': 'documentary',
     'バラエティ': 'variety', 'ニュース・報道': 'news', 'ニュース': 'news',
 }
 LABELS = {'anime': 'アニメ', 'tokusatsu': '特撮', 'movie': '映画', 'drama': 'ドラマ',
@@ -148,6 +148,7 @@ def prepare_program_genre_review(rows, policy=None):
     return {'schema': 'program_genre_review/v1', 'threshold': {'share': '3/5', 'minimum_lead': 2,
             'rationale': 'hold small/close samples; unknown votes count in denominator'},
             'rows': len(seen), 'programs': decisions, 'row_overrides': overrides, 'held_rows': held,
+            'normalization_candidates': [{'path_id': str(r['path_id']), 'genre': LABELS[genre_key(r.get('genre'))]} for cohort in grouped.values() for r in cohort if genre_key(r.get('genre')) and r.get('genre') != LABELS[genre_key(r.get('genre'))]],
             'routing_changes': 0, 'physical_moves': 0, 'db_writes': 0}
 
 
