@@ -131,6 +131,11 @@ def parse_program_txt(path: Path) -> dict[str, Any] | None:
     except Exception:
         return None
 
+    return parse_program_text(text, source_file=path)
+
+
+def parse_program_text(text: str, *, source_file: Path) -> dict[str, Any] | None:
+    """Parse decoded EDCB text independently of the filesystem reader."""
     lines = text.splitlines()
     if len(lines) < 3:
         return None
@@ -216,7 +221,7 @@ def parse_program_txt(path: Path) -> dict[str, Any] | None:
         "epg_genres": genres,
         "detail_sections": detail_sections,
         "network_ids": network_ids,
-        "source_file": str(path),
+        "source_file": str(source_file),
     }
 
 

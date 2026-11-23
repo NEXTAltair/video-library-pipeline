@@ -8,13 +8,14 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import sys
 import unicodedata
 from pathlib import Path, PurePath
 from typing import Any
 
 from edcb_program_parser import match_key_from_filename, datetime_key_from_filename, recording_stem_from_program_info
-from edcb_program_parser import parse_program_txt
+from edcb_program_parser import parse_program_text
 from db_helpers import latest_path_metadata, reconstruct_broadcast_data
 from franchise_resolver import resolve_franchise
 from genre_resolver import resolve_genre
@@ -26,6 +27,7 @@ from title_resolution import load_canonical_title_sources, suggest_canonical_tit
 from broadcast_frame_titles import canonical_from_known_program_prefix, is_contaminated_program_title, reviewed_title_conflicts_with_filename
 from video_pipeline.domain.title_text import clean_title_edges
 from video_pipeline.domain.work_title_normalizer import resolve_work_title, regex_rules_from_data
+from video_pipeline.platform.native_program_info import is_windows_mount_path, read_windows_program_info
 
 WS = re.compile(r"[\s\u3000]+")
 BAD = re.compile(r"[<>:\"/\\\\|?*]")
@@ -647,21 +649,42 @@ def _to_epg_hint_payload(epg_candidates: list[dict]) -> dict:
 
 def _paired_program_info(path_or_name: str) -> dict | None:
     """Parse only the program.txt paired with this exact MP4."""
-    raw = str(path_or_name or "").strip()
-    if not raw:
-        return None
-    path = Path(windows_to_wsl_path(raw))
-    if not path.name.lower().endswith(".mp4"):
-        return None
-    sidecar = Path(str(path) + ".program.txt")
-    try:
-        return parse_program_txt(sidecar) if sidecar.is_file() else None
-    except OSError as exc:
-        # WSL can report EIO for unavailable Windows-mounted files. Treat it as
-        # missing local evidence; do not let optional enrichment abort a batch.
-        if exc.errno == errno.EIO:
+    return _paired_program_info_batch([path_or_name])[path_or_name]
+
+
+def _paired_program_info_batch(paths: list[str]) -> dict[str, dict | None]:
+    def parse(sidecar: Path, content: bytes | None) -> dict | None:
+        if content is None:
             return None
-        raise
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return None  # Unparseable sidecar, not a filesystem read failure.
+        return parse_program_text(text, source_file=sidecar)
+
+    paired: dict[str, dict | None] = dict.fromkeys(paths)
+    native: dict[Path, list[str]] = {}
+    for raw in paired:
+        path = Path(windows_to_wsl_path(raw.strip()))
+        if not path.name.lower().endswith(".mp4"):
+            continue
+        sidecar = Path(str(path) + ".program.txt")
+        try:
+            if stat.S_ISREG(sidecar.stat().st_mode):
+                paired[raw] = parse(sidecar, sidecar.read_bytes())
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as exc:
+            # A WSL lookup failure does not establish Windows file absence.
+            if exc.errno not in (errno.ENAMETOOLONG, errno.EIO) or not is_windows_mount_path(sidecar):
+                raise
+            native.setdefault(sidecar, []).append(raw)
+    if native:
+        for sidecar, content in zip(native, read_windows_program_info(list(native)), strict=True):
+            info = parse(sidecar, content)
+            for raw in native[sidecar]:
+                paired[raw] = info
+    return paired
 
 
 def recording_filename_stem(path_or_name: str) -> str | None:
@@ -726,7 +749,9 @@ def write_jsonl(path: Path, rows: list[dict]):
             fo.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def _build_llm_input_rows(batch: list[dict], epg_cache: _EpgCache) -> list[dict]:
+def _build_llm_input_rows(
+    batch: list[dict], epg_cache: _EpgCache, paired_by_path: dict[str, dict | None]
+) -> list[dict]:
     rows: list[dict] = []
     for rec in batch:
         rec_out = dict(rec)
@@ -734,7 +759,7 @@ def _build_llm_input_rows(batch: list[dict], epg_cache: _EpgCache) -> list[dict]
         dk = datetime_key_from_filename(str(rec.get("name") or ""))
         epg_candidates = epg_cache.candidates(mk, dk)
         hints = _to_epg_hint_payload(epg_candidates)
-        paired = _paired_program_info(str(rec.get("path") or ""))
+        paired = paired_by_path[str(rec.get("path") or "")]
         if paired and paired.get("official_title"):
             hints["epg_hint_titles"] = [paired["official_title"], *[t for t in hints["epg_hint_titles"] if t != paired["official_title"]]][:5]
         rec_out.update(hints)
@@ -862,7 +887,8 @@ def main() -> int:
         batch_no = args.start_batch + batch_idx - 1
         bpath = outdir / f"llm_filename_extract_input_{batch_no:04d}_{len(batch):04d}.jsonl"
         epath = outdir / f"llm_filename_extract_output_{batch_no:04d}_{len(batch):04d}.jsonl"
-        llm_input_rows = _build_llm_input_rows(batch, epg_cache)
+        paired_by_path = _paired_program_info_batch([str(rec.get("path") or "") for rec in batch])
+        llm_input_rows = _build_llm_input_rows(batch, epg_cache, paired_by_path)
         write_jsonl(bpath, llm_input_rows)
 
         rows = []
@@ -980,7 +1006,7 @@ def main() -> int:
             # EPG enrichment: look up ingested program.txt data
             # ファイル名ステムで 1:1 照合（タイトル+日時によるあいまいマッチより優先）
             _fs = recording_filename_stem(str(rec.get("name") or rec.get("path") or ""))
-            epg = _paired_program_info(str(rec.get("path") or ""))
+            epg = paired_by_path[str(rec.get("path") or "")]
             if epg is None:
                 epg = epg_cache.lookup(mk, dk, filename_stem=_fs, broadcaster=rec.get("broadcaster"))
             _enrich_with_epg(row, epg)
@@ -1056,7 +1082,8 @@ def main() -> int:
             batch_idx += 1
             batch_no = args.start_batch + batch_idx - 1
             bpath = outdir / f"llm_filename_extract_input_{batch_no:04d}_{len(batch):04d}.jsonl"
-            llm_input_rows = _build_llm_input_rows(batch, epg_cache)
+            paired_by_path = _paired_program_info_batch([str(rec.get("path") or "") for rec in batch])
+            llm_input_rows = _build_llm_input_rows(batch, epg_cache, paired_by_path)
             write_jsonl(bpath, llm_input_rows)
             generated_input_jsonl_paths.append(str(bpath))
             batch = []
