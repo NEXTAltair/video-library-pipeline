@@ -437,3 +437,142 @@ def test_explicit_run_review_corrects_accepted_genre_and_epg(tmp_path, source, h
         assert data['genre'] == 'ドラマ'
         assert data['epg_genres'] == replacement
         assert any('epg_genres' in h.get('fields', []) for h in data['source_history'])
+
+
+def _partition_fixture(tmp_path):
+    store, db, cfg = fixture(tmp_path, flow="relocate")
+    root = store.run_dir(cfg.run_id)
+    rows = [json.loads((root / f"metadata/{i}.jsonl").read_text()) for i in range(2)]
+    queue_path = root / "metadata/queue.jsonl"
+    queue_path.write_text("\n".join(map(json.dumps, rows)))
+    queue = store.register_artifact(cfg.run_id, artifact_type="relocate_metadata_queue", path=queue_path,
+                                    producer="fixture", artifact_id="queue")
+    run = store.read_run(cfg.run_id)
+    for i, row in enumerate(rows):
+        source = run.artifacts[f"extract_{i}"]
+        source.input_artifact_ids = [queue.id]
+        draft = Path(cfg.review_yaml_paths[i])
+        body = yaml.safe_load(draft.read_bytes())
+        body.update(metadata_partition={"selected_path_ids": [row["path_id"]] if not i else [],
+                                       "held_path_ids": [row["path_id"]] if i else []},
+                    cohort={"source_jsonl_sha256": source.sha256, "path_id_count": 1,
+                            "path_id_set_hash": "metadata_partition/v1:" + hashlib.sha256(row["path_id"].encode()).hexdigest()[:16]})
+        draft.write_text(yaml.safe_dump(body))
+    store.write_run(run)
+    return store, db, replace(cfg, run_revision=store.read_run(cfg.run_id).revision,
+                              review_digests=_digests(cfg))
+
+
+def _digests(cfg):
+    return {aid: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+            for aid, p in zip(cfg.artifact_ids, cfg.review_yaml_paths)}
+
+
+def test_partition_acceptance_is_replayable_and_held_rows_are_untouched(tmp_path):
+    store, db, cfg = _partition_fixture(tmp_path)
+    receipt = apply_reviewed_metadata(store, cfg)
+    assert receipt["metadataPartition"] == {"selectedPathIds": ["p0"], "heldPathIds": ["p1"],
+        "queueArtifactId": "queue", "queueSha256": store.read_run(cfg.run_id).artifacts["queue"].sha256}
+    assert receipt["rows"] == 1 and apply_reviewed_metadata(store, cfg) == receipt
+    with closing(sqlite3.connect(db)) as con:
+        assert con.execute("SELECT path_id,program_title FROM path_metadata").fetchall() == [("p0", "After")]
+        assert con.execute("SELECT COUNT(*) FROM paths WHERE updated_at='before'").fetchone() == (2,)
+
+
+@pytest.mark.parametrize("case", ["foreign", "overlap", "duplicate", "missing", "mixed", "held_edit", "risk",
+                                  "queue_changed", "queue_incomplete", "wrong_path", "missing_digest",
+                                  "missing_revision", "physical_args", "all_held", "all_chosen", "unversioned"])
+def test_bad_metadata_partition_fails_without_db_or_gate_change(tmp_path, case):
+    store, db, cfg = _partition_fixture(tmp_path)
+    p = Path(cfg.review_yaml_paths[int(case not in {"risk", "all_held"})])
+    body = yaml.safe_load(p.read_bytes())
+    part = body["metadata_partition"]
+    if case == "foreign": part["held_path_ids"] = ["other"]
+    if case == "overlap": part["selected_path_ids"] = ["p1"]
+    if case == "duplicate": part["held_path_ids"] *= 2
+    if case == "missing": part["held_path_ids"] = []
+    if case == "mixed": del body["metadata_partition"]
+    if case == "unversioned": body["cohort"]["path_id_set_hash"] = body["cohort"]["path_id_set_hash"].split(":")[1]
+    if case == "held_edit": body["row_overrides"] = {"p1": {"review_note": "held"}}
+    if case == "risk": body["hints"] = []
+    if case == "all_held": part.update(selected_path_ids=[], held_path_ids=["p0"])
+    if case == "all_chosen": part.update(selected_path_ids=["p1"], held_path_ids=[])
+    p.write_text(yaml.safe_dump(body))
+    cfg = replace(cfg, review_digests=_digests(cfg))
+    if case.startswith("queue_") or case == "wrong_path":
+        run = store.read_run(cfg.run_id)
+        queue = Path(run.artifacts["queue"].path)
+        rows = [json.loads(line) for line in queue.read_text().splitlines()]
+        if case == "wrong_path": rows[1]["path"] += ".other"
+        else: rows.pop()
+        queue.write_text("\n".join(map(json.dumps, rows)))
+        if case != "queue_changed":
+            run.artifacts["queue"].sha256 = hashlib.sha256(queue.read_bytes()).hexdigest()
+            store.write_run(run)
+            cfg = replace(cfg, run_revision=store.read_run(cfg.run_id).revision)
+    if case == "missing_digest": cfg = replace(cfg, review_digests={})
+    if case == "missing_revision": cfg = replace(cfg, run_revision=None)
+    if case == "physical_args": cfg = replace(cfg, selected_path_ids=["p0"])
+    before, manifest = db_state(db), store.manifest_path(cfg.run_id).read_bytes()
+    with pytest.raises(ValueError):
+        apply_reviewed_metadata(store, cfg)
+    assert db_state(db) == before and store.manifest_path(cfg.run_id).read_bytes() == manifest
+    assert not (store.run_dir(cfg.run_id) / "review/accepted").exists()
+
+
+def test_partition_after_registration_does_not_reserve_own_earlier_unregistered_sources(tmp_path):
+    from video_pipeline.platform.pathscan_common import path_id_for
+    from video_pipeline.workflows.relocate_metadata_scope import resolve_scope, check_output
+    from tests.test_relocate_metadata_scope import install_gate
+    store = WorkflowStore(tmp_path)
+    rid = store.init_run("relocate", run_id="run_registered_partition").run_id
+    root = store.run_dir(rid)
+    src, held = r"E:\Old\Show.mp4", r"E:\Old\Other.mp4"
+    pid, hid = path_id_for(src), path_id_for(held)
+    initial = root / "plan/before.jsonl"
+    initial.write_text(json.dumps({"src": src, "status": "skipped", "reason": "unregistered_path"}))
+    store.register_artifact(rid, artifact_type="relocate_plan", path=initial, producer="fixture")
+    qp = root / "metadata/registered.jsonl"
+    qp.write_text("\n".join(json.dumps({"path_id": i, "path": p}) for i, p in ((pid, src), (hid, held))))
+    q = store.register_artifact(rid, artifact_type="relocate_metadata_queue", path=qp, producer="fixture")
+    install_gate(store, rid, dict(queueArtifactId=q.id, queueSha256=q.sha256,
+        selectedPathIds=[pid], heldPathIds=[hid]), q)
+    scope = resolve_scope(store.read_run(rid), root)
+    proposed = {"path_id": pid, "src": src, "dst": r"E:\New\Show.mp4", "status": "planned"}
+    check_output(scope, [proposed])
+    with pytest.raises(ValueError, match="overlaps"):
+        check_output(scope, [dict(proposed, dst=held)])
+
+
+@pytest.mark.parametrize('case', ['superseding_plan', 'blocking_gate', 'unpersisted_held_genre'])
+def test_partition_reconciles_against_current_state_before_commit(tmp_path, case):
+    store, db, cfg = _partition_fixture(tmp_path)
+    root = store.run_dir(cfg.run_id)
+    if case == 'superseding_plan':
+        path = root / 'plan/new.jsonl'
+        path.write_text('{}')
+        store.register_artifact(cfg.run_id, artifact_type='relocate_plan', path=path, producer='fixture')
+    elif case == 'blocking_gate':
+        store.create_review_gate(cfg.run_id, gate_type='relocate_metadata_review', artifact_ids=[])
+    else:
+        run = store.read_run(cfg.run_id)
+        for i, genre in enumerate(['ニュース・報道', 'ドラマ']):
+            src = run.artifacts[f'extract_{i}']
+            p = Path(src.path)
+            row = json.loads(p.read_bytes())
+            p.write_text(json.dumps(dict(row, program_title='After', genre=genre)))
+            src.sha256 = hashlib.sha256(p.read_bytes()).hexdigest()
+            draft = Path(cfg.review_yaml_paths[i])
+            body = yaml.safe_load(draft.read_bytes())
+            body['cohort']['source_jsonl_sha256'] = src.sha256
+            draft.write_text(yaml.safe_dump(body))
+        store.write_run(run)
+    cfg = replace(cfg, run_revision=store.read_run(cfg.run_id).revision, review_digests=_digests(cfg))
+    if case == 'unpersisted_held_genre':
+        # A held extraction that never entered the DB isn't an accepted split.
+        assert apply_reviewed_metadata(store, cfg)['rows'] == 1
+    else:
+        before = db_state(db)
+        with pytest.raises(ValueError):
+            apply_reviewed_metadata(store, cfg)
+        assert db_state(db) == before

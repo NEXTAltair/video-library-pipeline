@@ -55,6 +55,7 @@ from windows_pwsh_bridge import run_pwsh_json
 from video_pipeline.domain.routing_inventory import is_recording_path, is_excluded_media_path, title_in_scope, summarize_routing
 from video_pipeline.domain.move_preflight import inspect_move, _mtime_timestamp
 from video_pipeline.domain.companion_bundle import capture_bundle, parent_move_succeeded, companion_paths
+from video_pipeline.workflows.relocate_metadata_scope import check_output, physical_paths
 from video_pipeline.platform.resources import default_program_aliases
 
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
@@ -171,6 +172,7 @@ def main() -> int:
     ap.add_argument("--roots-file-path", default="")
     ap.add_argument("--program-titles-json", default="[]")
     ap.add_argument("--extensions-json", default="")
+    ap.add_argument("--metadata-scope-file", help="Internal non-applying metadata review cohort")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--allow-needs-review", default="false")
     ap.add_argument(
@@ -191,6 +193,13 @@ def main() -> int:
         help="Skip suspicious program_title checks (swallowed/shortened title, subtitle separator)",
     )
     args = ap.parse_args()
+    scope = None
+    if args.metadata_scope_file is not None:
+        if args.apply or args.register_unregistered_only:
+            ap.error("a metadata review scope is dry-run only")
+        scope = json.loads(Path(args.metadata_scope_file).read_text(encoding="utf-8"))
+        if not isinstance(scope, dict) or not scope.get("selected"):
+            ap.error("empty metadata review scope")
     program_titles = parse_json_arg(args.program_titles_json, [])
     if not isinstance(program_titles, list) or any(not isinstance(t, str) or not t.strip() for t in program_titles):
         raise SystemExit("program titles must be a JSON array of nonempty titles")
@@ -266,8 +275,24 @@ def main() -> int:
         con = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
     # One lookup pass avoids a full paths-table scan per media file.
-    path_rows = {normalize_win_for_id(r["path"]): r for r in con.execute(
-        "SELECT p.path_id,p.path,m.program_title FROM paths p LEFT JOIN path_metadata m ON m.path_id=p.path_id")}
+    path_rows = {}
+    expected_paths = set(scope["sources"].values()) if scope else set()
+    for row in con.execute("SELECT p.path_id,p.path,m.program_title FROM paths p LEFT JOIN path_metadata m ON m.path_id=p.path_id"):
+        path = normalize_win_for_id(row["path"])
+        if path in expected_paths and path in path_rows:
+            raise ValueError("ambiguous registered source in metadata scope")
+        path_rows[path] = row
+    if scope:
+        if any(path not in path_rows or path_rows[path]["path_id"] != pid
+               for pid, path in scope["sources"].items()):
+            raise ValueError("registered source differs from approved metadata cohort")
+        selected_paths = set(scope["selected"].values())
+        reserved = set(scope["reserved"])
+        for sf in scanned:
+            if normalize_win_for_id(sf.win_path) not in selected_paths:
+                reserved.update(physical_paths(sf.win_path))
+        scope["reserved"] = sorted(reserved)
+        scanned = [sf for sf in scanned if normalize_win_for_id(sf.win_path) in selected_paths]
     hints_path = default_program_aliases(Path(__file__).resolve().parent)
     alias_hints, _ = _load_hints_with_status(str(hints_path))
     holds = {}
@@ -315,6 +340,10 @@ def main() -> int:
     try:
         for sf in scanned:
             path_row = path_rows.get(normalize_win_for_id(sf.win_path))
+            if scope:
+                for previous in scope.get("observedMtimes", {}).get(path_row["path_id"], []):
+                    if not sf.mtime_utc or abs(_mtime_timestamp(previous) - _mtime_timestamp(sf.mtime_utc)) > 0.005:
+                        raise ValueError("selected recording changed since metadata review")
             title = str(path_row["program_title"] or "") if path_row else ""
             in_scope, title_mismatch = title_in_scope(program_titles, title, str(sf.name or ""))
             if not in_scope:
@@ -348,6 +377,7 @@ def main() -> int:
                 rows_for_plan.append(
                     {
                         "src": sf.win_path,
+                        **({"path_id": pid} if scope else {}),
                         "status": "error",
                         "reason": f"corrupt_candidate:{sf.corrupt_reason or 'size_zero'}",
                         "ts": ts_row,
@@ -593,6 +623,9 @@ def main() -> int:
                 planned_moves -= 1
                 preflight_skipped += 1
         rows_for_move = [r for r in rows_for_move if all(destination_counts[key] == 1 for key in destination_keys(r))]
+        if scope:
+            check_output(scope, rows_for_plan)
+            check_output(scope, queue_candidates, queue=True)
         routing_inventory = summarize_routing(rows_for_plan, roots_win, scanned, program_titles)
         routing_inventory.update({"excludedRecordingRoot": args.ts_root, "recordingRootExcludedFiles": recording_root_excluded})
         inventory_path.write_text(json.dumps(routing_inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
