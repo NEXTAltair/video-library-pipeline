@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from video_pipeline.application.metadata_partition import bind_queue, split_rows
 from video_pipeline.domain.review_provenance import acceptance_provenance
 from backup_mediaops_db import backup_db
 from export_program_yaml import by_program_group_from_path, lower_compact, looks_swallowed_program_title
@@ -203,6 +204,9 @@ def preflight(store, config, *, gate_type="metadata_review"):
         raise ValueError(f"metadata review requires active review_required run, got {run.phase}/{run.status}")
     if config.run_revision is not None and config.run_revision != run.revision:
         raise ValueError("metadata review run revision conflict")
+    if gate_type == "metadata_review" and any(getattr(config, key, None) is not None
+            for key in ("selected_path_ids", "held_path_ids")):
+        raise ValueError("physical path selections are not metadata partitions")
     gates = [run.review_gates[gid] for gid in run.review_gate_ids
              if run.review_gates[gid].type == gate_type and run.review_gates[gid].status == "open"]
     if not gates:
@@ -270,16 +274,29 @@ def preflight(store, config, *, gate_type="metadata_review"):
         cohort = body.get("cohort") or {}
         current_ids = sorted(str(row.get("path_id") or "") for row in rows)
         cohort_hash = hashlib.sha256("\n".join(current_ids).encode()).hexdigest()[:16]
+        partitioned = "metadata_partition" in body
+        if partitioned:
+            # Older runtimes ignore new top-level keys but reject this versioned
+            # checksum: even risk-free held rows cannot accidentally be accepted.
+            cohort_hash = "metadata_partition/v1:" + cohort_hash
         if cohort and (cohort.get("source_jsonl_sha256") not in {source_digest, source_digest[:16]}
                        or cohort.get("path_id_count") != len(current_ids)
                        or cohort.get("path_id_set_hash") != cohort_hash):
             raise ValueError("review cohort differs from extraction input")
+        review_scope = rows
+        if partitioned:
+            if (run.flow != "relocate" or gate_type != "metadata_review" or config.run_revision is None
+                    or len(gates) != 1 or artifact.input_artifact_ids != [source.id]
+                    or set(config.review_digests or {}) != set(ids) or not cohort
+                    or body.get("program_genre_overrides")):
+                raise ValueError("metadata_partition requires relocate review, current revision, full digests, cohort and row-level review")
+            review_scope = split_rows(rows, body["metadata_partition"])
         program_edits = expand_program_genres(rows, body.get('program_genre_overrides', {}))
         row_edits = body.get('row_overrides') or {}
         if program_edits and (body['hints'] or row_edits):
             raise ValueError('program genre review cannot be combined with identity/row edits')
         edits = program_edits or row_edits
-        edited = review_rows(rows, body["hints"], edits,
+        edited = review_rows(review_scope, body["hints"], edits,
                              preserve_genre_history=bool(program_edits),
                              acceptance=getattr(config, 'acceptance', 'agent_accepted'),
                              human_confirmation=getattr(config, 'human_confirmation', None))
@@ -290,15 +307,25 @@ def preflight(store, config, *, gate_type="metadata_review"):
         prepared.append({"artifact": artifact, "draft": draft_bytes, "digest": digest,
                          "source": source_bytes, "sourceDigest": source_digest, "rows": edited,
                          "genreOnly": bool(program_edits), "cohortRows": rows,
+                         "partitioned": partitioned, "queueIds": source.input_artifact_ids,
                          "reviewedFields": {str(key): list(fields) for key, fields in edits.items()}})
+    if any(item["partitioned"] for item in prepared):
+        if not all(item["partitioned"] for item in prepared):
+            raise ValueError("metadata_partition is required on every draft in this gate")
+        partition = bind_queue(run, store.run_dir(run.run_id), prepared, local_path)
+        for item in prepared:
+            item["partition"] = partition
     return run, gates, db, prepared
 
 
 def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
     with store.writer_scope():
         run, gates, db, prepared = preflight(store, config, gate_type=gate_type)
-        fingerprint = hashlib.sha256(json.dumps([
-            [p["artifact"].id, p["digest"], p["sourceDigest"]] for p in prepared], sort_keys=True).encode()).hexdigest()
+        identity = [[p["artifact"].id, p["digest"], p["sourceDigest"]] for p in prepared]
+        if prepared[0]["partitioned"]:
+            scope = prepared[0]["partition"]
+            identity.append(["metadata_partition/v1", scope["queueArtifactId"], scope["queueSha256"]])
+        fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         operation = hashlib.sha256(json.dumps([str(store.run_dir(run.run_id).resolve()),
                                                sorted(gate.id for gate in gates)]).encode()).hexdigest()
         accepted_dir = store.run_dir(run.run_id) / "review" / "accepted" / fingerprint
@@ -359,6 +386,8 @@ def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
                            humanConfirmation=provenance["human_confirmation"],
                            backupPath=backup_path, acceptedDigest=fingerprint,
                            acceptedDirectory=str(accepted_dir), artifactIds=[p["artifact"].id for p in prepared])
+            if prepared[0]["partitioned"]:
+                summary["metadataPartition"] = prepared[0]["partition"]
             con.execute("CREATE TABLE IF NOT EXISTS workflow_metadata_commits (operation_id TEXT PRIMARY KEY, digest TEXT NOT NULL, summary_json TEXT NOT NULL)")
             con.execute("INSERT INTO workflow_metadata_commits VALUES (?,?,?)", (operation, fingerprint, json.dumps(summary)))
             con.commit()

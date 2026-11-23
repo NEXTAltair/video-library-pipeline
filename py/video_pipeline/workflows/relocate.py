@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from tempfile import TemporaryDirectory
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
@@ -39,7 +40,7 @@ from .source_root import (
     string_array,
     write_json,
 )
-from . import chunked_apply
+from . import chunked_apply, relocate_metadata_scope
 from .store import WorkflowStore, sha256_file
 from video_pipeline.platform.writer_lock import serialized_workflow
 from video_pipeline.platform.sqlite_snapshot import check_integrity
@@ -1184,6 +1185,29 @@ class RelocateWorkflowService:
 
         return args
 
+    def _run_scoped_planner(self, config, db_path, run_dir, scope):
+        args = self._planner_args(config, db_path)
+        script = self.py_root / "relocate_existing_files.py"
+        if not scope:
+            raw = self.python_runner(script, args, str(self.py_root))
+        else:
+            # A file rather than argv: reviewed queues can contain thousands of paths.
+            with TemporaryDirectory(prefix="scope-", dir=run_dir) as directory:
+                path = Path(directory) / "scope.json"
+                write_json(path, scope)
+                raw = self.python_runner(script, [*args, "--metadata-scope-file", str(path)], str(self.py_root))
+        summary = parse_last_json_object_line(raw)
+        if not summary:
+            raise RuntimeError("relocate_existing_files.py did not emit a JSON summary")
+        if scope:
+            if summary.get("ok") is not True or not summary.get("planPath"):
+                raise ValueError("partitioned planner did not return a successful preview")
+            relocate_metadata_scope.check_output(scope, list(iter_jsonl(local_path_from_any(summary["planPath"]))))
+            if summary.get("metadataQueuePath"):
+                relocate_metadata_scope.check_output(scope,
+                    list(iter_jsonl(local_path_from_any(summary["metadataQueuePath"]))), queue=True)
+        return summary
+
     def _dry_run_existing(
         self,
         run_id: str,
@@ -1200,11 +1224,11 @@ class RelocateWorkflowService:
         diagnostics_suffix = "" if diagnostics_id == "relocate_diagnostics" else diagnostics_id.removeprefix("relocate_diagnostics")
         summary_path = logs_dir / f"relocate_summary{diagnostics_suffix}.json"
 
-        args = self._planner_args(config, db_path)
-        raw = self.python_runner(self.py_root / "relocate_existing_files.py", args, str(self.py_root))
-        summary = parse_last_json_object_line(raw)
-        if not summary:
-            raise RuntimeError("relocate_existing_files.py did not emit a JSON summary")
+        scope = relocate_metadata_scope.resolve_scope(run, run_dir)
+        if scope and any(g.requires_human_review and g.type != PLACED_REVIEW_GATE_TYPE
+                         and g.status in {"open", "rejected"} for g in run.review_gates.values()):
+            raise ValueError("a metadata partition cannot clear an unresolved review gate")
+        summary = self._run_scoped_planner(config, db_path, run_dir, scope)
         write_json(summary_path, summary)
         diagnostics_artifact = store.register_artifact(
             run_id,
@@ -1231,7 +1255,7 @@ class RelocateWorkflowService:
                 producer="relocate_existing_files.py",
                 artifact_id=plan_id,
                 input_artifact_ids=[diagnostics_artifact.id],
-                metadata={"summary": summary},
+                metadata={"summary": summary, **({"metadataScopeHistory": scope["history"]} if scope else {})},
             )
 
         queue_artifact: ArtifactRef | None = None
@@ -1429,6 +1453,10 @@ class RelocateWorkflowService:
                     details={"runId": run_id, "flow": run.flow},
                 ),
             )
+        if relocate_metadata_scope.resolve_scope(run, store.run_dir(run_id)):
+            return self._reject_call(run, "relocate_registration_rejected", Diagnostic(
+                code="relocate_metadata_partition_registered", severity=DiagnosticSeverity.ERROR,
+                message="partitioned replans are bound to already registered paths"))
         cfg = self._config_from_run(run)
         args = [
             "--db", str(local_path_from_any(cfg.db)),
@@ -1594,6 +1622,12 @@ class RelocateWorkflowService:
                     "actualSha256": current_sha,
                 },
             ))
+        scope = relocate_metadata_scope.resolve_scope(run, store.run_dir(run_id))
+        if scope:
+            if plan_artifact.metadata.get("metadataScopeHistory") != scope["history"]:
+                raise ValueError("plan predates the approved metadata partition")
+            relocate_metadata_scope.check_output(scope, list(iter_jsonl(plan_path)),
+                subset=bool(plan_artifact.metadata.get("subsetSelection")))
         selection = plan_artifact.metadata.get("subsetSelection")
         if selection:
             from video_pipeline.workflows.relocate_subset import partition_plan
@@ -1709,12 +1743,10 @@ class RelocateWorkflowService:
         )
         if queue_artifact is None:
             if action == "review_relocate_metadata":
-                self._approve_open_gates(
-                    store,
-                    run_id,
-                    gate_type="relocate_metadata_review",
-                    action=action,
-                )
+                if not relocate_metadata_scope.resolve_scope(run, store.run_dir(run_id)):
+                    self._approve_open_gates(
+                        store, run_id, gate_type="relocate_metadata_review", action=action,
+                    )
                 rerun = store.read_run(run_id)
                 cfg = self._config_from_run(rerun)
                 result = self._dry_run_existing(
@@ -1742,15 +1774,13 @@ class RelocateWorkflowService:
                 outcome="relocate_metadata_queue_missing",
             )
 
-        if queue_artifact.metadata.get("refreshReviewed"):
-            try:
-                return self._prepare_metadata_review(store, run_id, queue_artifact)
-            except RelocateApplyRejected as exc:
-                return self._reject_call(store.read_run(run_id), "planned_metadata_rejected", exc.diagnostic)
-            except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
-                return self._reject_call(store.read_run(run_id), "planned_metadata_rejected", Diagnostic(
-                    code="planned_metadata_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc)))
-        return self._prepare_metadata_review(store, run_id, queue_artifact)
+        try:
+            return self._prepare_metadata_review(store, run_id, queue_artifact)
+        except RelocateApplyRejected as exc:
+            return self._reject_call(store.read_run(run_id), "planned_metadata_rejected", exc.diagnostic)
+        except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+            return self._reject_call(store.read_run(run_id), "planned_metadata_rejected", Diagnostic(
+                code="planned_metadata_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc)))
 
     def _resume_planned_metadata(self, store: WorkflowStore, config: RelocateApplyConfig) -> WorkflowResult:
         """Reopen only owned planned candidates; no metadata or move acceptance."""
@@ -1859,6 +1889,16 @@ class RelocateWorkflowService:
                 raise ValueError("open placed_metadata_review gate is missing")
             gates = [g for g in run.review_gates.values()
                      if g.type == PLACED_REVIEW_GATE_TYPE and g.status == ReviewGateStatus.OPEN.value]
+            run_dir = store.run_dir(config.run_id)
+            scope = relocate_metadata_scope.resolve_scope(run, run_dir)
+            if scope:
+                for gate in gates:
+                    for plan_id in placed_gate_plan_ids(run, gate):
+                        self._validate_owned_plan_artifact(store, config.run_id, plan_id)
+                    for aid in gate.artifact_ids:
+                        for eid in run.artifacts[aid].input_artifact_ids:
+                            relocate_metadata_scope.check_output(scope,
+                                relocate_metadata_scope.owned_rows(run.artifacts[eid], run_dir), queue=True)
             summary = apply_reviewed_metadata(store, config, gate_type=PLACED_REVIEW_GATE_TYPE)
         except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
             return self._reject_call(store.read_run(config.run_id), "placed_metadata_rejected", Diagnostic(
@@ -1898,9 +1938,8 @@ class RelocateWorkflowService:
     def _placed_recheck(self, store: WorkflowStore, run_id: str, cohort: set[str]) -> dict[str, Any]:
         run = store.read_run(run_id)
         db_path = str(local_path_from_any(str(run.config_snapshot.get("db") or "")))
-        raw = self.python_runner(self.py_root / "relocate_existing_files.py",
-                                 self._planner_args(self._config_from_run(run), db_path), str(self.py_root))
-        summary = parse_last_json_object_line(raw)
+        scope = relocate_metadata_scope.resolve_scope(run, store.run_dir(run_id))
+        summary = self._run_scoped_planner(self._config_from_run(run), db_path, store.run_dir(run_id), scope)
         if not summary or not isinstance(summary.get("planPath"), str) or not summary["planPath"]:
             raise RuntimeError("relocate_existing_files.py did not emit a plan for the recheck")
         artifact_id = next_artifact_id(run, PLACED_RECHECK_TYPE)
@@ -2110,6 +2149,10 @@ class RelocateWorkflowService:
     ) -> WorkflowResult:
         run = store.read_run(run_id)
         run_dir = store.run_dir(run_id)
+        scope = relocate_metadata_scope.resolve_scope(run, run_dir)
+        if scope:
+            relocate_metadata_scope.check_output(scope, relocate_metadata_scope.owned_rows(queue_artifact, run_dir),
+                                                queue=True)
         if queue_artifact.metadata.get("refreshReviewed"):
             queue_path = local_path_from_any(queue_artifact.path)
             if (not queue_path.resolve().is_relative_to(run_dir.resolve())
@@ -2131,15 +2174,16 @@ class RelocateWorkflowService:
         review_artifacts = self._extract_review_artifacts(
             store, run_id, queue_artifact,
             ignore_human_reviewed=queue_artifact.metadata.get("refreshReviewed") is True,
-            immutable=bool(queue_artifact.metadata.get("refreshReviewed")),
+            immutable=bool(scope or queue_artifact.metadata.get("refreshReviewed")),
         )
 
-        if queue_artifact.metadata.get("refreshReviewed"):
+        if scope or queue_artifact.metadata.get("refreshReviewed"):
             for gate in store.read_run(run_id).review_gates.values():
                 if (gate.type == "relocate_metadata_review" and gate.status == ReviewGateStatus.OPEN.value
                         and gate.artifact_ids == [queue_artifact.id]):
                     store.update_review_gate(run_id, gate.id, status=ReviewGateStatus.APPROVED,
-                                            resolution={"action": "prepare_planned_metadata"})
+                                            resolution={"action": ("prepare_planned_metadata" if queue_artifact.metadata.get("refreshReviewed")
+                                                                   else "prepare_relocate_metadata")})
         else:
             self._approve_open_gates(store, run_id, gate_type="relocate_metadata_review",
                                      action="prepare_relocate_metadata")
@@ -2228,6 +2272,18 @@ class RelocateWorkflowService:
                     message="open relocate metadata_review gate is missing",
                     details={"runId": run_id},
                 ))
+            run_dir = store.run_dir(run_id)
+            scope = relocate_metadata_scope.resolve_scope(run, run_dir)
+            if scope:
+                for gate in open_metadata_gates:
+                    extracts, queue = metadata_review_inputs(run, gate)
+                    if queue is None:
+                        raise ValueError("review lost its approved metadata cohort")
+                    for extract in extracts:
+                        relocate_metadata_scope.check_output(scope, relocate_metadata_scope.owned_rows(extract, run_dir),
+                                                            queue=True)
+                    relocate_metadata_scope.check_output(scope, relocate_metadata_scope.owned_rows(queue, run_dir),
+                                                        queue=True)
             metadata_summary = apply_reviewed_metadata(store, config)
             for gate in open_metadata_gates:
                 store.update_review_gate(

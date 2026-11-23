@@ -149,3 +149,28 @@ Use actual human confirmation only with its original confirmer/reference.
 Legacy `human_reviewed` labels alone do not establish who inspected the rows;
 migrate only the explicit evidence-scoped rows using the supported dry-run
 procedure, never all records sharing that source label.
+
+### Hold part of a relocate metadata queue
+
+On a runtime that supports `metadata_partition`, use the run's editable
+`metadata_review_yaml` drafts, not the move-plan subset parameters. In **every**
+draft, retain the source, cohort checksum values, and hints. Prefix the original
+`cohort.path_id_set_hash` with `metadata_partition/v1:` (retain all 16 hex
+digits after the colon). This version tag makes older runtimes reject the draft
+instead of silently applying every row. List both sets explicitly:
+
+```yaml
+metadata_partition:
+  selected_path_ids: [path-id-to-accept]
+  held_path_ids: [path-id-to-leave-unchanged]
+```
+
+Either list may be empty in one draft. Across the gate, both groups must exist;
+every original queue row must occur exactly once, with the same ID and source
+path. Use row overrides only for selected rows; do not combine with a
+program-wide genre override. Inspect every selected row under normal risk rules.
+Submit the returned `apply_reviewed_metadata` action with the current
+`runRevision` and `reviewDigests` (artifact ID to full SHA-256 of each edited
+draft). Never send these drafts to an older runtime that ignores the partition.
+A successful metadata receipt records the queue checksum and both groups. It
+does not authorize a physical move. Inspect the new plan separately.
