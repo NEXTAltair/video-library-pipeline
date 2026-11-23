@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from time import monotonic
 from tempfile import TemporaryDirectory
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
@@ -40,7 +41,7 @@ from .source_root import (
     string_array,
     write_json,
 )
-from . import chunked_apply, relocate_metadata_scope
+from . import accepted_replan, chunked_apply, relocate_metadata_scope
 from .store import WorkflowStore, sha256_file
 from video_pipeline.platform.writer_lock import serialized_workflow
 from video_pipeline.platform.sqlite_snapshot import check_integrity
@@ -430,6 +431,14 @@ class RelocateWorkflowService:
     @serialized_workflow
     def resume(self, config: RelocateApplyConfig, *, action: str = "apply_relocate_move_plan") -> WorkflowResult:
         store = WorkflowStore(local_path_from_any(config.windows_ops_root))
+        if action == accepted_replan.ACTION:
+            return self._resume_accepted_replan(store, config)
+        if store.manifest_path(config.run_id).exists():
+            run = store.read_run(config.run_id)
+            if accepted_replan.pending_action(run):
+                return self._reject_call(run, "relocate_resume_action_rejected", Diagnostic(
+                    code="relocate_accepted_preview_pending", severity=DiagnosticSeverity.ERROR,
+                    message="Use the current receipt-bound preview action; do not repeat metadata acceptance."))
         if action == "prepare_relocate_subset":
             return self._resume_subset(store, config)
         if action == "prepare_planned_metadata":
@@ -457,6 +466,53 @@ class RelocateWorkflowService:
             )
             return self._block_apply(store, config.run_id, "relocate_resume_action_unsupported", diagnostic)
         return self.apply(config)
+
+    def _resume_accepted_replan(self, store, config):
+        run = store.read_run(config.run_id)
+        try:
+            action = accepted_replan.pending_action(run)
+            if (not action or config.run_revision != run.revision or config.gate_id != action.params["gateId"]
+                    or config.artifact_ids != action.params["artifactIds"]
+                    or config.selected_path_ids is not None or config.held_path_ids is not None):
+                raise ValueError("stale or mismatched accepted replan request; read status again")
+            db = local_path_from_any(run.config_snapshot["db"])
+            if config.db and local_path_from_any(config.db) != db:
+                raise ValueError("replan database differs from run database")
+            accepted_replan.verify_commit(store.run_dir(run.run_id), db, run.review_gates[config.gate_id])
+            scope = relocate_metadata_scope.resolve_scope(run, store.run_dir(run.run_id))
+            if not scope:
+                raise ValueError("missing approved metadata partition")
+        except Exception as exc:
+            return self._reject_call(run, "relocate_replan_rejected", Diagnostic(
+                code="relocate_replan_rejected", severity=DiagnosticSeverity.ERROR, message=str(exc)))
+        return self._attempt_accepted_preview(store, run, db)
+
+    def _attempt_accepted_preview(self, store, run, db):
+        # The checkpoint survives even SIGKILL. It is not proof that a process
+        # is still running; the ordinary workflow writer serializes any retry.
+        started = monotonic()
+        params = accepted_replan.pending_action(run).params
+
+        def record(stage, severity, message, **details):
+            self._persist_diagnostic(store, run.run_id, Diagnostic(
+                code="accepted_replan_" + stage, severity=severity, message=message,
+                details=dict(at=now_iso(), gateId=params["gateId"], queueId=params["artifactIds"][0],
+                             elapsedSeconds=round(monotonic() - started, 2), **details)))
+
+        record("started", DiagnosticSeverity.INFO, "Accepted preview started; completion not yet recorded.")
+        try:
+            with accepted_replan.observe_termination():
+                result = self._dry_run_existing(run.run_id, self._config_from_run(run), store, str(db))
+        except accepted_replan.PlannerTerminated as exc:
+            record("terminated", DiagnosticSeverity.ERROR, "Accepted preview terminated by SIGTERM.", exitCode=exc.code)
+            raise
+        except Exception as exc:
+            record("failed", DiagnosticSeverity.ERROR, str(exc)[-1024:], exceptionType=type(exc).__name__)
+            return self._result(ok=False, store=store, run_id=run.run_id, phase=store.read_run(run.run_id).phase,
+                                outcome="relocate_plan_after_review_failed")
+        # Do not stale the revision carried by nextActions: a completed preview
+        # is already durably evidenced by its scope-bound plan and diagnostics.
+        return result
 
     def _resume_subset(self, store: WorkflowStore, config: RelocateApplyConfig) -> WorkflowResult:
         """Non-applying partition of a current immutable plan; never change metadata policy."""
@@ -1287,6 +1343,12 @@ class RelocateWorkflowService:
             store.register_artifact(run_id, artifact_type="relocate_routing_inventory", path=inventory_target,
                                     producer="relocate_existing_files.py", artifact_id=inventory_id,
                                     input_artifact_ids=[diagnostics_artifact.id])
+
+        if scope and plan_artifact:
+            self._persist_diagnostic(store, run_id, Diagnostic(
+                code="accepted_replan_planned", severity=DiagnosticSeverity.INFO,
+                message="Scoped preview recorded; no physical move authorized.",
+                details={"at": now_iso(), "artifactId": plan_artifact.id, "sha256": plan_artifact.sha256}))
 
         planned_moves = int(summary.get("plannedMoves") or 0)
         already_correct = int(summary.get("alreadyCorrect") or 0)
@@ -2293,6 +2355,8 @@ class RelocateWorkflowService:
                     resolution={"action": "apply_reviewed_metadata", "metadataApply": metadata_summary},
                 )
             rerun = store.read_run(run_id)
+            if accepted_replan.pending_action(rerun):
+                return self._attempt_accepted_preview(store, rerun, local_path_from_any(rerun.config_snapshot["db"]))
             cfg = self._config_from_run(rerun)
             return self._dry_run_existing(
                 run_id,
