@@ -25,6 +25,15 @@ $results = foreach ($path in $paths) {
         @{ status = 'read'; data = [Convert]::ToBase64String($bytes) }
     } catch [IO.FileNotFoundException] {
         @{ status = 'missing' }
+    } catch [IO.DirectoryNotFoundException] {
+        # The parent may really have gone away, but a disconnected drive can
+        # also report PATH_NOT_FOUND. Check its root without suppressing errors.
+        try {
+            $null = [IO.File]::GetAttributes('\\?\' + $path.Substring(0, 3))
+            @{ status = 'missing' }
+        } catch {
+            @{ status = 'error'; message = $_.Exception.GetBaseException().Message }
+        }
     } catch {
         @{ status = 'error'; message = $_.Exception.GetBaseException().Message }
     }
