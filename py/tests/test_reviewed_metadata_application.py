@@ -542,3 +542,37 @@ def test_partition_after_registration_does_not_reserve_own_earlier_unregistered_
     check_output(scope, [proposed])
     with pytest.raises(ValueError, match="overlaps"):
         check_output(scope, [dict(proposed, dst=held)])
+
+
+@pytest.mark.parametrize('case', ['superseding_plan', 'blocking_gate', 'unpersisted_held_genre'])
+def test_partition_reconciles_against_current_state_before_commit(tmp_path, case):
+    store, db, cfg = _partition_fixture(tmp_path)
+    root = store.run_dir(cfg.run_id)
+    if case == 'superseding_plan':
+        path = root / 'plan/new.jsonl'
+        path.write_text('{}')
+        store.register_artifact(cfg.run_id, artifact_type='relocate_plan', path=path, producer='fixture')
+    elif case == 'blocking_gate':
+        store.create_review_gate(cfg.run_id, gate_type='relocate_metadata_review', artifact_ids=[])
+    else:
+        run = store.read_run(cfg.run_id)
+        for i, genre in enumerate(['ニュース・報道', 'ドラマ']):
+            src = run.artifacts[f'extract_{i}']
+            p = Path(src.path)
+            row = json.loads(p.read_bytes())
+            p.write_text(json.dumps(dict(row, program_title='After', genre=genre)))
+            src.sha256 = hashlib.sha256(p.read_bytes()).hexdigest()
+            draft = Path(cfg.review_yaml_paths[i])
+            body = yaml.safe_load(draft.read_bytes())
+            body['cohort']['source_jsonl_sha256'] = src.sha256
+            draft.write_text(yaml.safe_dump(body))
+        store.write_run(run)
+    cfg = replace(cfg, run_revision=store.read_run(cfg.run_id).revision, review_digests=_digests(cfg))
+    if case == 'unpersisted_held_genre':
+        # A held extraction that never entered the DB isn't an accepted split.
+        assert apply_reviewed_metadata(store, cfg)['rows'] == 1
+    else:
+        before = db_state(db)
+        with pytest.raises(ValueError):
+            apply_reviewed_metadata(store, cfg)
+        assert db_state(db) == before

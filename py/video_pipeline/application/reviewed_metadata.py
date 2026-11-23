@@ -267,6 +267,8 @@ def preflight(store, config, *, gate_type="metadata_review"):
             row = json.loads(line)
             if not isinstance(row, dict):
                 raise ValueError("extraction JSONL contains non-object row")
+            if "metadata_partition" in body and "_meta" in row and len(row) != 1:
+                raise ValueError("malformed metadata partition extraction header")
             if "_meta" not in row:
                 rows.append(row)
         if not rows:
@@ -312,6 +314,9 @@ def preflight(store, config, *, gate_type="metadata_review"):
     if any(item["partitioned"] for item in prepared):
         if not all(item["partitioned"] for item in prepared):
             raise ValueError("metadata_partition is required on every draft in this gate")
+        if any(g.id != gates[0].id and g.requires_human_review and g.type != PLACED_REVIEW_GATE_TYPE
+               and g.status in {"open", "rejected"} for g in run.review_gates.values()):
+            raise ValueError("metadata partition cannot clear other blocking reviews")
         partition = bind_queue(run, store.run_dir(run.run_id), prepared, local_path)
         for item in prepared:
             item["partition"] = partition
@@ -380,7 +385,7 @@ def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
             # Validate the actual prospective records before committing too.
             from db_helpers import latest_path_metadata
             validate_program_genre_consistency(
-                latest_path_metadata(con, str(row["path_id"]))[0] or row
+                latest_path_metadata(con, str(row["path_id"]))[0] or ({} if item["partitioned"] else row)
                 for item in prepared for row in item["cohortRows"])
             summary.update(ok=True, reviewAcceptance=provenance["review_acceptance"],
                            humanConfirmation=provenance["human_confirmation"],

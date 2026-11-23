@@ -41,6 +41,9 @@ def bind_queue(run, run_dir, batches, local_path):
     queue = run.artifacts.get(next(iter(queue_ids)))
     if not queue or queue.type != "relocate_metadata_queue" or queue.status != "available":
         raise ValueError("metadata partition source queue is missing or unavailable")
+    if any(run.artifacts[aid].type in {"relocate_plan", "relocate_metadata_queue"}
+           for aid in run.artifact_ids[run.artifact_ids.index(queue.id) + 1:]):
+        raise ValueError("metadata partition source queue predates the current planning generation")
     path = local_path(queue.path)
     if not path.is_relative_to(run_dir.resolve()):
         raise ValueError("metadata partition queue escaped run directory")
@@ -48,7 +51,7 @@ def bind_queue(run, run_dir, batches, local_path):
     if hashlib.sha256(content).hexdigest() != queue.sha256:
         raise ValueError("metadata partition queue checksum changed")
     queue_rows = [json.loads(line) for line in content.decode("utf-8-sig").splitlines() if line.strip()]
-    if not all(isinstance(r, dict) for r in queue_rows):
+    if not all(isinstance(r, dict) and ("_meta" not in r or len(r) == 1) for r in queue_rows):
         raise ValueError("invalid metadata partition queue")
     expected = _identities([r for r in queue_rows if "_meta" not in r])
     if _identities([r for b in batches for r in b["cohortRows"]]) != expected:
