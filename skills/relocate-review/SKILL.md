@@ -131,3 +131,14 @@ video_pipeline_resume {
   `already_correct` (0 moves). `relocate_placed_metadata_accepted_moves_pending`
   lists rows that would now move; review them in a new relocate run. No file is
   moved by either action.
+
+### Interrupted preview after partitioned metadata acceptance
+
+If status offers `replan_accepted_metadata`, the metadata is already committed.
+Do not register, extract, or accept it again. Verify writer availability, read
+current status, and pass the returned revision, gate ID and queue artifact IDs
+unchanged to resume. The service checks the SQLite receipt and rebuilds only the
+accepted subset preview. A started checkpoint without a later outcome is not
+proof the process has exited: do not retry until the original writer has ended.
+Check `acceptedReplanDiagnostic` and the new plan checksum / source and held IDs.
+Physical moves still require a separate review.

@@ -323,6 +323,10 @@ def preflight(store, config, *, gate_type="metadata_review"):
     return run, gates, db, prepared
 
 
+def commit_operation_id(run_dir, gate_ids):
+    return hashlib.sha256(json.dumps([str(run_dir.resolve()), sorted(gate_ids)]).encode()).hexdigest()
+
+
 def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
     with store.writer_scope():
         run, gates, db, prepared = preflight(store, config, gate_type=gate_type)
@@ -331,8 +335,7 @@ def apply_reviewed_metadata(store, config, *, gate_type="metadata_review"):
             scope = prepared[0]["partition"]
             identity.append(["metadata_partition/v1", scope["queueArtifactId"], scope["queueSha256"]])
         fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-        operation = hashlib.sha256(json.dumps([str(store.run_dir(run.run_id).resolve()),
-                                               sorted(gate.id for gate in gates)]).encode()).hexdigest()
+        operation = commit_operation_id(store.run_dir(run.run_id), (gate.id for gate in gates))
         accepted_dir = store.run_dir(run.run_id) / "review" / "accepted" / fingerprint
         for index, item in enumerate(prepared):
             _freeze(accepted_dir / f"{index:04d}.yaml", item["draft"])

@@ -13,7 +13,7 @@ from video_pipeline.platform.resources import default_program_aliases
 from run_metadata_batches_promptv1 import HintLoadFailure, _load_hints_with_status
 from video_pipeline.platform.pathscan_common import windows_to_wsl_path
 from video_pipeline.workflows.relocate import metadata_reextract_action, subset_plan_actions, planned_metadata_action, available_planned_metadata_action, planned_metadata_retry_action, placed_metadata_actions
-from video_pipeline.workflows import chunked_apply, idle_runs
+from video_pipeline.workflows import accepted_replan, chunked_apply, idle_runs
 from video_pipeline.workflows import (
     NextAction,
     RelocateApplyConfig,
@@ -67,6 +67,18 @@ def _run_to_status(run: Any, *, include_artifacts: bool, run_dir: Path | None = 
     apply_progress = chunked_apply.progress(run_dir) if run_dir is not None and run.phase == "applying" else None
     if apply_progress is not None:
         payload["applyProgress"] = apply_progress
+    if run.flow == "relocate":
+        pending = accepted_replan.pending_action(run)
+        checkpoint = next((d for d in reversed(run.diagnostics) if d.code.startswith("accepted_replan_")
+                           and (not pending or d.details.get("gateId") == pending.params["gateId"])), None)
+        if checkpoint:
+            payload["acceptedReplanDiagnostic"] = checkpoint.to_dict()
+        elif pending:
+            payload["acceptedReplanDiagnostic"] = {
+                "code": "accepted_replan_no_record", "severity": "info",
+                "message": "Acceptance is recorded but no subsequent preview or exit reason was recorded. Check the writer before retrying.",
+                "details": {"gateId": pending.params["gateId"], "queueId": pending.params["artifactIds"][0]},
+            }
     if not include_artifacts:
         payload = {
             key: payload[key]
@@ -80,6 +92,7 @@ def _run_to_status(run: Any, *, include_artifacts: bool, run_dir: Path | None = 
                 "revision",
                 "nextActions",
                 "applyProgress",
+                "acceptedReplanDiagnostic",
             )
             if key in payload
         }
@@ -106,6 +119,9 @@ def _artifact_planned_count(run: Any, artifact_id: str) -> int | None:
 
 
 def _next_actions_for_run(run: Any, run_dir: Path | None = None) -> list[NextAction]:
+    recovery = accepted_replan.pending_action(run)
+    if recovery:
+        return [recovery]
     actions = _existing_next_actions_for_run(run, run_dir)
     if run.phase == "review_required":
         planned = available_planned_metadata_action(run)

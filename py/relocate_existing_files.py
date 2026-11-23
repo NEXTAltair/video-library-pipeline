@@ -54,11 +54,32 @@ from pathscan_common import (
 from windows_pwsh_bridge import run_pwsh_json
 from video_pipeline.domain.routing_inventory import is_recording_path, is_excluded_media_path, title_in_scope, summarize_routing
 from video_pipeline.domain.move_preflight import inspect_move, _mtime_timestamp
+from video_pipeline.domain.relocate_probe import inspect_windows_moves
 from video_pipeline.domain.companion_bundle import capture_bundle, parent_move_succeeded, companion_paths
 from video_pipeline.workflows.relocate_metadata_scope import check_output, physical_paths
 from video_pipeline.platform.resources import default_program_aliases
 
 MAX_SUMMARY_AUTOREGISTER_FILES = 100
+
+
+def _inspect_one(src, dst, size, mtime, ops_root):
+    """Original local/apply preflight: do not reuse planning evidence at apply."""
+    def probe(source, destination):
+        return run_pwsh_json(str(ops_root / "scripts" / "inspect_move.ps1"),
+                             ["-Src", source, "-Dst", destination], normalize_args=False)
+
+    precondition, reason = inspect_move(src, dst, {"size": size, "mtimeUtc": mtime}, windows_probe=probe)
+    if reason:
+        return None, reason
+    try:
+        bundle = capture_bundle(src, dst, windows_probe=probe)
+    except (OSError, ValueError, KeyError) as exc:
+        return None, str(exc)
+    captured = bundle["members"][0]["precondition"]
+    if (captured["size_bytes"] != precondition["size_bytes"] or
+            abs(_mtime_timestamp(captured["mtime_utc"]) - _mtime_timestamp(precondition["mtime_utc"])) > 0.005):
+        return None, "source_changed"
+    return bundle, None
 
 
 def metadata_needs_queue(md: dict[str, Any] | None) -> bool:
@@ -335,7 +356,26 @@ def main() -> int:
     held_skipped = 0
     metadata_mismatch_skipped = 0
     preflight_skipped = 0
+    native_preview = bool(scope and fallback_stats.get("windowsFallbackUsed"))  # partition scopes are dry-run only
+    pending_preflight = []
+    pending_rows = []
     candidate_info: dict[str, dict[str, Any]] = {}
+
+    def record_preflight(plan_row, bundle, refusal):
+        nonlocal preflight_skipped, planned_moves
+        if refusal:
+            preflight_skipped += 1
+            plan_row.pop("file_id")
+            plan_row.pop("air_date")
+            plan_row.update(status="skipped", reason=refusal)
+            return
+        precondition = bundle["members"][0]["precondition"]
+        plan_row.update(status="planned", reason="recompute_destination", precondition=precondition, **bundle)
+        planned_moves += 1
+        row_move = {k: plan_row[k] for k in ("path_id", "src", "dst", "precondition", "file_id")}
+        row_move.update(bundle)
+        rows_for_move.append(row_move)
+        plan_reason_map[(plan_row["path_id"], plan_row["src"], plan_row["dst"])] = plan_row["reason"]
 
     try:
         for sf in scanned:
@@ -557,56 +597,24 @@ def main() -> int:
                 )
                 continue
 
-            precondition, preflight_reason = inspect_move(
-                sf.win_path, dst, {"size": sf.size, "mtimeUtc": sf.mtime_utc},
-                windows_probe=lambda src, dest: run_pwsh_json(
-                    str(ops_root / "scripts" / "inspect_move.ps1"),
-                    ["-Src", src, "-Dst", dest], normalize_args=False,
-                ),
-            )
-            if preflight_reason:
-                preflight_skipped += 1
-                rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "dst": dst, "status": "skipped",
-                                      "reason": preflight_reason, "genre_route": vr.genre_route, "ts": ts_row})
-                continue
-            try:
-                bundle = capture_bundle(sf.win_path, dst, windows_probe=lambda src, dest: run_pwsh_json(
-                    str(ops_root / "scripts" / "inspect_move.ps1"), ["-Src", src, "-Dst", dest], normalize_args=False))
-            except (OSError, ValueError, KeyError) as exc:
-                preflight_skipped += 1
-                rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "dst": dst, "status": "skipped",
-                                      "reason": str(exc), "ts": ts_row})
-                continue
-            captured_video = bundle["members"][0]["precondition"]
-            if (captured_video["size_bytes"] != precondition["size_bytes"] or
-                    abs(_mtime_timestamp(captured_video["mtime_utc"]) - _mtime_timestamp(precondition["mtime_utc"])) > 0.005):
-                preflight_skipped += 1
-                rows_for_plan.append({"path_id": path_id, "src": sf.win_path, "dst": dst, "status": "skipped", "reason": "source_changed", "ts": ts_row})
-                continue
-            precondition = captured_video
-            planned_moves += 1
-            reason = "recompute_destination"
-            plan_row: dict[str, Any] = {
-                "path_id": path_id,
-                "src": sf.win_path,
-                "dst": dst,
-                "status": "planned",
-                "reason": reason,
-                "program_title": md.get("program_title"),
-                "air_date": md.get("air_date"),
-                "ts": ts_row,
-                "precondition": precondition,
-                "file_id": file_states.get(path_id),
-            }
+            plan_row = {"path_id": path_id, "src": sf.win_path, "dst": dst,
+                        "ts": ts_row, "program_title": md.get("program_title"),
+                        "air_date": md.get("air_date"), "file_id": file_states.get(path_id)}
             if vr.genre_route:
                 plan_row["genre_route"] = vr.genre_route
-            plan_row.update(bundle)
             rows_for_plan.append(plan_row)
-            row_move = {"path_id": path_id, "src": sf.win_path, "dst": dst, "precondition": precondition,
-                        "file_id": file_states.get(path_id)}
-            row_move.update(bundle)
-            rows_for_move.append(row_move)
-            plan_reason_map[(path_id, sf.win_path, dst)] = reason
+            if native_preview:
+                pending_preflight.append((sf.win_path, dst, sf.size, sf.mtime_utc))
+                pending_rows.append(plan_row)
+            else:
+                record_preflight(plan_row, *_inspect_one(sf.win_path, dst, sf.size, sf.mtime_utc, ops_root))
+
+        # Skip metadata holds and already-correct files before any physical
+        # probes. Fill the reserved plan rows without reordering the scan.
+        if pending_preflight:
+            observations = inspect_windows_moves(pending_preflight)
+            for plan_row, (bundle, refusal) in zip(pending_rows, observations, strict=True):
+                record_preflight(plan_row, bundle, refusal)
 
         # No arbitrary winner when two sources resolve to the same destination.
         destination_counts: dict[str, int] = {}
